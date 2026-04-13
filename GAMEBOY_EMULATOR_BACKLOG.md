@@ -16,9 +16,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] `platform/` for SDL/Web/native frontends.
   - [x] `tests/` for ROM-based validation.
   - [x] `docs/` for architecture and hardware notes.
-- [ ] **Developer tooling**
-  - [ ] Add formatter, linter, and CI pipeline.
-  - [ ] Set up deterministic test harness for headless runs.
+- [x] **Developer tooling**
+  - [x] Add formatter, linter, and CI pipeline.
+  - [x] Set up deterministic test harness for headless runs.
 - [ ] **Reference & legal notes**
   - [ ] Document acceptable ROM usage policy.
   - [ ] Add links to public hardware docs and test ROM suites.
