@@ -7,9 +7,10 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Milestone 0 — Project Setup & Foundations
 
-- [ ] **Choose implementation language and architecture**
-  - [ ] Define core modules: `cartridge`, `cpu`, `ppu`, `apu`, `bus`, `timer`, `input`, `serial`, `interrupts`, `frontend`.
-  - [ ] Decide execution model (cycle-stepped core vs instruction-stepped with cycle accounting).
+- [x] **Choose implementation language and architecture**
+  - [x] Document decisions in `docs/architecture-decisions.md`.
+  - [x] Define core modules: `cartridge`, `cpu`, `ppu`, `apu`, `bus`, `timer`, `input`, `serial`, `interrupts`, `frontend`.
+  - [x] Decide execution model (cycle-stepped core vs instruction-stepped with cycle accounting).
 - [ ] **Create repository structure**
   - [ ] `core/` for emulation logic.
   - [ ] `platform/` for SDL/Web/native frontends.
