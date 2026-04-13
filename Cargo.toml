@@ -1,0 +1,15 @@
+[workspace]
+members = [
+  "core",
+  "platform/desktop",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+authors = ["Latchboy Contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
