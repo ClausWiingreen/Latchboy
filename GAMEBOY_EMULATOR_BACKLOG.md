@@ -11,11 +11,11 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Document decisions in `docs/architecture-decisions.md`.
   - [x] Define core modules: `cartridge`, `cpu`, `ppu`, `apu`, `bus`, `timer`, `input`, `serial`, `interrupts`, `frontend`.
   - [x] Decide execution model (cycle-stepped core vs instruction-stepped with cycle accounting).
-- [ ] **Create repository structure**
-  - [ ] `core/` for emulation logic.
-  - [ ] `platform/` for SDL/Web/native frontends.
-  - [ ] `tests/` for ROM-based validation.
-  - [ ] `docs/` for architecture and hardware notes.
+- [x] **Create repository structure**
+  - [x] `core/` for emulation logic.
+  - [x] `platform/` for SDL/Web/native frontends.
+  - [x] `tests/` for ROM-based validation.
+  - [x] `docs/` for architecture and hardware notes.
 - [ ] **Developer tooling**
   - [ ] Add formatter, linter, and CI pipeline.
   - [ ] Set up deterministic test harness for headless runs.
