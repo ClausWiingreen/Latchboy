@@ -494,6 +494,10 @@ impl Cpu {
                 self.pc = vector;
                 16
             }
+            0xCB => {
+                let cb_opcode = self.fetch8(bus);
+                self.execute_cb(cb_opcode, bus)
+            }
             0xC9 => {
                 self.pc = self.pop_stack16(bus);
                 16
@@ -643,6 +647,64 @@ impl Cpu {
         self.registers
             .set_flag(Flag::Carry, (sp & 0x00FF) + (offset_u16 & 0x00FF) > 0x00FF);
         result
+    }
+
+    fn execute_cb(&mut self, opcode: u8, bus: &mut Bus) -> u32 {
+        let register_index = opcode & 0x07;
+        let bit_index = (opcode >> 3) & 0x07;
+        match opcode >> 6 {
+            0x00 => {
+                let value = self.read_r8(register_index, bus);
+                let (result, carry) = match bit_index {
+                    0x00 => (value.rotate_left(1), (value & 0x80) != 0), // RLC
+                    0x01 => (value.rotate_right(1), (value & 0x01) != 0), // RRC
+                    0x02 => {
+                        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+                        ((value << 1) | carry_in, (value & 0x80) != 0) // RL
+                    }
+                    0x03 => {
+                        let carry_in = if (self.registers.f & FLAG_C) != 0 {
+                            0x80
+                        } else {
+                            0x00
+                        };
+                        ((value >> 1) | carry_in, (value & 0x01) != 0) // RR
+                    }
+                    0x04 => (value << 1, (value & 0x80) != 0), // SLA
+                    0x05 => (((value >> 1) | (value & 0x80)), (value & 0x01) != 0), // SRA
+                    0x06 => (value.rotate_left(4), false),      // SWAP
+                    0x07 => (value >> 1, (value & 0x01) != 0),  // SRL
+                    _ => unreachable!("bit index is masked to 3 bits"),
+                };
+
+                self.write_r8(register_index, result, bus);
+                self.registers.set_flag(Flag::Zero, result == 0);
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, false);
+                self.registers.set_flag(Flag::Carry, carry);
+
+                if register_index == 0x06 { 16 } else { 8 }
+            }
+            0x01 => {
+                let value = self.read_r8(register_index, bus);
+                self.registers
+                    .set_flag(Flag::Zero, (value & (1 << bit_index)) == 0);
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, true);
+                if register_index == 0x06 { 12 } else { 8 }
+            }
+            0x02 => {
+                let value = self.read_r8(register_index, bus) & !(1 << bit_index);
+                self.write_r8(register_index, value, bus);
+                if register_index == 0x06 { 16 } else { 8 }
+            }
+            0x03 => {
+                let value = self.read_r8(register_index, bus) | (1 << bit_index);
+                self.write_r8(register_index, value, bus);
+                if register_index == 0x06 { 16 } else { 8 }
+            }
+            _ => unreachable!("cb opcode group is masked to 2 bits"),
+        }
     }
 
     fn read_r8(&self, register_index: u8, bus: &Bus) -> u8 {
@@ -1309,6 +1371,54 @@ mod tests {
         cpu.step(&mut bus);
         assert_eq!(bus.read8(0xC100), 0xF8);
         assert_eq!(bus.read8(0xC101), 0xFF);
+    }
+
+    #[test]
+    fn cb_prefixed_bit_operations_cover_register_and_hl_paths() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0b1000_0001;
+        cpu.registers.b = 0b1000_0000;
+        cpu.registers.c = 0b0000_0001;
+        cpu.registers.d = 0b1111_0000;
+        cpu.registers.set_hl(0xC200);
+        cpu.registers.f = FLAG_C;
+        let mut bus = make_bus_with_program(&[
+            0xCB, 0x07, // RLC A  => 0000_0011, C=1
+            0xCB, 0x10, // RL B   => uses carry-in, becomes 0000_0001
+            0xCB, 0x29, // SRA C  => 0000_0000, C=1, Z=1
+            0xCB, 0x62, // BIT 4,D => clear, Z=0, H=1
+            0xCB, 0xA2, // RES 4,D => 1110_0000
+            0xCB, 0xEE, // SET 5,(HL) memory path
+            0xCB, 0x46, // BIT 0,(HL) => set, Z=0 (12 cycles)
+        ]);
+        bus.write8(0xC200, 0b0000_0001);
+
+        assert_eq!(cpu.step(&mut bus), 8);
+        assert_eq!(cpu.registers.a, 0b0000_0011);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+
+        assert_eq!(cpu.step(&mut bus), 8);
+        assert_eq!(cpu.registers.b, 0b0000_0001);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+
+        assert_eq!(cpu.step(&mut bus), 8);
+        assert_eq!(cpu.registers.c, 0);
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+
+        assert_eq!(cpu.step(&mut bus), 8);
+        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+
+        assert_eq!(cpu.step(&mut bus), 8);
+        assert_eq!(cpu.registers.d, 0b1110_0000);
+
+        assert_eq!(cpu.step(&mut bus), 16);
+        assert_eq!(bus.read8(0xC200), 0b0010_0001);
+
+        assert_eq!(cpu.step(&mut bus), 12);
+        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
     }
 
     #[test]
