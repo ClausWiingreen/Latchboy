@@ -152,17 +152,15 @@ impl Cpu {
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
-        if self.ime_enable_pending {
-            self.ime = true;
-            self.ime_enable_pending = false;
-        }
-
         if self.halted {
             return 4;
         }
 
+        let enable_ime_after_instruction = self.ime_enable_pending;
+        self.ime_enable_pending = false;
+
         let opcode = self.fetch8(bus);
-        match opcode {
+        let cycles = match opcode {
             0x00 => 4, // NOP
             0x07 => {
                 self.rlca();
@@ -359,15 +357,16 @@ impl Cpu {
             0x40..=0x7F => {
                 if opcode == 0x76 {
                     self.halted = true;
-                    return 4;
-                }
-                let source = self.read_r8(opcode & 0x07, bus);
-                self.write_r8((opcode >> 3) & 0x07, source, bus);
-
-                if ((opcode >> 3) & 0x07) == 0x06 || (opcode & 0x07) == 0x06 {
-                    8
-                } else {
                     4
+                } else {
+                    let source = self.read_r8(opcode & 0x07, bus);
+                    self.write_r8((opcode >> 3) & 0x07, source, bus);
+
+                    if ((opcode >> 3) & 0x07) == 0x06 || (opcode & 0x07) == 0x06 {
+                        8
+                    } else {
+                        4
+                    }
                 }
             }
             0x80..=0x87 => {
@@ -619,7 +618,13 @@ impl Cpu {
                 8
             }
             _ => self.handle_unimplemented_opcode(opcode),
+        };
+
+        if enable_ime_after_instruction {
+            self.ime = true;
         }
+
+        cycles
     }
 
     fn handle_unimplemented_opcode(&mut self, opcode: u8) -> u32 {
