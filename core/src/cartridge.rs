@@ -21,6 +21,17 @@ pub enum CartridgeError {
     UnsupportedCartridgeType(CartridgeType),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mapper {
+    RomOnly,
+    Mbc1 {
+        ram_enabled: bool,
+        rom_bank_low5: u8,
+        bank_upper2: u8,
+        banking_mode: u8,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HeaderWarning {
     HeaderChecksumMismatch { expected: u8, actual: u8 },
@@ -336,6 +347,7 @@ pub struct Cartridge {
     pub warnings: Vec<HeaderWarning>,
     rom: Vec<u8>,
     external_ram: Option<Vec<u8>>,
+    mapper: Mapper,
 }
 
 impl Cartridge {
@@ -350,10 +362,20 @@ impl Cartridge {
             }
         }
 
-        match header.cartridge_type {
-            CartridgeType::RomOnly | CartridgeType::RomRam | CartridgeType::RomRamBattery => {}
+        let mapper = match header.cartridge_type {
+            CartridgeType::RomOnly | CartridgeType::RomRam | CartridgeType::RomRamBattery => {
+                Mapper::RomOnly
+            }
+            CartridgeType::Mbc1 | CartridgeType::Mbc1Ram | CartridgeType::Mbc1RamBattery => {
+                Mapper::Mbc1 {
+                    ram_enabled: false,
+                    rom_bank_low5: 1,
+                    bank_upper2: 0,
+                    banking_mode: 0,
+                }
+            }
             unsupported => return Err(CartridgeError::UnsupportedCartridgeType(unsupported)),
-        }
+        };
 
         let warnings = header.warnings();
         let external_ram = header.ram_size.to_bytes().map(|size| vec![0u8; size]);
@@ -363,29 +385,135 @@ impl Cartridge {
             warnings,
             rom,
             external_ram,
+            mapper,
         })
     }
 
     pub fn read(&self, address: u16) -> u8 {
-        match address {
-            0x0000..=0x7FFF => self.rom.get(address as usize).copied().unwrap_or(0xFF),
-            0xA000..=0xBFFF => self
-                .external_ram
-                .as_ref()
-                .and_then(|ram| ram.get((address - 0xA000) as usize))
-                .copied()
-                .unwrap_or(0xFF),
-            _ => 0xFF,
+        match self.mapper {
+            Mapper::RomOnly => match address {
+                0x0000..=0x7FFF => self.rom.get(address as usize).copied().unwrap_or(0xFF),
+                0xA000..=0xBFFF => self
+                    .external_ram
+                    .as_ref()
+                    .and_then(|ram| ram.get((address - 0xA000) as usize))
+                    .copied()
+                    .unwrap_or(0xFF),
+                _ => 0xFF,
+            },
+            Mapper::Mbc1 {
+                ram_enabled,
+                rom_bank_low5,
+                bank_upper2,
+                banking_mode,
+            } => self.read_mbc1(
+                address,
+                ram_enabled,
+                rom_bank_low5,
+                bank_upper2,
+                banking_mode,
+            ),
         }
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
-        if let 0xA000..=0xBFFF = address {
-            if let Some(ram) = &mut self.external_ram {
-                if let Some(slot) = ram.get_mut((address - 0xA000) as usize) {
-                    *slot = value;
+        match &mut self.mapper {
+            Mapper::RomOnly => {
+                if let 0xA000..=0xBFFF = address {
+                    if let Some(ram) = &mut self.external_ram {
+                        if let Some(slot) = ram.get_mut((address - 0xA000) as usize) {
+                            *slot = value;
+                        }
+                    }
                 }
             }
+            Mapper::Mbc1 {
+                ram_enabled,
+                rom_bank_low5,
+                bank_upper2,
+                banking_mode,
+            } => match address {
+                0x0000..=0x1FFF => {
+                    *ram_enabled = value & 0x0F == 0x0A;
+                }
+                0x2000..=0x3FFF => {
+                    let selected = value & 0x1F;
+                    *rom_bank_low5 = if selected == 0 { 1 } else { selected };
+                }
+                0x4000..=0x5FFF => {
+                    *bank_upper2 = value & 0x03;
+                }
+                0x6000..=0x7FFF => {
+                    *banking_mode = value & 0x01;
+                }
+                0xA000..=0xBFFF => {
+                    if !*ram_enabled {
+                        return;
+                    }
+
+                    if let Some(ram) = &mut self.external_ram {
+                        let bank = if *banking_mode == 0 { 0 } else { *bank_upper2 } as usize;
+                        let offset = bank * 0x2000 + (address - 0xA000) as usize;
+                        if let Some(slot) = ram.get_mut(offset) {
+                            *slot = value;
+                        }
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    fn read_mbc1(
+        &self,
+        address: u16,
+        ram_enabled: bool,
+        rom_bank_low5: u8,
+        bank_upper2: u8,
+        banking_mode: u8,
+    ) -> u8 {
+        let rom_bank_count = self.rom.len() / 0x4000;
+        if rom_bank_count == 0 {
+            return 0xFF;
+        }
+
+        match address {
+            0x0000..=0x3FFF => {
+                let bank = if banking_mode == 0 {
+                    0
+                } else {
+                    ((bank_upper2 as usize) << 5) % rom_bank_count
+                };
+                let offset = bank * 0x4000 + address as usize;
+                self.rom.get(offset).copied().unwrap_or(0xFF)
+            }
+            0x4000..=0x7FFF => {
+                let bank = ((((bank_upper2 as usize) << 5) | rom_bank_low5 as usize)
+                    % rom_bank_count)
+                    .max(1);
+                let offset = bank * 0x4000 + (address as usize - 0x4000);
+                self.rom.get(offset).copied().unwrap_or(0xFF)
+            }
+            0xA000..=0xBFFF => {
+                if !ram_enabled {
+                    return 0xFF;
+                }
+
+                self.external_ram
+                    .as_ref()
+                    .and_then(|ram| {
+                        let bank = if banking_mode == 0 {
+                            0
+                        } else {
+                            bank_upper2 as usize
+                        };
+                        let offset = bank * 0x2000 + (address as usize - 0xA000);
+                        ram.get(offset)
+                    })
+                    .copied()
+                    .unwrap_or(0xFF)
+            }
+            _ => 0xFF,
         }
     }
 }
@@ -602,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn cartridge_rejects_unsupported_mbc_for_now() {
+    fn cartridge_accepts_mbc1() {
         let mut rom = vec![0u8; 0x8000];
         rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1.code();
         rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
@@ -611,11 +739,77 @@ mod tests {
         rom[HEADER_CHECKSUM_OFFSET] =
             compute_header_checksum(&rom).expect("checksum should compute");
 
-        let error = Cartridge::from_rom(rom).expect_err("mbc should not be supported yet");
-        assert_eq!(
-            error,
-            CartridgeError::UnsupportedCartridgeType(CartridgeType::Mbc1)
-        );
+        let cartridge = Cartridge::from_rom(rom).expect("mbc1 should be supported");
+        assert_eq!(cartridge.read(0x1000), 0x00);
+    }
+
+    #[test]
+    fn mbc1_switches_rom_banks() {
+        let mut rom = vec![0u8; 0x10000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+        rom[0x4000] = 0x01;
+        rom[0x8000] = 0x02;
+        rom[0xC000] = 0x03;
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc1 should be supported");
+
+        assert_eq!(cartridge.read(0x4000), 0x01);
+        cartridge.write(0x2000, 0x02);
+        assert_eq!(cartridge.read(0x4000), 0x02);
+        cartridge.write(0x2000, 0x03);
+        assert_eq!(cartridge.read(0x4000), 0x03);
+    }
+
+    #[test]
+    fn mbc1_supports_ram_enable_and_disable() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1Ram.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc1 should be supported");
+
+        cartridge.write(0xA000, 0x55);
+        assert_eq!(cartridge.read(0xA000), 0xFF);
+
+        cartridge.write(0x0000, 0x0A);
+        cartridge.write(0xA000, 0x55);
+        assert_eq!(cartridge.read(0xA000), 0x55);
+
+        cartridge.write(0x0000, 0x00);
+        assert_eq!(cartridge.read(0xA000), 0xFF);
+    }
+
+    #[test]
+    fn mbc1_uses_upper_bank_bits_in_advanced_banking_mode() {
+        let mut rom = vec![0u8; 64 * 0x4000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks64.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let bank0_offset = 32 * 0x4000;
+        rom[bank0_offset] = 0x20;
+        let bank33_offset = 33 * 0x4000;
+        rom[bank33_offset] = 0x21;
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc1 should be supported");
+        cartridge.write(0x2000, 0x01);
+        cartridge.write(0x4000, 0x01);
+        cartridge.write(0x6000, 0x01);
+
+        assert_eq!(cartridge.read(0x0000), 0x20);
+        assert_eq!(cartridge.read(0x4000), 0x21);
     }
 
     #[test]
