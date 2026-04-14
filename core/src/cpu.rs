@@ -145,6 +145,10 @@ impl Cpu {
         let opcode = self.fetch8(bus);
         match opcode {
             0x00 => 4, // NOP
+            0x07 => {
+                self.rlca();
+                4
+            }
             0x02 | 0x12 => {
                 let address = if opcode == 0x02 {
                     self.registers.bc()
@@ -228,6 +232,41 @@ impl Cpu {
                 self.registers.a = bus.read8(address);
                 self.registers.set_hl(address.wrapping_sub(1));
                 8
+            }
+            0x0F => {
+                self.rrca();
+                4
+            }
+            0x17 => {
+                self.rla();
+                4
+            }
+            0x1F => {
+                self.rra();
+                4
+            }
+            0x27 => {
+                self.daa();
+                4
+            }
+            0x2F => {
+                self.registers.a = !self.registers.a;
+                self.registers.set_flag(Flag::Subtract, true);
+                self.registers.set_flag(Flag::HalfCarry, true);
+                4
+            }
+            0x37 => {
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, false);
+                self.registers.set_flag(Flag::Carry, true);
+                4
+            }
+            0x3F => {
+                let carry = (self.registers.f & FLAG_C) == 0;
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, false);
+                self.registers.set_flag(Flag::Carry, carry);
+                4
             }
             0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x3E => {
                 let value = self.fetch8(bus);
@@ -582,6 +621,77 @@ impl Cpu {
         self.registers
             .set_flag(Flag::Carry, u32::from(hl) + u32::from(value) > 0xFFFF);
     }
+
+    fn rlca(&mut self) {
+        let carry = (self.registers.a & 0x80) != 0;
+        self.registers.a = self.registers.a.rotate_left(1);
+        self.registers.set_flag(Flag::Zero, false);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(Flag::HalfCarry, false);
+        self.registers.set_flag(Flag::Carry, carry);
+    }
+
+    fn rrca(&mut self) {
+        let carry = (self.registers.a & 0x01) != 0;
+        self.registers.a = self.registers.a.rotate_right(1);
+        self.registers.set_flag(Flag::Zero, false);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(Flag::HalfCarry, false);
+        self.registers.set_flag(Flag::Carry, carry);
+    }
+
+    fn rla(&mut self) {
+        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+        let carry_out = (self.registers.a & 0x80) != 0;
+        self.registers.a = (self.registers.a << 1) | carry_in;
+        self.registers.set_flag(Flag::Zero, false);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(Flag::HalfCarry, false);
+        self.registers.set_flag(Flag::Carry, carry_out);
+    }
+
+    fn rra(&mut self) {
+        let carry_in = if (self.registers.f & FLAG_C) != 0 {
+            0x80
+        } else {
+            0x00
+        };
+        let carry_out = (self.registers.a & 0x01) != 0;
+        self.registers.a = (self.registers.a >> 1) | carry_in;
+        self.registers.set_flag(Flag::Zero, false);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(Flag::HalfCarry, false);
+        self.registers.set_flag(Flag::Carry, carry_out);
+    }
+
+    fn daa(&mut self) {
+        let mut adjust = 0u8;
+        let mut set_carry = false;
+
+        if (self.registers.f & FLAG_N) == 0 {
+            if (self.registers.f & FLAG_H) != 0 || (self.registers.a & 0x0F) > 0x09 {
+                adjust |= 0x06;
+            }
+            if (self.registers.f & FLAG_C) != 0 || self.registers.a > 0x99 {
+                adjust |= 0x60;
+                set_carry = true;
+            }
+            self.registers.a = self.registers.a.wrapping_add(adjust);
+        } else {
+            if (self.registers.f & FLAG_H) != 0 {
+                adjust |= 0x06;
+            }
+            if (self.registers.f & FLAG_C) != 0 {
+                adjust |= 0x60;
+            }
+            self.registers.a = self.registers.a.wrapping_sub(adjust);
+            set_carry = (self.registers.f & FLAG_C) != 0;
+        }
+
+        self.registers.set_flag(Flag::Zero, self.registers.a == 0);
+        self.registers.set_flag(Flag::HalfCarry, false);
+        self.registers.set_flag(Flag::Carry, set_carry);
+    }
 }
 
 #[cfg(test)]
@@ -905,5 +1015,69 @@ mod tests {
         assert_eq!(cpu.registers.f & FLAG_N, 0);
         assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
         assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+    }
+
+    #[test]
+    fn accumulator_rotate_opcodes_use_expected_carry_paths() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0x85;
+        cpu.registers.f = FLAG_Z;
+        let mut bus = make_bus_with_program(&[
+            0x07, // RLCA: 85 -> 0B, C=1
+            0x0F, // RRCA: 0B -> 85, C=1
+            0x17, // RLA: carry-in 1, 85 -> 0B, C=1
+            0x1F, // RRA: carry-in 1, 0B -> 85, C=1
+        ]);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x0B);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x85);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x0B);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x85);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+    }
+
+    #[test]
+    fn daa_cpl_scf_and_ccf_update_accumulator_and_flags() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[
+            0x3E, 0x9A, // LD A,9A
+            0x27, // DAA -> 00 with carry
+            0x2F, // CPL -> FF, set N/H
+            0x37, // SCF -> C=1, N/H cleared
+            0x3F, // CCF -> C=0, N/H cleared
+        ]);
+
+        cpu.step(&mut bus);
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x00);
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & FLAG_H, 0);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0xFF);
+        assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, 0);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.f & FLAG_C, 0);
+        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, 0);
     }
 }

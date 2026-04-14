@@ -85,6 +85,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 **Implementation review notes (2026-04-14)**
 - Base opcode coverage has been expanded beyond the original smoke-test subset to include `LD rr,d16` for all register pairs, `ADC`/`SBC` register forms, and immediate ALU forms (`ADD/ADC/SUB/SBC/AND/XOR/OR/CP d8`).
 - Additional base-opcode load/store and 16-bit arithmetic coverage now includes indirect accumulator transfers (`LD (BC)/(DE),A`, `LD A,(BC)/(DE)`, `LD (HL+)/ (HL-),A`, `LD A,(HL+)/ (HL-)`), high-memory variants (`LDH (a8),A`, `LDH A,(a8)`, `LD (C),A`, `LD A,(C)`), absolute accumulator transfers (`LD (a16),A`, `LD A,(a16)`), plus `INC/DEC rr` and `ADD HL,rr`.
+- Base-opcode miscellaneous accumulator operations now include non-CB rotates (`RLCA`, `RRCA`, `RLA`, `RRA`) and flag-transforming instructions (`DAA`, `CPL`, `SCF`, `CCF`) with focused unit-test coverage.
 - CPU unit tests now include focused coverage for 16-bit register-pair loads and carry-sensitive ALU behavior for both register and immediate instruction forms.
 - Remaining work for this milestone still includes full base/CB table completion, invalid opcode behavior policy, and broader timing/control-flow/interrupt conformance.
 
