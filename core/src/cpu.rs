@@ -990,6 +990,12 @@ mod tests {
         Bus::new(cartridge)
     }
 
+    fn run_program(cpu: &mut Cpu, bus: &mut Bus, steps: usize) {
+        for _ in 0..steps {
+            cpu.step(bus);
+        }
+    }
+
     #[test]
     fn inc_a_sets_z_and_h_and_clears_n() {
         let mut cpu = Cpu::new();
@@ -1541,5 +1547,196 @@ mod tests {
         assert!(cpu.halted());
         assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
         assert_eq!(cpu.pc(), 0x0001);
+    }
+
+    #[test]
+    fn table_driven_arithmetic_cases_match_expected_results() {
+        struct Case {
+            name: &'static str,
+            program: &'static [u8],
+            initial_a: u8,
+            initial_b: u8,
+            initial_flags: u8,
+            expected_a: u8,
+            expected_flags: u8,
+        }
+
+        let cases = [
+            Case {
+                name: "add_sets_half_carry_without_full_carry",
+                program: &[0x80], // ADD A,B
+                initial_a: 0x0F,
+                initial_b: 0x01,
+                initial_flags: 0,
+                expected_a: 0x10,
+                expected_flags: FLAG_H,
+            },
+            Case {
+                name: "adc_uses_carry_in",
+                program: &[0x88], // ADC A,B
+                initial_a: 0x7F,
+                initial_b: 0x00,
+                initial_flags: FLAG_C,
+                expected_a: 0x80,
+                expected_flags: FLAG_H,
+            },
+            Case {
+                name: "sub_sets_subtract_and_zero",
+                program: &[0x90], // SUB B
+                initial_a: 0x22,
+                initial_b: 0x22,
+                initial_flags: 0,
+                expected_a: 0x00,
+                expected_flags: FLAG_Z | FLAG_N,
+            },
+            Case {
+                name: "cp_updates_flags_but_not_accumulator",
+                program: &[0xB8], // CP B
+                initial_a: 0x20,
+                initial_b: 0x30,
+                initial_flags: 0,
+                expected_a: 0x20,
+                expected_flags: FLAG_N | FLAG_C,
+            },
+        ];
+
+        for case in cases {
+            let mut cpu = Cpu::new();
+            cpu.registers.a = case.initial_a;
+            cpu.registers.b = case.initial_b;
+            cpu.registers.f = case.initial_flags;
+            let mut bus = make_bus_with_program(case.program);
+
+            run_program(&mut cpu, &mut bus, 1);
+
+            assert_eq!(cpu.registers.a, case.expected_a, "case: {}", case.name);
+            assert_eq!(
+                cpu.registers.f & FLAGS_MASK,
+                case.expected_flags,
+                "case: {}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn table_driven_load_cases_cover_register_indirect_and_immediate_paths() {
+        struct Case {
+            program: &'static [u8],
+            setup: fn(&mut Cpu, &mut Bus),
+            assert_after: fn(&Cpu, &Bus),
+            steps: usize,
+        }
+
+        let cases = [
+            Case {
+                program: &[0x06, 0xAB, 0x78], // LD B,AB; LD A,B
+                setup: |_, _| {},
+                assert_after: |cpu, _| {
+                    assert_eq!(cpu.registers.b, 0xAB);
+                    assert_eq!(cpu.registers.a, 0xAB);
+                },
+                steps: 2,
+            },
+            Case {
+                program: &[0x22], // LD (HL+),A
+                setup: |cpu, _| {
+                    cpu.registers.a = 0x42;
+                    cpu.registers.set_hl(0xC222);
+                },
+                assert_after: |cpu, bus| {
+                    assert_eq!(bus.read8(0xC222), 0x42);
+                    assert_eq!(cpu.registers.hl(), 0xC223);
+                },
+                steps: 1,
+            },
+            Case {
+                program: &[0xE0, 0x80, 0x3E, 0x00, 0xF0, 0x80], // LDH (80),A; LD A,00; LDH A,(80)
+                setup: |cpu, _| cpu.registers.a = 0x91,
+                assert_after: |cpu, bus| {
+                    assert_eq!(bus.read8(0xFF80), 0x91);
+                    assert_eq!(cpu.registers.a, 0x91);
+                },
+                steps: 3,
+            },
+        ];
+
+        for case in cases {
+            let mut cpu = Cpu::new();
+            let mut bus = make_bus_with_program(case.program);
+            (case.setup)(&mut cpu, &mut bus);
+
+            run_program(&mut cpu, &mut bus, case.steps);
+
+            (case.assert_after)(&cpu, &bus);
+        }
+    }
+
+    #[test]
+    fn table_driven_cb_bitop_cases_cover_rotate_bit_res_and_set() {
+        struct Case {
+            name: &'static str,
+            cb_opcode: u8,
+            setup: fn(&mut Cpu, &mut Bus),
+            assert_after: fn(&Cpu, &Bus),
+            expected_cycles: u32,
+            expected_flags: u8,
+        }
+
+        let cases = [
+            Case {
+                name: "rlc_b_rotates_bit7_into_carry",
+                cb_opcode: 0x00, // RLC B
+                setup: |cpu, _| cpu.registers.b = 0x81,
+                assert_after: |cpu, _| assert_eq!(cpu.registers.b, 0x03),
+                expected_cycles: 8,
+                expected_flags: FLAG_C,
+            },
+            Case {
+                name: "bit_7_h_sets_zero_when_bit_clear",
+                cb_opcode: 0x7C, // BIT 7,H
+                setup: |cpu, _| cpu.registers.h = 0x7F,
+                assert_after: |_, _| {},
+                expected_cycles: 8,
+                expected_flags: FLAG_Z | FLAG_H,
+            },
+            Case {
+                name: "res_4_d_clears_target_bit",
+                cb_opcode: 0xA2, // RES 4,D
+                setup: |cpu, _| cpu.registers.d = 0xFF,
+                assert_after: |cpu, _| assert_eq!(cpu.registers.d, 0xEF),
+                expected_cycles: 8,
+                expected_flags: 0,
+            },
+            Case {
+                name: "set_5_hl_writes_memory_path",
+                cb_opcode: 0xEE, // SET 5,(HL)
+                setup: |cpu, bus| {
+                    cpu.registers.set_hl(0xC300);
+                    bus.write8(0xC300, 0x01);
+                    cpu.registers.f = FLAG_C;
+                },
+                assert_after: |_, bus| assert_eq!(bus.read8(0xC300), 0x21),
+                expected_cycles: 16,
+                expected_flags: FLAG_C,
+            },
+        ];
+
+        for case in cases {
+            let mut cpu = Cpu::new();
+            let mut bus = make_bus_with_program(&[0xCB, case.cb_opcode]);
+            (case.setup)(&mut cpu, &mut bus);
+
+            let cycles = cpu.step(&mut bus);
+
+            assert_eq!(cycles, case.expected_cycles, "case: {}", case.name);
+            (case.assert_after)(&cpu, &bus);
+            assert_eq!(
+                cpu.registers.f & FLAGS_MASK,
+                case.expected_flags,
+                "case: {}",
+                case.name
+            );
+        }
     }
 }

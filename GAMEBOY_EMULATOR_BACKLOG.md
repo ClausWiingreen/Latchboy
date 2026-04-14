@@ -71,7 +71,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Implement base opcode table (current scaffold includes a small subset used by smoke tests).
   - [x] Implement CB-prefixed table.
   - [x] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
-  - [ ] Add table-driven instruction tests for arithmetic, loads, and bit ops.
+  - [x] Add table-driven instruction tests for arithmetic, loads, and bit ops.
 - [ ] **CPU timing**
   - [ ] Instruction cycle counts.
   - [ ] Memory access timing interactions.
