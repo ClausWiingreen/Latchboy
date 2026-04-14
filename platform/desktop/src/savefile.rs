@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::io::Read;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -129,12 +130,18 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     };
     temp_path.set_extension(extension);
 
-    fs::write(&temp_path, bytes)?;
+    let mut temp_file = fs::File::create(&temp_path)?;
+    temp_file.write_all(bytes)?;
+    temp_file.sync_all()?;
+    drop(temp_file);
 
-    match fs::rename(&temp_path, path) {
+    let replace_result = match fs::rename(&temp_path, path) {
         Ok(()) => Ok(()),
         Err(rename_error) => replace_via_backup(path, &temp_path, rename_error),
-    }
+    };
+
+    replace_result?;
+    sync_parent_directory(path)
 }
 
 fn replace_via_backup(path: &Path, temp_path: &Path, rename_error: io::Error) -> io::Result<()> {
@@ -170,5 +177,23 @@ fn replace_via_backup(path: &Path, temp_path: &Path, rename_error: io::Error) ->
             let _ = fs::remove_file(temp_path);
             Err(error)
         }
+    }
+}
+
+fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        let directory = fs::File::open(parent)?;
+        directory.sync_all()
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = parent;
+        Ok(())
     }
 }
