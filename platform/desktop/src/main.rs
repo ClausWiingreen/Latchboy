@@ -4,17 +4,20 @@ use std::path::PathBuf;
 
 use latchboy_core::cartridge::Cartridge;
 use latchboy_desktop::savefile::{
-    load_save_data_if_available, persist_save_data, save_path_from_rom_path,
+    load_save_data_if_available, persist_save_data, save_path_from_rom_path, SaveLoadStatus,
 };
 
 struct SaveOnDrop {
     cartridge: Cartridge,
     save_path: PathBuf,
+    persist_enabled: bool,
 }
 
 impl Drop for SaveOnDrop {
     fn drop(&mut self) {
-        persist_save_data(&self.cartridge, &self.save_path);
+        if self.persist_enabled {
+            persist_save_data(&self.cartridge, &self.save_path);
+        }
     }
 }
 
@@ -50,11 +53,13 @@ fn main() {
     };
 
     let save_path = save_path_from_rom_path(&rom_path);
-    load_save_data_if_available(&mut cartridge, &save_path);
+    let load_status = load_save_data_if_available(&mut cartridge, &save_path);
+    let persist_enabled = !matches!(load_status, SaveLoadStatus::InvalidData);
 
     let _runtime = SaveOnDrop {
         cartridge,
         save_path,
+        persist_enabled,
     };
 
     println!("Latchboy desktop frontend scaffold");

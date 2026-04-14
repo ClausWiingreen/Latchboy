@@ -5,46 +5,59 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use latchboy_core::cartridge::{Cartridge, SaveDataError};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveLoadStatus {
+    NotBatteryBacked,
+    NotFound,
+    Loaded,
+    InvalidData,
+    ReadError,
+}
+
 /// Derives a deterministic save path for a ROM file.
 pub fn save_path_from_rom_path(rom_path: &Path) -> PathBuf {
     rom_path.with_extension("sav")
 }
 
 /// Loads save data into a cartridge when battery-backed RAM is present.
-pub fn load_save_data_if_available(cartridge: &mut Cartridge, save_path: &Path) {
+pub fn load_save_data_if_available(cartridge: &mut Cartridge, save_path: &Path) -> SaveLoadStatus {
     if !cartridge.has_battery_backed_ram() {
-        return;
+        return SaveLoadStatus::NotBatteryBacked;
     }
 
     let save_data = match fs::read(save_path) {
         Ok(bytes) => bytes,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return SaveLoadStatus::NotFound,
         Err(error) => {
             eprintln!(
                 "warning: failed to read save file '{}': {error}",
                 save_path.display()
             );
-            return;
+            return SaveLoadStatus::ReadError;
         }
     };
 
-    if let Err(error) = cartridge.load_save_data(&save_data) {
-        match error {
-            SaveDataError::SizeMismatch {
-                expected_size,
-                actual_size,
-            } => {
-                eprintln!(
-                    "warning: save file '{}' size mismatch (expected {expected_size} bytes, got {actual_size}); continuing with zeroed RAM",
-                    save_path.display()
-                );
+    match cartridge.load_save_data(&save_data) {
+        Ok(()) => SaveLoadStatus::Loaded,
+        Err(error) => {
+            match error {
+                SaveDataError::SizeMismatch {
+                    expected_size,
+                    actual_size,
+                } => {
+                    eprintln!(
+                        "warning: save file '{}' size mismatch (expected {expected_size} bytes, got {actual_size}); continuing with zeroed RAM",
+                        save_path.display()
+                    );
+                }
+                SaveDataError::NoExternalRam | SaveDataError::NotBatteryBackedRam => {
+                    eprintln!(
+                        "warning: save file '{}' ignored: cartridge cannot accept save data ({error:?})",
+                        save_path.display()
+                    );
+                }
             }
-            SaveDataError::NoExternalRam | SaveDataError::NotBatteryBackedRam => {
-                eprintln!(
-                    "warning: save file '{}' ignored: cartridge cannot accept save data ({error:?})",
-                    save_path.display()
-                );
-            }
+            SaveLoadStatus::InvalidData
         }
     }
 }

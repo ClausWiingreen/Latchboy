@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use latchboy_core::cartridge::{Cartridge, CartridgeType, DestinationCode, RomSize};
 use latchboy_desktop::savefile::{
-    load_save_data_if_available, persist_save_data, save_path_from_rom_path,
+    load_save_data_if_available, persist_save_data, save_path_from_rom_path, SaveLoadStatus,
 };
 
 const CARTRIDGE_TYPE_OFFSET: usize = 0x0147;
@@ -37,7 +37,8 @@ fn save_file_round_trips_battery_backed_ram() {
     persist_save_data(&cartridge, &save_path);
 
     let mut reloaded = Cartridge::from_rom(rom).expect("reloaded cartridge should load");
-    load_save_data_if_available(&mut reloaded, &save_path);
+    let load_status = load_save_data_if_available(&mut reloaded, &save_path);
+    assert_eq!(load_status, SaveLoadStatus::Loaded);
 
     assert_eq!(reloaded.read(0xA000), 0xAB);
     assert_eq!(reloaded.read(0xA001), 0xCD);
@@ -55,10 +56,32 @@ fn load_ignores_corrupt_size_mismatch_and_leaves_ram_zeroed() {
     fs::write(&save_path, [0x11, 0x22, 0x33]).expect("corrupt save file should be written");
 
     let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
-    load_save_data_if_available(&mut cartridge, &save_path);
+    let load_status = load_save_data_if_available(&mut cartridge, &save_path);
+    assert_eq!(load_status, SaveLoadStatus::InvalidData);
 
     assert_eq!(cartridge.read(0xA000), 0x00);
     assert_eq!(cartridge.read(0xA001), 0x00);
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn invalid_save_load_can_be_used_to_skip_persist_and_preserve_original_file() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("preserve.sav");
+    let rom = build_rom(CartridgeType::RomRamBattery.code(), 0x02);
+    let original = vec![0x42, 0x24, 0x11];
+    fs::write(&save_path, &original).expect("initial mismatched save should be written");
+
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
+    let load_status = load_save_data_if_available(&mut cartridge, &save_path);
+    let persist_enabled = !matches!(load_status, SaveLoadStatus::InvalidData);
+    if persist_enabled {
+        persist_save_data(&cartridge, &save_path);
+    }
+
+    let after = fs::read(&save_path).expect("save file should remain readable");
+    assert_eq!(after, original);
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
