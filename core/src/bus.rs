@@ -25,7 +25,7 @@ const HRAM_SIZE: usize = 0x7F;
 const BOOT_ROM_SIZE: usize = 0x100;
 
 /// DMG address bus with full address-range mapping and WRAM echo behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Bus {
     cartridge: Cartridge,
     boot_rom: Option<Vec<u8>>,
@@ -101,6 +101,7 @@ impl Bus {
     pub fn reset(&mut self) {
         self.cartridge.reset_mapper_state();
 
+        self.boot_rom_enabled = self.boot_rom.is_some();
         self.boot_rom_disable_value = 0;
         self.vram = [0; VRAM_SIZE];
         self.wram = [0; WRAM_SIZE];
@@ -217,6 +218,23 @@ mod tests {
 
         bus.write8(0xFF50, 0x00);
         assert!(!bus.boot_rom_enabled());
+    }
+
+    #[test]
+    fn reset_reenables_boot_rom_mapping_when_boot_rom_is_present() {
+        let mut cartridge_rom = make_rom(CartridgeType::RomOnly, RamSize::None);
+        cartridge_rom[0] = 0x99;
+        let cartridge = Cartridge::from_rom(cartridge_rom).expect("test rom should parse");
+
+        let mut bus = Bus::with_boot_rom(cartridge, vec![0x42; BOOT_ROM_SIZE]);
+        bus.write8(0xFF50, 0x01);
+        assert!(!bus.boot_rom_enabled());
+
+        bus.reset();
+
+        assert!(bus.boot_rom_enabled());
+        assert_eq!(bus.read8(0xFF50), 0x00);
+        assert_eq!(bus.read8(0x0000), 0x42);
     }
 
     #[test]

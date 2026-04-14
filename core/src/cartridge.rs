@@ -12,7 +12,7 @@ const ROM_BANK_SIZE: usize = 0x4000;
 const RAM_BANK_SIZE: usize = 0x2000;
 const EXTERNAL_RAM_START: u16 = 0xA000;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CartridgeError {
     RomTooSmall {
         actual_size: usize,
@@ -24,7 +24,7 @@ pub enum CartridgeError {
     UnsupportedCartridgeType(CartridgeType),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SaveDataError {
     NoExternalRam,
     NotBatteryBackedRam,
@@ -34,7 +34,7 @@ pub enum SaveDataError {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum Mapper {
     RomOnly,
     Mbc1 {
@@ -56,7 +56,7 @@ enum Mapper {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HeaderWarning {
     HeaderChecksumMismatch { expected: u8, actual: u8 },
     UnknownCartridgeType(u8),
@@ -65,7 +65,7 @@ pub enum HeaderWarning {
     UnknownDestinationCode(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CartridgeType {
     RomOnly,
     RomRam,
@@ -160,7 +160,7 @@ impl CartridgeType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RomSize {
     Banks2,
     Banks4,
@@ -233,7 +233,7 @@ impl RomSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RamSize {
     None,
     KibiBytes8,
@@ -278,7 +278,7 @@ impl RamSize {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DestinationCode {
     Japanese,
     NonJapanese,
@@ -303,7 +303,7 @@ impl DestinationCode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CartridgeHeader {
     pub title: String,
     pub cartridge_type: CartridgeType,
@@ -390,7 +390,7 @@ pub fn compute_header_checksum(rom: &[u8]) -> Result<u8, CartridgeError> {
         .fold(0u8, |acc, byte| acc.wrapping_sub(*byte).wrapping_sub(1)))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Cartridge {
     pub header: CartridgeHeader,
     pub warnings: Vec<HeaderWarning>,

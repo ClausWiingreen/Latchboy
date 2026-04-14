@@ -28,6 +28,7 @@ pub struct Emulator {
 impl Hash for Emulator {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.cpu.hash(state);
+        self.bus.hash(state);
         self.total_cycles.hash(state);
         self.cycle_carry.hash(state);
     }
@@ -175,6 +176,37 @@ mod tests {
         assert_eq!(split.cpu().sp(), single.cpu().sp());
         assert_eq!(split.cpu().halted(), single.cpu().halted());
         assert_eq!(split.total_cycles(), single.total_cycles());
+    }
+
+    #[test]
+    fn hash_reflects_bus_memory_state() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut rom_a = vec![0u8; 2 * 16 * 1024];
+        rom_a[0x0000] = 0x76;
+        rom_a[0x0134..0x0138].copy_from_slice(b"HSHA");
+        rom_a[0x0147] = CartridgeType::RomOnly.code();
+        rom_a[0x0148] = RomSize::Banks2.code();
+        rom_a[0x0149] = RamSize::None.code();
+        rom_a[0x014A] = DestinationCode::Japanese.code();
+        rom_a[0x014D] =
+            compute_header_checksum(&rom_a).expect("test rom header checksum should compute");
+
+        let mut rom_b = rom_a.clone();
+        rom_b[0x0001] = 0xAA;
+
+        let emu_a =
+            Emulator::from_cartridge(Cartridge::from_rom(rom_a).expect("test rom should parse"));
+        let emu_b =
+            Emulator::from_cartridge(Cartridge::from_rom(rom_b).expect("test rom should parse"));
+
+        let mut hasher_a = DefaultHasher::new();
+        emu_a.hash(&mut hasher_a);
+
+        let mut hasher_b = DefaultHasher::new();
+        emu_b.hash(&mut hasher_b);
+
+        assert_ne!(hasher_a.finish(), hasher_b.finish());
     }
 
     #[test]
