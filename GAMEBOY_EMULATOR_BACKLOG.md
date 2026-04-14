@@ -69,7 +69,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Accurate Z/N/H/C flag behavior per instruction.
 - [ ] **Instruction decoder + executor**
   - [ ] Implement base opcode table (current scaffold includes a small subset used by smoke tests).
-  - [ ] Implement CB-prefixed table.
+  - [x] Implement CB-prefixed table.
   - [x] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
   - [ ] Add table-driven instruction tests for arithmetic, loads, and bit ops.
 - [ ] **CPU timing**
@@ -87,6 +87,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Additional base-opcode load/store and 16-bit arithmetic coverage now includes indirect accumulator transfers (`LD (BC)/(DE),A`, `LD A,(BC)/(DE)`, `LD (HL+)/ (HL-),A`, `LD A,(HL+)/ (HL-)`), high-memory variants (`LDH (a8),A`, `LDH A,(a8)`, `LD (C),A`, `LD A,(C)`), absolute accumulator transfers (`LD (a16),A`, `LD A,(a16)`), plus `INC/DEC rr` and `ADD HL,rr`.
 - Base-opcode miscellaneous accumulator operations now include non-CB rotates (`RLCA`, `RRCA`, `RLA`, `RRA`) and flag-transforming instructions (`DAA`, `CPL`, `SCF`, `CCF`) with focused unit-test coverage.
 - Base opcode control-flow/stack coverage now includes relative and conditional jumps (`JR`, `JR cc`), absolute and conditional jumps/calls (`JP`, `JP cc`, `CALL`, `CALL cc`, `JP (HL)`), returns (`RET`, `RET cc`), stack transfer instructions (`PUSH/POP rr`), restart vectors (`RST`), and SP/HL transfer-family instructions (`LD (a16),SP`, `ADD SP,e8`, `LD HL,SP+e8`, `LD SP,HL`).
+- CB-prefixed decode/execute support now covers rotate/shift (`RLC/RRC/RL/RR/SLA/SRA/SWAP/SRL`), bit-test (`BIT`), and bit-manipulation (`RES`/`SET`) instruction groups for both register and `(HL)` targets, including per-target timing differences.
 - CPU unit tests now include focused coverage for 16-bit register-pair loads and carry-sensitive ALU behavior for both register and immediate instruction forms.
 - Remaining work for this milestone still includes full base/CB table completion, invalid opcode behavior policy, and broader timing/control-flow/interrupt conformance.
 - Invalid/unused opcode dispatch now avoids panic-based control flow by halting execution and recording the offending opcode for diagnostics.
