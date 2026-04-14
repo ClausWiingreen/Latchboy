@@ -184,6 +184,11 @@ fn sync_parent_directory(path: &Path) -> io::Result<()> {
     let Some(parent) = path.parent() else {
         return Ok(());
     };
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
 
     #[cfg(unix)]
     {
@@ -195,5 +200,17 @@ fn sync_parent_directory(path: &Path) -> io::Result<()> {
     {
         let _ = parent;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sync_parent_directory;
+    use std::path::Path;
+
+    #[test]
+    fn sync_parent_directory_accepts_cwd_relative_paths() {
+        sync_parent_directory(Path::new("test.sav"))
+            .expect("syncing current working directory should succeed");
     }
 }
