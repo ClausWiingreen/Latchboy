@@ -27,6 +27,7 @@ pub enum CartridgeError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveDataError {
     NoExternalRam,
+    NotBatteryBackedRam,
     SizeMismatch {
         expected_size: usize,
         actual_size: usize,
@@ -514,6 +515,10 @@ impl Cartridge {
     }
 
     pub fn load_save_data(&mut self, save_data: &[u8]) -> Result<(), SaveDataError> {
+        if !self.has_battery_backed_ram() {
+            return Err(SaveDataError::NotBatteryBackedRam);
+        }
+
         let external_ram = self
             .external_ram
             .as_mut()
@@ -1386,5 +1391,23 @@ mod tests {
                 actual_size: 16,
             }
         );
+    }
+
+    #[test]
+    fn cartridge_load_save_data_rejects_non_battery_ram_types() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRam.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom+ram cartridge loads");
+        let error = cartridge
+            .load_save_data(&[0u8; 8 * 1024])
+            .expect_err("non-battery cartridges should reject loading save data");
+
+        assert_eq!(error, SaveDataError::NotBatteryBackedRam);
     }
 }
