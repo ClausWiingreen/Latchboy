@@ -80,7 +80,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Interrupt mechanism**
   - [x] IME behavior and delayed EI semantics.
   - [x] IF/IE register interaction.
-  - [ ] HALT bug behavior (deferred final-accuracy tuning allowed).
+  - [x] HALT bug behavior (deferred final-accuracy tuning allowed).
 
 **Implementation review notes (2026-04-14)**
 - Base opcode coverage has been expanded beyond the original smoke-test subset to include `LD rr,d16` for all register pairs, `ADC`/`SBC` register forms, and immediate ALU forms (`ADD/ADC/SUB/SBC/AND/XOR/OR/CP d8`).

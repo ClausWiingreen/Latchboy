@@ -100,6 +100,7 @@ pub struct Cpu {
     halted_by_unimplemented_opcode: bool,
     ime: bool,
     ime_enable_pending: bool,
+    halt_bug_active: bool,
     last_unimplemented_opcode: Option<u8>,
 }
 
@@ -128,6 +129,7 @@ impl Cpu {
             halted_by_unimplemented_opcode: false,
             ime: false,
             ime_enable_pending: false,
+            halt_bug_active: false,
             last_unimplemented_opcode: None,
         }
     }
@@ -376,7 +378,11 @@ impl Cpu {
             }
             0x40..=0x7F => {
                 if opcode == 0x76 {
-                    self.halted = true;
+                    if !self.ime && pending_interrupts != 0 {
+                        self.halt_bug_active = true;
+                    } else {
+                        self.halted = true;
+                    }
                     4
                 } else {
                     let source = self.read_r8(opcode & 0x07, bus);
@@ -613,7 +619,11 @@ impl Cpu {
 
     fn fetch8(&mut self, bus: &Bus) -> u8 {
         let value = bus.read8(self.pc);
-        self.pc = self.pc.wrapping_add(1);
+        if self.halt_bug_active {
+            self.halt_bug_active = false;
+        } else {
+            self.pc = self.pc.wrapping_add(1);
+        }
         value
     }
 
@@ -1562,6 +1572,26 @@ mod tests {
         assert!(!cpu.halted());
         assert_eq!(cpu.pc(), 0x0001);
         assert_eq!(bus.read8(0xFF0F), 0x01);
+    }
+
+    #[test]
+    fn halt_bug_repeats_next_opcode_fetch_when_ime_is_disabled_with_pending_interrupt() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[
+            0x76, // HALT
+            0x3E, 0x12, // LD A,12
+        ]);
+
+        bus.write8(0xFFFF, 0x01);
+        bus.write8(0xFF0F, 0x01);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.halted());
+        assert_eq!(cpu.pc(), 0x0001);
+
+        assert_eq!(cpu.step(&mut bus), 8);
+        assert_eq!(cpu.registers.a, 0x3E);
+        assert_eq!(cpu.pc(), 0x0002);
     }
 
     #[test]
