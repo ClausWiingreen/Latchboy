@@ -30,6 +30,11 @@ enum Mapper {
         bank_upper2: u8,
         banking_mode: u8,
     },
+    Mbc3 {
+        ram_enabled: bool,
+        rom_bank: u8,
+        ram_bank_or_rtc: u8,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,6 +379,15 @@ impl Cartridge {
                     banking_mode: 0,
                 }
             }
+            CartridgeType::Mbc3
+            | CartridgeType::Mbc3Ram
+            | CartridgeType::Mbc3RamBattery
+            | CartridgeType::Mbc3TimerBattery
+            | CartridgeType::Mbc3TimerRamBattery => Mapper::Mbc3 {
+                ram_enabled: false,
+                rom_bank: 1,
+                ram_bank_or_rtc: 0,
+            },
             unsupported => return Err(CartridgeError::UnsupportedCartridgeType(unsupported)),
         };
 
@@ -413,6 +427,11 @@ impl Cartridge {
                 bank_upper2,
                 banking_mode,
             ),
+            Mapper::Mbc3 {
+                ram_enabled,
+                rom_bank,
+                ram_bank_or_rtc,
+            } => self.read_mbc3(address, ram_enabled, rom_bank, ram_bank_or_rtc),
         }
     }
 
@@ -454,6 +473,38 @@ impl Cartridge {
                     if let Some(ram) = &mut self.external_ram {
                         let offset =
                             Self::mbc1_ram_offset(address, *banking_mode, *bank_upper2, ram.len());
+                        if let Some(slot) = ram.get_mut(offset) {
+                            *slot = value;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Mapper::Mbc3 {
+                ram_enabled,
+                rom_bank,
+                ram_bank_or_rtc,
+            } => match address {
+                0x0000..=0x1FFF => {
+                    *ram_enabled = value & 0x0F == 0x0A;
+                }
+                0x2000..=0x3FFF => {
+                    let selected = value & 0x7F;
+                    *rom_bank = if selected == 0 { 1 } else { selected };
+                }
+                0x4000..=0x5FFF => {
+                    *ram_bank_or_rtc = value & 0x0F;
+                }
+                0x6000..=0x7FFF => {
+                    // RTC latch unsupported in this phase.
+                }
+                0xA000..=0xBFFF => {
+                    if !*ram_enabled || *ram_bank_or_rtc > 0x03 {
+                        return;
+                    }
+
+                    if let Some(ram) = &mut self.external_ram {
+                        let offset = Self::mbc3_ram_offset(address, *ram_bank_or_rtc, ram.len());
                         if let Some(slot) = ram.get_mut(offset) {
                             *slot = value;
                         }
@@ -521,6 +572,47 @@ impl Cartridge {
             (bank_upper2 as usize) % ram_bank_count
         };
 
+        bank * 0x2000 + (address as usize - 0xA000)
+    }
+
+    fn read_mbc3(&self, address: u16, ram_enabled: bool, rom_bank: u8, ram_bank_or_rtc: u8) -> u8 {
+        let rom_bank_count = self.rom.len() / 0x4000;
+        if rom_bank_count == 0 {
+            return 0xFF;
+        }
+
+        match address {
+            0x0000..=0x3FFF => self.rom.get(address as usize).copied().unwrap_or(0xFF),
+            0x4000..=0x7FFF => {
+                let bank = (rom_bank as usize % rom_bank_count).max(1);
+                let offset = bank * 0x4000 + (address as usize - 0x4000);
+                self.rom.get(offset).copied().unwrap_or(0xFF)
+            }
+            0xA000..=0xBFFF => {
+                if !ram_enabled {
+                    return 0xFF;
+                }
+
+                if ram_bank_or_rtc > 0x03 {
+                    return 0xFF;
+                }
+
+                self.external_ram
+                    .as_ref()
+                    .and_then(|ram| {
+                        let offset = Self::mbc3_ram_offset(address, ram_bank_or_rtc, ram.len());
+                        ram.get(offset)
+                    })
+                    .copied()
+                    .unwrap_or(0xFF)
+            }
+            _ => 0xFF,
+        }
+    }
+
+    fn mbc3_ram_offset(address: u16, ram_bank_or_rtc: u8, ram_len: usize) -> usize {
+        let ram_bank_count = (ram_len / 0x2000).max(1);
+        let bank = (ram_bank_or_rtc as usize) % ram_bank_count;
         bank * 0x2000 + (address as usize - 0xA000)
     }
 }
@@ -836,6 +928,77 @@ mod tests {
         cartridge.write(0xA000, 0x66);
 
         assert_eq!(cartridge.read(0xA000), 0x66);
+    }
+
+    #[test]
+    fn cartridge_accepts_mbc3() {
+        let mut rom = vec![0u8; 0x10000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc3.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("mbc3 should be supported");
+        assert_eq!(cartridge.read(0x1000), 0x00);
+    }
+
+    #[test]
+    fn mbc3_switches_rom_banks() {
+        let mut rom = vec![0u8; 0x10000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc3.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[0x4000] = 0x01;
+        rom[0x8000] = 0x02;
+        rom[0xC000] = 0x03;
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc3 should be supported");
+        assert_eq!(cartridge.read(0x4000), 0x01);
+
+        cartridge.write(0x2000, 0x02);
+        assert_eq!(cartridge.read(0x4000), 0x02);
+
+        cartridge.write(0x2000, 0x03);
+        assert_eq!(cartridge.read(0x4000), 0x03);
+    }
+
+    #[test]
+    fn mbc3_supports_ram_enable_and_bank_switching() {
+        let mut rom = vec![0u8; 0x10000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc3Ram.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes32.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc3 should be supported");
+
+        cartridge.write(0xA000, 0x12);
+        assert_eq!(cartridge.read(0xA000), 0xFF);
+
+        cartridge.write(0x0000, 0x0A);
+        cartridge.write(0xA000, 0x12);
+        assert_eq!(cartridge.read(0xA000), 0x12);
+
+        cartridge.write(0x4000, 0x01);
+        cartridge.write(0xA000, 0x34);
+        assert_eq!(cartridge.read(0xA000), 0x34);
+
+        cartridge.write(0x4000, 0x81);
+        cartridge.write(0xA000, 0x56);
+        assert_eq!(cartridge.read(0xA000), 0x56);
+
+        cartridge.write(0x4000, 0x00);
+        assert_eq!(cartridge.read(0xA000), 0x12);
+
+        cartridge.write(0x4000, 0x08);
+        assert_eq!(cartridge.read(0xA000), 0xFF);
     }
 
     #[test]
