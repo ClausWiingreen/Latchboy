@@ -94,6 +94,7 @@ pub struct Cpu {
     pc: u16,
     sp: u16,
     halted: bool,
+    last_unimplemented_opcode: Option<u8>,
 }
 
 impl Default for Cpu {
@@ -118,6 +119,7 @@ impl Cpu {
             pc: 0x0000,
             sp: 0xFFFE,
             halted: false,
+            last_unimplemented_opcode: None,
         }
     }
 
@@ -135,6 +137,10 @@ impl Cpu {
 
     pub const fn halted(&self) -> bool {
         self.halted
+    }
+
+    pub const fn last_unimplemented_opcode(&self) -> Option<u8> {
+        self.last_unimplemented_opcode
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
@@ -470,8 +476,14 @@ impl Cpu {
                 self.pc = address;
                 16
             }
-            _ => panic!("unimplemented opcode: 0x{opcode:02X}"),
+            _ => self.handle_unimplemented_opcode(opcode),
         }
+    }
+
+    fn handle_unimplemented_opcode(&mut self, opcode: u8) -> u32 {
+        self.halted = true;
+        self.last_unimplemented_opcode = Some(opcode);
+        4
     }
 
     fn fetch8(&mut self, bus: &Bus) -> u8 {
@@ -1079,5 +1091,18 @@ mod tests {
         assert_eq!(cpu.registers.f & FLAG_C, 0);
         assert_eq!(cpu.registers.f & FLAG_N, 0);
         assert_eq!(cpu.registers.f & FLAG_H, 0);
+    }
+
+    #[test]
+    fn unimplemented_opcode_halts_without_panicking() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0xD3]); // unused/unimplemented opcode
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(cpu.halted());
+        assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
+        assert_eq!(cpu.pc(), 0x0001);
     }
 }

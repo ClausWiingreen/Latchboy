@@ -70,7 +70,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Instruction decoder + executor**
   - [ ] Implement base opcode table (current scaffold includes a small subset used by smoke tests).
   - [ ] Implement CB-prefixed table.
-  - [ ] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
+  - [x] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
   - [ ] Add table-driven instruction tests for arithmetic, loads, and bit ops.
 - [ ] **CPU timing**
   - [ ] Instruction cycle counts.
@@ -88,6 +88,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Base-opcode miscellaneous accumulator operations now include non-CB rotates (`RLCA`, `RRCA`, `RLA`, `RRA`) and flag-transforming instructions (`DAA`, `CPL`, `SCF`, `CCF`) with focused unit-test coverage.
 - CPU unit tests now include focused coverage for 16-bit register-pair loads and carry-sensitive ALU behavior for both register and immediate instruction forms.
 - Remaining work for this milestone still includes full base/CB table completion, invalid opcode behavior policy, and broader timing/control-flow/interrupt conformance.
+- Invalid/unused opcode dispatch now avoids panic-based control flow by halting execution and recording the offending opcode for diagnostics.
 
 **Acceptance criteria**
 - Passes CPU instruction correctness test ROMs.
