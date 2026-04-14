@@ -16,6 +16,10 @@ use cartridge::{
 use cpu::Cpu;
 use std::hash::{Hash, Hasher};
 
+const INTERRUPT_FLAG_REGISTER: u16 = 0xFF0F;
+const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
+const INTERRUPT_MASK: u8 = 0x1F;
+
 /// Top-level emulator state container for subsystem wiring.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Emulator {
@@ -71,10 +75,16 @@ impl Emulator {
 
         while available < target {
             if self.cpu.halted() {
-                let remaining = target - available;
-                let halted_advance = remaining.div_ceil(4) * 4;
-                available += halted_advance;
-                break;
+                let pending_interrupts = self.bus.read8(INTERRUPT_FLAG_REGISTER)
+                    & self.bus.read8(INTERRUPT_ENABLE_REGISTER)
+                    & INTERRUPT_MASK;
+
+                if pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable() {
+                    let remaining = target - available;
+                    let halted_advance = remaining.div_ceil(4) * 4;
+                    available += halted_advance;
+                    break;
+                }
             }
 
             available += self.cpu.step(&mut self.bus) as u64;
@@ -199,6 +209,54 @@ mod tests {
         assert!(emulator.cpu().halted());
         assert_eq!(emulator.cpu().pc(), halted_pc);
         assert_eq!(emulator.total_cycles(), 1_000_004);
+    }
+
+    #[test]
+    fn halted_cpu_resumes_when_if_and_ie_are_pending() {
+        let mut emulator = Emulator::new();
+        emulator.step_cycles(4);
+        assert!(emulator.cpu().halted());
+        assert_eq!(emulator.cpu().pc(), 0x0001);
+
+        emulator.bus.write8(0xFF0F, 0x01);
+        emulator.bus.write8(0xFFFF, 0x01);
+        emulator.step_cycles(4);
+
+        assert!(!emulator.cpu().halted());
+        assert_eq!(emulator.cpu().pc(), 0x0002);
+    }
+
+    #[test]
+    fn halted_cpu_services_interrupt_when_ime_is_enabled() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0xFB; // EI
+        rom[0x0001] = 0x76; // HALT
+        rom[0x0002] = 0x00; // NOP (must not execute when interrupt services first)
+        rom[0x0134..0x0138].copy_from_slice(b"INTS");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+
+        emulator.step_cycles(8);
+        assert!(emulator.cpu().halted());
+        assert_eq!(emulator.cpu().pc(), 0x0002);
+        assert!(emulator.cpu().ime());
+
+        emulator.bus.write8(0xFF0F, 0x01);
+        emulator.bus.write8(0xFFFF, 0x01);
+        emulator.step_cycles(20);
+
+        assert_eq!(emulator.cpu().pc(), 0x0040);
+        assert!(!emulator.cpu().ime());
+        assert_eq!(emulator.bus.read8(0xFF0F), 0x00);
+        assert_eq!(emulator.bus.read8(0xFFFC), 0x02);
+        assert_eq!(emulator.bus.read8(0xFFFD), 0x00);
     }
 
     #[test]

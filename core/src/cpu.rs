@@ -5,6 +5,9 @@ const FLAG_N: u8 = 0b0100_0000;
 const FLAG_H: u8 = 0b0010_0000;
 const FLAG_C: u8 = 0b0001_0000;
 const FLAGS_MASK: u8 = FLAG_Z | FLAG_N | FLAG_H | FLAG_C;
+const INTERRUPT_FLAG_REGISTER: u16 = 0xFF0F;
+const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
+const INTERRUPT_MASK: u8 = 0x1F;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Registers {
@@ -94,6 +97,7 @@ pub struct Cpu {
     pc: u16,
     sp: u16,
     halted: bool,
+    halted_by_unimplemented_opcode: bool,
     ime: bool,
     ime_enable_pending: bool,
     last_unimplemented_opcode: Option<u8>,
@@ -121,6 +125,7 @@ impl Cpu {
             pc: 0x0000,
             sp: 0xFFFE,
             halted: false,
+            halted_by_unimplemented_opcode: false,
             ime: false,
             ime_enable_pending: false,
             last_unimplemented_opcode: None,
@@ -143,6 +148,10 @@ impl Cpu {
         self.halted
     }
 
+    pub const fn halted_is_interrupt_wakeable(&self) -> bool {
+        self.halted && !self.halted_by_unimplemented_opcode
+    }
+
     pub const fn ime(&self) -> bool {
         self.ime
     }
@@ -152,6 +161,16 @@ impl Cpu {
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
+        let pending_interrupts = self.pending_interrupts(bus);
+        if pending_interrupts != 0 && !self.halted_by_unimplemented_opcode {
+            if self.halted {
+                self.halted = false;
+            }
+            if self.ime {
+                return self.service_interrupt(bus, pending_interrupts);
+            }
+        }
+
         if self.halted {
             return 4;
         }
@@ -264,6 +283,7 @@ impl Cpu {
             0x10 => {
                 let _ = self.fetch8(bus);
                 self.halted = true;
+                self.halted_by_unimplemented_opcode = false;
                 4
             }
             0x18 => {
@@ -563,8 +583,30 @@ impl Cpu {
         cycles
     }
 
+    fn pending_interrupts(&self, bus: &Bus) -> u8 {
+        bus.read8(INTERRUPT_FLAG_REGISTER) & bus.read8(INTERRUPT_ENABLE_REGISTER) & INTERRUPT_MASK
+    }
+
+    fn service_interrupt(&mut self, bus: &mut Bus, pending_interrupts: u8) -> u32 {
+        let interrupt_index = pending_interrupts.trailing_zeros() as u16;
+        let interrupt_mask = 1 << interrupt_index;
+        let vectors = [0x40, 0x48, 0x50, 0x58, 0x60];
+        let vector = vectors[interrupt_index as usize];
+
+        let interrupt_flags = bus.read8(INTERRUPT_FLAG_REGISTER);
+        bus.write8(INTERRUPT_FLAG_REGISTER, interrupt_flags & !interrupt_mask);
+
+        self.ime = false;
+        self.ime_enable_pending = false;
+        self.push_stack16(bus, self.pc);
+        self.pc = vector;
+
+        20
+    }
+
     fn handle_unimplemented_opcode(&mut self, opcode: u8) -> u32 {
         self.halted = true;
+        self.halted_by_unimplemented_opcode = true;
         self.last_unimplemented_opcode = Some(opcode);
         4
     }
@@ -1484,6 +1526,45 @@ mod tests {
     }
 
     #[test]
+    fn pending_enabled_interrupt_is_serviced_before_opcode_fetch() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0x00]); // NOP (must not execute)
+
+        cpu.pc = 0x1234;
+        cpu.ime = true;
+        bus.write8(0xFFFF, 0x01);
+        bus.write8(0xFF0F, 0x01);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.pc(), 0x0040);
+        assert_eq!(cpu.sp(), 0xFFFC);
+        assert!(!cpu.ime());
+        assert_eq!(bus.read8(0xFF0F), 0x00);
+        assert_eq!(bus.read8(0xFFFC), 0x34);
+        assert_eq!(bus.read8(0xFFFD), 0x12);
+    }
+
+    #[test]
+    fn halted_cpu_wakes_on_pending_interrupt_even_when_ime_is_disabled() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0x00]); // NOP
+
+        cpu.halted = true;
+        cpu.pc = 0x0000;
+        bus.write8(0xFFFF, 0x01);
+        bus.write8(0xFF0F, 0x01);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 4);
+        assert!(!cpu.halted());
+        assert_eq!(cpu.pc(), 0x0001);
+        assert_eq!(bus.read8(0xFF0F), 0x01);
+    }
+
+    #[test]
     fn unimplemented_opcode_halts_without_panicking() {
         let mut cpu = Cpu::new();
         let mut bus = make_bus_with_program(&[0xD3]); // unused/unimplemented opcode
@@ -1494,6 +1575,25 @@ mod tests {
         assert!(cpu.halted());
         assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
         assert_eq!(cpu.pc(), 0x0001);
+    }
+
+    #[test]
+    fn unimplemented_opcode_trap_does_not_wake_on_pending_interrupts() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0xD3]); // unused/unimplemented opcode
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(cpu.halted());
+        assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
+
+        bus.write8(0xFF0F, 0x01);
+        bus.write8(0xFFFF, 0x01);
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cycles, 4);
+        assert!(cpu.halted());
+        assert_eq!(cpu.pc(), 0x0001);
+        assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
     }
 
     #[test]
