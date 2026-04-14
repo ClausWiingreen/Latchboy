@@ -24,6 +24,16 @@ pub enum CartridgeError {
     UnsupportedCartridgeType(CartridgeType),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveDataError {
+    NoExternalRam,
+    NotBatteryBackedRam,
+    SizeMismatch {
+        expected_size: usize,
+        actual_size: usize,
+    },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper {
     RomOnly,
@@ -122,6 +132,31 @@ impl CartridgeType {
             Self::Mbc5RumbleRamBattery => 0x1E,
             Self::Unknown(value) => value,
         }
+    }
+
+    pub const fn has_battery(self) -> bool {
+        matches!(
+            self,
+            Self::RomRamBattery
+                | Self::Mbc1RamBattery
+                | Self::Mbc3TimerBattery
+                | Self::Mbc3TimerRamBattery
+                | Self::Mbc3RamBattery
+                | Self::Mbc5RamBattery
+                | Self::Mbc5RumbleRamBattery
+        )
+    }
+
+    pub const fn has_battery_backed_ram(self) -> bool {
+        matches!(
+            self,
+            Self::RomRamBattery
+                | Self::Mbc1RamBattery
+                | Self::Mbc3TimerRamBattery
+                | Self::Mbc3RamBattery
+                | Self::Mbc5RamBattery
+                | Self::Mbc5RumbleRamBattery
+        )
     }
 }
 
@@ -465,6 +500,39 @@ impl Cartridge {
                 ram_bank,
             ),
         }
+    }
+
+    pub const fn has_battery_backed_ram(&self) -> bool {
+        self.header.cartridge_type.has_battery_backed_ram()
+    }
+
+    pub fn save_data(&self) -> Option<Vec<u8>> {
+        if !self.has_battery_backed_ram() {
+            return None;
+        }
+
+        self.external_ram.clone()
+    }
+
+    pub fn load_save_data(&mut self, save_data: &[u8]) -> Result<(), SaveDataError> {
+        if !self.has_battery_backed_ram() {
+            return Err(SaveDataError::NotBatteryBackedRam);
+        }
+
+        let external_ram = self
+            .external_ram
+            .as_mut()
+            .ok_or(SaveDataError::NoExternalRam)?;
+
+        if external_ram.len() != save_data.len() {
+            return Err(SaveDataError::SizeMismatch {
+                expected_size: external_ram.len(),
+                actual_size: save_data.len(),
+            });
+        }
+
+        external_ram.copy_from_slice(save_data);
+        Ok(())
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
@@ -1255,5 +1323,91 @@ mod tests {
                 actual_size: 0x8000,
             }
         );
+    }
+
+    #[test]
+    fn cartridge_save_data_round_trips_battery_backed_external_ram() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRamBattery.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom+ram+battery cartridge loads");
+        cartridge.write(0xA000, 0xAB);
+        cartridge.write(0xA001, 0xCD);
+
+        let save_data = cartridge
+            .save_data()
+            .expect("battery-backed cartridge should expose save data");
+        assert_eq!(save_data[0], 0xAB);
+        assert_eq!(save_data[1], 0xCD);
+
+        let mut reloaded_cartridge =
+            Cartridge::from_rom(cartridge.rom.clone()).expect("rom reload should succeed");
+        reloaded_cartridge
+            .load_save_data(&save_data)
+            .expect("save data should load");
+
+        assert_eq!(reloaded_cartridge.read(0xA000), 0xAB);
+        assert_eq!(reloaded_cartridge.read(0xA001), 0xCD);
+    }
+
+    #[test]
+    fn cartridge_save_data_is_unavailable_for_non_battery_types() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRam.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("rom+ram cartridge loads");
+        assert_eq!(cartridge.save_data(), None);
+    }
+
+    #[test]
+    fn cartridge_load_save_data_rejects_size_mismatches() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRamBattery.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom+ram+battery cartridge loads");
+        let error = cartridge
+            .load_save_data(&[0u8; 16])
+            .expect_err("short save should be rejected");
+
+        assert_eq!(
+            error,
+            SaveDataError::SizeMismatch {
+                expected_size: 8 * 1024,
+                actual_size: 16,
+            }
+        );
+    }
+
+    #[test]
+    fn cartridge_load_save_data_rejects_non_battery_ram_types() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRam.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom+ram cartridge loads");
+        let error = cartridge
+            .load_save_data(&[0u8; 8 * 1024])
+            .expect_err("non-battery cartridges should reject loading save data");
+
+        assert_eq!(error, SaveDataError::NotBatteryBackedRam);
     }
 }
