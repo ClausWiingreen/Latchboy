@@ -43,10 +43,10 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [x] **External RAM handling**
   - [x] RAM enable/disable behavior.
   - [x] Battery-backed save persistence (`.sav`).
-- [ ] **Address bus mapping**
-  - [ ] Map all DMG address ranges and mirroring (including WRAM echo and unusable regions).
-  - [ ] Correctly route reads/writes between components.
-  - [ ] Add FF50 boot ROM disable register behavior hook.
+- [x] **Address bus mapping**
+  - [x] Map all DMG address ranges and mirroring (including WRAM echo and unusable regions).
+  - [x] Correctly route reads/writes between components.
+  - [x] Add FF50 boot ROM disable register behavior hook.
 
 **Acceptance criteria**
 - ROM-only games boot into code execution.
