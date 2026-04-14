@@ -493,7 +493,7 @@ impl Cartridge {
                     *rom_bank = if selected == 0 { 1 } else { selected };
                 }
                 0x4000..=0x5FFF => {
-                    *ram_bank_or_rtc = value;
+                    *ram_bank_or_rtc = value & 0x0F;
                 }
                 0x6000..=0x7FFF => {
                     // RTC latch unsupported in this phase.
@@ -989,6 +989,10 @@ mod tests {
         cartridge.write(0x4000, 0x01);
         cartridge.write(0xA000, 0x34);
         assert_eq!(cartridge.read(0xA000), 0x34);
+
+        cartridge.write(0x4000, 0x81);
+        cartridge.write(0xA000, 0x56);
+        assert_eq!(cartridge.read(0xA000), 0x56);
 
         cartridge.write(0x4000, 0x00);
         assert_eq!(cartridge.read(0xA000), 0x12);
