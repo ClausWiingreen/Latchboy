@@ -145,6 +145,18 @@ impl CartridgeType {
                 | Self::Mbc5RumbleRamBattery
         )
     }
+
+    pub const fn has_battery_backed_ram(self) -> bool {
+        matches!(
+            self,
+            Self::RomRamBattery
+                | Self::Mbc1RamBattery
+                | Self::Mbc3TimerRamBattery
+                | Self::Mbc3RamBattery
+                | Self::Mbc5RamBattery
+                | Self::Mbc5RumbleRamBattery
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -490,7 +502,7 @@ impl Cartridge {
     }
 
     pub const fn has_battery_backed_ram(&self) -> bool {
-        self.header.cartridge_type.has_battery()
+        self.header.cartridge_type.has_battery_backed_ram()
     }
 
     pub fn save_data(&self) -> Option<Vec<u8>> {
@@ -1364,7 +1376,7 @@ mod tests {
 
         let mut cartridge = Cartridge::from_rom(rom).expect("rom+ram+battery cartridge loads");
         let error = cartridge
-            .load_save_data(&vec![0u8; 16])
+            .load_save_data(&[0u8; 16])
             .expect_err("short save should be rejected");
 
         assert_eq!(
