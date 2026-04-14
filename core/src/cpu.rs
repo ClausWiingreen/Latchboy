@@ -97,6 +97,7 @@ pub struct Cpu {
     pc: u16,
     sp: u16,
     halted: bool,
+    halted_by_unimplemented_opcode: bool,
     ime: bool,
     ime_enable_pending: bool,
     last_unimplemented_opcode: Option<u8>,
@@ -124,6 +125,7 @@ impl Cpu {
             pc: 0x0000,
             sp: 0xFFFE,
             halted: false,
+            halted_by_unimplemented_opcode: false,
             ime: false,
             ime_enable_pending: false,
             last_unimplemented_opcode: None,
@@ -156,8 +158,10 @@ impl Cpu {
 
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
         let pending_interrupts = self.pending_interrupts(bus);
-        if pending_interrupts != 0 {
-            self.halted = false;
+        if pending_interrupts != 0 && !self.halted_by_unimplemented_opcode {
+            if self.halted {
+                self.halted = false;
+            }
             if self.ime {
                 return self.service_interrupt(bus, pending_interrupts);
             }
@@ -275,6 +279,7 @@ impl Cpu {
             0x10 => {
                 let _ = self.fetch8(bus);
                 self.halted = true;
+                self.halted_by_unimplemented_opcode = false;
                 4
             }
             0x18 => {
@@ -597,6 +602,7 @@ impl Cpu {
 
     fn handle_unimplemented_opcode(&mut self, opcode: u8) -> u32 {
         self.halted = true;
+        self.halted_by_unimplemented_opcode = true;
         self.last_unimplemented_opcode = Some(opcode);
         4
     }
@@ -1565,6 +1571,25 @@ mod tests {
         assert!(cpu.halted());
         assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
         assert_eq!(cpu.pc(), 0x0001);
+    }
+
+    #[test]
+    fn unimplemented_opcode_trap_does_not_wake_on_pending_interrupts() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0xD3]); // unused/unimplemented opcode
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(cpu.halted());
+        assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
+
+        bus.write8(0xFF0F, 0x01);
+        bus.write8(0xFFFF, 0x01);
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cycles, 4);
+        assert!(cpu.halted());
+        assert_eq!(cpu.pc(), 0x0001);
+        assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
     }
 
     #[test]
