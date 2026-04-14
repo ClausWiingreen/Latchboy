@@ -70,6 +70,13 @@ impl Emulator {
         let mut available = self.cycle_carry as u64;
 
         while available < target {
+            if self.cpu.halted() {
+                let remaining = target - available;
+                let halted_advance = ((remaining + 3) / 4) * 4;
+                available += halted_advance;
+                break;
+            }
+
             available += self.cpu.step(&mut self.bus) as u64;
         }
 
@@ -176,6 +183,22 @@ mod tests {
         assert_eq!(split.cpu().sp(), single.cpu().sp());
         assert_eq!(split.cpu().halted(), single.cpu().halted());
         assert_eq!(split.total_cycles(), single.total_cycles());
+    }
+
+    #[test]
+    fn large_step_on_halted_cpu_fast_forwards_without_state_changes() {
+        let mut emulator = Emulator::new();
+        assert!(emulator.cpu().halted() == false);
+
+        emulator.step_cycles(4);
+        assert!(emulator.cpu().halted());
+        let halted_pc = emulator.cpu().pc();
+
+        emulator.step_cycles(1_000_000);
+
+        assert!(emulator.cpu().halted());
+        assert_eq!(emulator.cpu().pc(), halted_pc);
+        assert_eq!(emulator.total_cycles(), 1_000_004);
     }
 
     #[test]
