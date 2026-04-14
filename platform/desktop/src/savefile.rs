@@ -87,15 +87,42 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
     match fs::rename(&temp_path, path) {
         Ok(()) => Ok(()),
+        Err(rename_error) => replace_via_backup(path, &temp_path, rename_error),
+    }
+}
+
+fn replace_via_backup(path: &Path, temp_path: &Path, rename_error: io::Error) -> io::Result<()> {
+    if !path.exists() {
+        let _ = fs::remove_file(temp_path);
+        return Err(rename_error);
+    }
+
+    let mut backup_path = path.to_path_buf();
+    let unique = format!(
+        "{}.{}.bak",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let extension = match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if !ext.is_empty() => format!("{ext}.{unique}"),
+        _ => unique,
+    };
+    backup_path.set_extension(extension);
+
+    fs::rename(path, &backup_path)?;
+
+    match fs::rename(temp_path, path) {
+        Ok(()) => {
+            let _ = fs::remove_file(&backup_path);
+            Ok(())
+        }
         Err(error) => {
-            if path.exists() {
-                fs::remove_file(path)?;
-                fs::rename(&temp_path, path)?;
-                Ok(())
-            } else {
-                let _ = fs::remove_file(&temp_path);
-                Err(error)
-            }
+            let _ = fs::rename(&backup_path, path);
+            let _ = fs::remove_file(temp_path);
+            Err(error)
         }
     }
 }
