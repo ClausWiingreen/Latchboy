@@ -1,6 +1,6 @@
 const CARTRIDGE_HEADER_SIZE: usize = 0x150;
 const TITLE_START: usize = 0x0134;
-const TITLE_END_INCLUSIVE: usize = 0x0143;
+const TITLE_END_INCLUSIVE: usize = 0x0142;
 const HEADER_CHECKSUM_START: usize = 0x0134;
 const HEADER_CHECKSUM_END_INCLUSIVE: usize = 0x014C;
 const CARTRIDGE_TYPE_OFFSET: usize = 0x0147;
@@ -229,6 +229,8 @@ impl CartridgeHeader {
 
         let header_checksum = rom[HEADER_CHECKSUM_OFFSET];
 
+        let computed_header_checksum = compute_header_checksum(rom)?;
+
         Ok(Self {
             title,
             cartridge_type: CartridgeType::from_code(rom[CARTRIDGE_TYPE_OFFSET]),
@@ -236,7 +238,7 @@ impl CartridgeHeader {
             ram_size: RamSize::from_code(rom[RAM_SIZE_OFFSET]),
             destination_code: DestinationCode::from_code(rom[DESTINATION_OFFSET]),
             header_checksum,
-            computed_header_checksum: compute_header_checksum(rom),
+            computed_header_checksum,
         })
     }
 
@@ -274,10 +276,16 @@ impl CartridgeHeader {
     }
 }
 
-pub fn compute_header_checksum(rom: &[u8]) -> u8 {
-    rom[HEADER_CHECKSUM_START..=HEADER_CHECKSUM_END_INCLUSIVE]
+pub fn compute_header_checksum(rom: &[u8]) -> Result<u8, CartridgeError> {
+    if rom.len() < CARTRIDGE_HEADER_SIZE {
+        return Err(CartridgeError::RomTooSmall {
+            actual_size: rom.len(),
+        });
+    }
+
+    Ok(rom[HEADER_CHECKSUM_START..=HEADER_CHECKSUM_END_INCLUSIVE]
         .iter()
-        .fold(0u8, |acc, byte| acc.wrapping_sub(*byte).wrapping_sub(1))
+        .fold(0u8, |acc, byte| acc.wrapping_sub(*byte).wrapping_sub(1)))
 }
 
 #[cfg(test)]
@@ -293,7 +301,7 @@ mod tests {
         rom[RAM_SIZE_OFFSET] = RamSize::None.code();
         rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
 
-        let checksum = compute_header_checksum(&rom);
+        let checksum = compute_header_checksum(&rom).expect("checksum should compute");
         rom[HEADER_CHECKSUM_OFFSET] = checksum;
 
         rom
@@ -333,7 +341,8 @@ mod tests {
         rom[ROM_SIZE_OFFSET] = 0xFF;
         rom[RAM_SIZE_OFFSET] = 0xFF;
         rom[DESTINATION_OFFSET] = 0xFF;
-        rom[HEADER_CHECKSUM_OFFSET] = compute_header_checksum(&rom);
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
 
         let header = CartridgeHeader::parse(&rom).expect("header should parse");
         let warnings = header.warnings();
@@ -363,5 +372,31 @@ mod tests {
                 actual_size: CARTRIDGE_HEADER_SIZE - 1,
             }
         );
+    }
+
+    #[test]
+    fn compute_header_checksum_rejects_roms_smaller_than_header_region() {
+        let rom = vec![0u8; CARTRIDGE_HEADER_SIZE - 1];
+        let error = compute_header_checksum(&rom).expect_err("rom should be rejected");
+
+        assert_eq!(
+            error,
+            CartridgeError::RomTooSmall {
+                actual_size: CARTRIDGE_HEADER_SIZE - 1,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_does_not_include_cgb_flag_in_title() {
+        let mut rom = make_test_rom();
+        rom[TITLE_START..=TITLE_END_INCLUSIVE].fill(b'A');
+        rom[TITLE_END_INCLUSIVE + 1] = 0x80;
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let header = CartridgeHeader::parse(&rom).expect("header should parse");
+
+        assert_eq!(header.title, "AAAAAAAAAAAAAAA");
     }
 }
