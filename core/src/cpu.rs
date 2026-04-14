@@ -636,8 +636,10 @@ impl Cpu {
         let offset_u16 = u16::from(offset as u8);
         self.registers.set_flag(Flag::Zero, false);
         self.registers.set_flag(Flag::Subtract, false);
-        self.registers
-            .set_flag(Flag::HalfCarry, (sp & 0x000F) + (offset_u16 & 0x000F) > 0x000F);
+        self.registers.set_flag(
+            Flag::HalfCarry,
+            (sp & 0x000F) + (offset_u16 & 0x000F) > 0x000F,
+        );
         self.registers
             .set_flag(Flag::Carry, (sp & 0x00FF) + (offset_u16 & 0x00FF) > 0x00FF);
         result
