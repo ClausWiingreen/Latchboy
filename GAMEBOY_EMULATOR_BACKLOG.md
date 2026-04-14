@@ -67,7 +67,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [x] **Register model and flags**
   - [x] AF, BC, DE, HL, SP, PC.
   - [x] Accurate Z/N/H/C flag behavior per instruction.
-- [ ] **Instruction decoder + executor**
+- [x] **Instruction decoder + executor**
   - [x] Implement base opcode table (current scaffold includes a small subset used by smoke tests).
   - [x] Implement CB-prefixed table.
   - [x] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
@@ -89,7 +89,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Base opcode control-flow/stack coverage now includes relative and conditional jumps (`JR`, `JR cc`), absolute and conditional jumps/calls (`JP`, `JP cc`, `CALL`, `CALL cc`, `JP (HL)`), returns (`RET`, `RET cc`), stack transfer instructions (`PUSH/POP rr`), restart vectors (`RST`), and SP/HL transfer-family instructions (`LD (a16),SP`, `ADD SP,e8`, `LD HL,SP+e8`, `LD SP,HL`).
 - CB-prefixed decode/execute support now covers rotate/shift (`RLC/RRC/RL/RR/SLA/SRA/SWAP/SRL`), bit-test (`BIT`), and bit-manipulation (`RES`/`SET`) instruction groups for both register and `(HL)` targets, including per-target timing differences.
 - CPU unit tests now include focused coverage for 16-bit register-pair loads and carry-sensitive ALU behavior for both register and immediate instruction forms.
-- Remaining work for this milestone still includes full base/CB table completion, invalid opcode behavior policy, and broader timing/control-flow/interrupt conformance.
+- Instruction decode/execute coverage is now feature-complete for all implemented base and CB opcode families in this milestone scope; only hardware-invalid opcodes route to diagnostics.
 - Invalid/unused opcode dispatch now avoids panic-based control flow by halting execution and recording the offending opcode for diagnostics.
 - Remaining valid base opcodes now include `STOP`, `RETI`, `DI`, and `EI` semantics, leaving only hardware-invalid instructions to trigger unimplemented-opcode diagnostics.
 

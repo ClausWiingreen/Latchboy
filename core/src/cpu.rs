@@ -369,78 +369,14 @@ impl Cpu {
                     }
                 }
             }
-            0x80..=0x87 => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.add_to_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0x88..=0x8F => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.adc_to_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0x90..=0x97 => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.sub_from_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0x98..=0x9F => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.sbc_from_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0xA0..=0xA7 => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.and_with_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0xA8..=0xAF => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.xor_with_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0xB0..=0xB7 => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.or_with_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
-            0xB8..=0xBF => {
-                let value = self.read_r8(opcode & 0x07, bus);
-                self.compare_a(value);
-                if (opcode & 0x07) == 0x06 {
-                    8
-                } else {
-                    4
-                }
-            }
+            0x80..=0x87 => self.execute_alu_r8(opcode, bus),
+            0x88..=0x8F => self.execute_alu_r8(opcode, bus),
+            0x90..=0x97 => self.execute_alu_r8(opcode, bus),
+            0x98..=0x9F => self.execute_alu_r8(opcode, bus),
+            0xA0..=0xA7 => self.execute_alu_r8(opcode, bus),
+            0xA8..=0xAF => self.execute_alu_r8(opcode, bus),
+            0xB0..=0xB7 => self.execute_alu_r8(opcode, bus),
+            0xB8..=0xBF => self.execute_alu_r8(opcode, bus),
             0xC6 => {
                 let value = self.fetch8(bus);
                 self.add_to_a(value);
@@ -687,6 +623,33 @@ impl Cpu {
         result
     }
 
+    fn execute_alu_r8(&mut self, opcode: u8, bus: &Bus) -> u32 {
+        let register_index = opcode & 0x07;
+        let value = self.read_r8(register_index, bus);
+
+        match (opcode >> 3) & 0x07 {
+            0x00 => self.add_to_a(value),
+            0x01 => self.adc_to_a(value),
+            0x02 => self.sub_from_a(value),
+            0x03 => self.sbc_from_a(value),
+            0x04 => self.and_with_a(value),
+            0x05 => self.xor_with_a(value),
+            0x06 => self.or_with_a(value),
+            0x07 => self.compare_a(value),
+            _ => unreachable!("alu operation index is masked to 3 bits"),
+        }
+
+        Self::r8_access_cycles(register_index)
+    }
+
+    const fn r8_access_cycles(register_index: u8) -> u32 {
+        if register_index == 0x06 {
+            8
+        } else {
+            4
+        }
+    }
+
     fn execute_cb(&mut self, opcode: u8, bus: &mut Bus) -> u32 {
         let register_index = opcode & 0x07;
         let bit_index = (opcode >> 3) & 0x07;
@@ -721,11 +684,7 @@ impl Cpu {
                 self.registers.set_flag(Flag::HalfCarry, false);
                 self.registers.set_flag(Flag::Carry, carry);
 
-                if register_index == 0x06 {
-                    16
-                } else {
-                    8
-                }
+                Self::r8_access_cycles(register_index) * 2
             }
             0x01 => {
                 let value = self.read_r8(register_index, bus);
@@ -733,29 +692,17 @@ impl Cpu {
                     .set_flag(Flag::Zero, (value & (1 << bit_index)) == 0);
                 self.registers.set_flag(Flag::Subtract, false);
                 self.registers.set_flag(Flag::HalfCarry, true);
-                if register_index == 0x06 {
-                    12
-                } else {
-                    8
-                }
+                Self::r8_access_cycles(register_index) + 4
             }
             0x02 => {
                 let value = self.read_r8(register_index, bus) & !(1 << bit_index);
                 self.write_r8(register_index, value, bus);
-                if register_index == 0x06 {
-                    16
-                } else {
-                    8
-                }
+                Self::r8_access_cycles(register_index) * 2
             }
             0x03 => {
                 let value = self.read_r8(register_index, bus) | (1 << bit_index);
                 self.write_r8(register_index, value, bus);
-                if register_index == 0x06 {
-                    16
-                } else {
-                    8
-                }
+                Self::r8_access_cycles(register_index) * 2
             }
             _ => unreachable!("cb opcode group is masked to 2 bits"),
         }
