@@ -11,7 +11,14 @@ const HEADER_CHECKSUM_OFFSET: usize = 0x014D;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CartridgeError {
-    RomTooSmall { actual_size: usize },
+    RomTooSmall {
+        actual_size: usize,
+    },
+    RomSizeMismatch {
+        expected_size: usize,
+        actual_size: usize,
+    },
+    UnsupportedCartridgeType(CartridgeType),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +33,8 @@ pub enum HeaderWarning {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CartridgeType {
     RomOnly,
+    RomRam,
+    RomRamBattery,
     Mbc1,
     Mbc1Ram,
     Mbc1RamBattery,
@@ -47,6 +56,8 @@ impl CartridgeType {
     fn from_code(value: u8) -> Self {
         match value {
             0x00 => Self::RomOnly,
+            0x08 => Self::RomRam,
+            0x09 => Self::RomRamBattery,
             0x01 => Self::Mbc1,
             0x02 => Self::Mbc1Ram,
             0x03 => Self::Mbc1RamBattery,
@@ -68,6 +79,8 @@ impl CartridgeType {
     pub const fn code(self) -> u8 {
         match self {
             Self::RomOnly => 0x00,
+            Self::RomRam => 0x08,
+            Self::RomRamBattery => 0x09,
             Self::Mbc1 => 0x01,
             Self::Mbc1Ram => 0x02,
             Self::Mbc1RamBattery => 0x03,
@@ -140,6 +153,24 @@ impl RomSize {
             Self::Unknown(value) => value,
         }
     }
+
+    pub const fn to_bytes(self) -> Option<usize> {
+        match self {
+            Self::Banks2 => Some(2 * 16 * 1024),
+            Self::Banks4 => Some(4 * 16 * 1024),
+            Self::Banks8 => Some(8 * 16 * 1024),
+            Self::Banks16 => Some(16 * 16 * 1024),
+            Self::Banks32 => Some(32 * 16 * 1024),
+            Self::Banks64 => Some(64 * 16 * 1024),
+            Self::Banks128 => Some(128 * 16 * 1024),
+            Self::Banks256 => Some(256 * 16 * 1024),
+            Self::Banks512 => Some(512 * 16 * 1024),
+            Self::Banks72 => Some(72 * 16 * 1024),
+            Self::Banks80 => Some(80 * 16 * 1024),
+            Self::Banks96 => Some(96 * 16 * 1024),
+            Self::Unknown(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,6 +203,17 @@ impl RamSize {
             Self::KibiBytes128 => 0x04,
             Self::KibiBytes64 => 0x05,
             Self::Unknown(value) => value,
+        }
+    }
+
+    pub const fn to_bytes(self) -> Option<usize> {
+        match self {
+            Self::None => None,
+            Self::KibiBytes8 => Some(8 * 1024),
+            Self::KibiBytes32 => Some(32 * 1024),
+            Self::KibiBytes64 => Some(64 * 1024),
+            Self::KibiBytes128 => Some(128 * 1024),
+            Self::Unknown(_) => None,
         }
     }
 }
@@ -286,6 +328,66 @@ pub fn compute_header_checksum(rom: &[u8]) -> Result<u8, CartridgeError> {
     Ok(rom[HEADER_CHECKSUM_START..=HEADER_CHECKSUM_END_INCLUSIVE]
         .iter()
         .fold(0u8, |acc, byte| acc.wrapping_sub(*byte).wrapping_sub(1)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cartridge {
+    pub header: CartridgeHeader,
+    pub warnings: Vec<HeaderWarning>,
+    rom: Vec<u8>,
+    external_ram: Option<Vec<u8>>,
+}
+
+impl Cartridge {
+    pub fn from_rom(rom: Vec<u8>) -> Result<Self, CartridgeError> {
+        let header = CartridgeHeader::parse(&rom)?;
+        if let Some(expected_size) = header.rom_size.to_bytes() {
+            if rom.len() < expected_size {
+                return Err(CartridgeError::RomSizeMismatch {
+                    expected_size,
+                    actual_size: rom.len(),
+                });
+            }
+        }
+
+        match header.cartridge_type {
+            CartridgeType::RomOnly | CartridgeType::RomRam | CartridgeType::RomRamBattery => {}
+            unsupported => return Err(CartridgeError::UnsupportedCartridgeType(unsupported)),
+        }
+
+        let warnings = header.warnings();
+        let external_ram = header.ram_size.to_bytes().map(|size| vec![0u8; size]);
+
+        Ok(Self {
+            header,
+            warnings,
+            rom,
+            external_ram,
+        })
+    }
+
+    pub fn read(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x7FFF => self.rom.get(address as usize).copied().unwrap_or(0xFF),
+            0xA000..=0xBFFF => self
+                .external_ram
+                .as_ref()
+                .and_then(|ram| ram.get((address - 0xA000) as usize))
+                .copied()
+                .unwrap_or(0xFF),
+            _ => 0xFF,
+        }
+    }
+
+    pub fn write(&mut self, address: u16, value: u8) {
+        if let 0xA000..=0xBFFF = address {
+            if let Some(ram) = &mut self.external_ram {
+                if let Some(slot) = ram.get_mut((address - 0xA000) as usize) {
+                    *slot = value;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -461,5 +563,78 @@ mod tests {
             assert!(header.has_valid_header_checksum());
             assert!(header.warnings().is_empty());
         }
+    }
+
+    #[test]
+    fn cartridge_rom_only_reads_and_ignores_rom_writes() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[TITLE_START..TITLE_START + 4].copy_from_slice(b"TEST");
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomOnly.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::NonJapanese.code();
+        rom[0x1234] = 0x42;
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom-only cartridge should load");
+
+        assert_eq!(cartridge.read(0x1234), 0x42);
+        cartridge.write(0x1234, 0x99);
+        assert_eq!(cartridge.read(0x1234), 0x42);
+    }
+
+    #[test]
+    fn cartridge_with_external_ram_supports_ram_reads_and_writes() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRam.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom+ram cartridge should load");
+        assert_eq!(cartridge.read(0xA123), 0x00);
+
+        cartridge.write(0xA123, 0x77);
+        assert_eq!(cartridge.read(0xA123), 0x77);
+    }
+
+    #[test]
+    fn cartridge_rejects_unsupported_mbc_for_now() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let error = Cartridge::from_rom(rom).expect_err("mbc should not be supported yet");
+        assert_eq!(
+            error,
+            CartridgeError::UnsupportedCartridgeType(CartridgeType::Mbc1)
+        );
+    }
+
+    #[test]
+    fn cartridge_rejects_roms_shorter_than_header_declared_rom_size() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomOnly.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let error = Cartridge::from_rom(rom).expect_err("short rom should be rejected");
+        assert_eq!(
+            error,
+            CartridgeError::RomSizeMismatch {
+                expected_size: 0x10000,
+                actual_size: 0x8000,
+            }
+        );
     }
 }
