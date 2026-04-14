@@ -34,11 +34,11 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **ROM loading**
   - [ ] Parse cartridge header (title, type, ROM/RAM size, destination).
   - [ ] Validate header checksum and expose warnings.
-  - [ ] Add unit tests for representative header variants (ROM-only, MBC1, MBC3, MBC5).
+  - [x] Add unit tests for representative header variants (ROM-only, MBC1, MBC3, MBC5).
 - [x] **ROM loading**
   - [x] Parse cartridge header (title, type, ROM/RAM size, destination).
   - [x] Validate header checksum and expose warnings.
-  - [ ] Add unit tests for representative header variants (ROM-only, MBC1, MBC3, MBC5).
+  - [x] Add unit tests for representative header variants (ROM-only, MBC1, MBC3, MBC5).
 - [ ] **Memory Bank Controllers (MBC)**
   - [ ] Implement ROM-only (no MBC).
   - [ ] Implement MBC1.
