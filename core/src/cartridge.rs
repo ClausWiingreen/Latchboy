@@ -411,40 +411,7 @@ impl Cartridge {
             }
         }
 
-        let mapper = match header.cartridge_type {
-            CartridgeType::RomOnly | CartridgeType::RomRam | CartridgeType::RomRamBattery => {
-                Mapper::RomOnly
-            }
-            CartridgeType::Mbc1 | CartridgeType::Mbc1Ram | CartridgeType::Mbc1RamBattery => {
-                Mapper::Mbc1 {
-                    ram_enabled: false,
-                    rom_bank_low5: 1,
-                    bank_upper2: 0,
-                    banking_mode: 0,
-                }
-            }
-            CartridgeType::Mbc3
-            | CartridgeType::Mbc3Ram
-            | CartridgeType::Mbc3RamBattery
-            | CartridgeType::Mbc3TimerBattery
-            | CartridgeType::Mbc3TimerRamBattery => Mapper::Mbc3 {
-                ram_enabled: false,
-                rom_bank: 1,
-                ram_bank_or_rtc: 0,
-            },
-            CartridgeType::Mbc5
-            | CartridgeType::Mbc5Ram
-            | CartridgeType::Mbc5RamBattery
-            | CartridgeType::Mbc5Rumble
-            | CartridgeType::Mbc5RumbleRam
-            | CartridgeType::Mbc5RumbleRamBattery => Mapper::Mbc5 {
-                ram_enabled: false,
-                rom_bank_low8: 1,
-                rom_bank_high1: 0,
-                ram_bank: 0,
-            },
-            unsupported => return Err(CartridgeError::UnsupportedCartridgeType(unsupported)),
-        };
+        let mapper = Self::mapper_for_type(header.cartridge_type)?;
 
         let warnings = header.warnings();
         let external_ram = header.ram_size.to_bytes().map(|size| vec![0u8; size]);
@@ -456,6 +423,48 @@ impl Cartridge {
             external_ram,
             mapper,
         })
+    }
+
+    pub fn reset_mapper_state(&mut self) {
+        self.mapper = Self::mapper_for_type(self.header.cartridge_type)
+            .expect("loaded cartridge type should always map to a supported mapper");
+    }
+
+    fn mapper_for_type(cartridge_type: CartridgeType) -> Result<Mapper, CartridgeError> {
+        match cartridge_type {
+            CartridgeType::RomOnly | CartridgeType::RomRam | CartridgeType::RomRamBattery => {
+                Ok(Mapper::RomOnly)
+            }
+            CartridgeType::Mbc1 | CartridgeType::Mbc1Ram | CartridgeType::Mbc1RamBattery => {
+                Ok(Mapper::Mbc1 {
+                    ram_enabled: false,
+                    rom_bank_low5: 1,
+                    bank_upper2: 0,
+                    banking_mode: 0,
+                })
+            }
+            CartridgeType::Mbc3
+            | CartridgeType::Mbc3Ram
+            | CartridgeType::Mbc3RamBattery
+            | CartridgeType::Mbc3TimerBattery
+            | CartridgeType::Mbc3TimerRamBattery => Ok(Mapper::Mbc3 {
+                ram_enabled: false,
+                rom_bank: 1,
+                ram_bank_or_rtc: 0,
+            }),
+            CartridgeType::Mbc5
+            | CartridgeType::Mbc5Ram
+            | CartridgeType::Mbc5RamBattery
+            | CartridgeType::Mbc5Rumble
+            | CartridgeType::Mbc5RumbleRam
+            | CartridgeType::Mbc5RumbleRamBattery => Ok(Mapper::Mbc5 {
+                ram_enabled: false,
+                rom_bank_low8: 1,
+                rom_bank_high1: 0,
+                ram_bank: 0,
+            }),
+            unsupported => Err(CartridgeError::UnsupportedCartridgeType(unsupported)),
+        }
     }
 
     pub fn read(&self, address: u16) -> u8 {

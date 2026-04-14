@@ -99,13 +99,15 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
-        let cartridge = self.cartridge.clone();
-        let boot_rom = self.boot_rom.clone();
-        let boot_rom_enabled = self.boot_rom_enabled;
+        self.cartridge.reset_mapper_state();
 
-        *self = Self::new(cartridge);
-        self.boot_rom = boot_rom;
-        self.boot_rom_enabled = boot_rom_enabled;
+        self.boot_rom_disable_value = 0;
+        self.vram = [0; VRAM_SIZE];
+        self.wram = [0; WRAM_SIZE];
+        self.oam = [0; OAM_SIZE];
+        self.io_registers = [0; IO_REGISTERS_SIZE];
+        self.hram = [0; HRAM_SIZE];
+        self.interrupt_enable = 0;
     }
 
     pub fn write8(&mut self, address: u16, value: u8) {
@@ -215,6 +217,30 @@ mod tests {
 
         bus.write8(0xFF50, 0x00);
         assert!(!bus.boot_rom_enabled());
+    }
+
+    #[test]
+    fn reset_restores_mapper_default_bank_selection() {
+        let mut rom = vec![0u8; 4 * 16 * 1024];
+        rom[0x4000] = 0x11; // bank 1
+        rom[0x8000] = 0x22; // bank 2
+        rom[0x0134..0x0138].copy_from_slice(b"BANK");
+        rom[0x0147] = CartridgeType::Mbc1.code();
+        rom[0x0148] = RomSize::Banks4.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] = compute_header_checksum(&rom).expect("header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut bus = Bus::new(cartridge);
+
+        assert_eq!(bus.read8(0x4000), 0x11);
+        bus.write8(0x2000, 0x02);
+        assert_eq!(bus.read8(0x4000), 0x22);
+
+        bus.reset();
+
+        assert_eq!(bus.read8(0x4000), 0x11);
     }
 
     #[test]

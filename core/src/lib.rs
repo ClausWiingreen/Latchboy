@@ -22,12 +22,14 @@ pub struct Emulator {
     cpu: Cpu,
     bus: Bus,
     total_cycles: u64,
+    cycle_carry: u32,
 }
 
 impl Hash for Emulator {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.cpu.hash(state);
         self.total_cycles.hash(state);
+        self.cycle_carry.hash(state);
     }
 }
 
@@ -49,6 +51,7 @@ impl Emulator {
             cpu: Cpu::new(),
             bus: Bus::new(cartridge),
             total_cycles: 0,
+            cycle_carry: 0,
         }
     }
 
@@ -57,18 +60,20 @@ impl Emulator {
         self.cpu = Cpu::new();
         self.bus.reset();
         self.total_cycles = 0;
+        self.cycle_carry = 0;
     }
 
     /// Advances execution by at least `cycles` machine cycles.
     pub fn step_cycles(&mut self, cycles: u32) {
         let target = cycles as u64;
-        let mut executed = 0u64;
+        let mut available = self.cycle_carry as u64;
 
-        while executed < target {
-            executed += self.cpu.step(&mut self.bus) as u64;
+        while available < target {
+            available += self.cpu.step(&mut self.bus) as u64;
         }
 
-        self.total_cycles = self.total_cycles.wrapping_add(executed);
+        self.cycle_carry = (available - target) as u32;
+        self.total_cycles = self.total_cycles.wrapping_add(target);
     }
 
     pub const fn cpu(&self) -> &Cpu {
@@ -139,6 +144,37 @@ mod tests {
         assert_eq!(emulator.cpu().registers().a, 0x43);
         assert_eq!(emulator.bus().read8(0xC000), 0x42);
         assert_eq!(emulator.bus().read8(0xC001), 0x43);
+    }
+
+    #[test]
+    fn step_cycle_batching_is_deterministic_with_carry() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0x31; // LD SP, d16 (12 cycles)
+        rom[0x0001] = 0x34;
+        rom[0x0002] = 0x12;
+        rom[0x0003] = 0x76; // HALT (4 cycles)
+
+        rom[0x0134..0x0138].copy_from_slice(b"CARR");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+
+        let mut split = Emulator::from_cartridge(cartridge.clone());
+        split.step_cycles(8);
+        split.step_cycles(4);
+
+        let mut single = Emulator::from_cartridge(cartridge);
+        single.step_cycles(12);
+
+        assert_eq!(split.cpu().pc(), single.cpu().pc());
+        assert_eq!(split.cpu().sp(), single.cpu().sp());
+        assert_eq!(split.cpu().halted(), single.cpu().halted());
+        assert_eq!(split.total_cycles(), single.total_cycles());
     }
 
     #[test]
