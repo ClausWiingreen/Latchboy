@@ -42,7 +42,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Implement MBC5.
 - [x] **External RAM handling**
   - [x] RAM enable/disable behavior.
-  - [ ] Battery-backed save persistence (`.sav`) via platform filesystem integration.
+  - [x] Battery-backed save persistence (`.sav`) via platform filesystem integration.
   - [x] In-memory save serialization/deserialization API (`save_data` / `load_save_data`).
 - [x] **Address bus mapping**
   - [x] Map all DMG address ranges and mirroring (including WRAM echo and unusable regions).
@@ -50,14 +50,15 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Add FF50 boot ROM disable register behavior hook.
 
 **Acceptance criteria**
-- [ ] ROM-only games boot into code execution.
-- MBC bank switching passes targeted unit/integration tests.
+- [x] ROM-only cartridge boot smoke executes code from ROM through the bus and halts deterministically.
+- [x] MBC bank switching passes targeted unit/integration tests.
+- [x] Battery-backed RAM can round-trip via platform `.sav` persistence for desktop frontend flows.
 
 **Implementation review notes (2026-04-14)**
-- Header parsing, warnings, checksum handling, and representative mapper coverage (ROM-only, MBC1, MBC3, MBC5) are implemented with unit tests.
-- DMG bus mapping is implemented for all core ranges listed in this milestone, including WRAM echo, unusable region behavior, and FF50 boot ROM disable hook behavior.
-- Battery-backed RAM currently supports in-memory persistence APIs, but no `.sav` file load/save plumbing exists yet in a frontend/platform layer.
-- The first acceptance criterion remains open because CPU execution is still a stub and ROM boot-to-code execution cannot happen yet.
+- Header parsing, warnings, checksum handling, and representative mapper coverage (ROM-only, MBC1, MBC3, MBC5) are implemented with comprehensive unit tests.
+- DMG bus mapping is implemented for the full address ranges in this milestone, including WRAM echo mirroring, unusable region behavior, and FF50 boot ROM disable hook behavior.
+- Battery-backed RAM now has both in-memory serialization APIs and desktop platform `.sav` load/save plumbing with atomic writes and corruption-size guards.
+- A ROM boot smoke path exists and is validated by tests, but full commercial game boot compatibility still depends on Milestones 2–5 (CPU coverage, timers/interrupts, PPU, input, DMA).
 
 ---
 
@@ -67,9 +68,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [ ] AF, BC, DE, HL, SP, PC.
   - [ ] Accurate Z/N/H/C flag behavior per instruction.
 - [ ] **Instruction decoder + executor**
-  - [ ] Implement base opcode table.
+  - [ ] Implement base opcode table (current scaffold includes a small subset used by smoke tests).
   - [ ] Implement CB-prefixed table.
-  - [ ] Handle invalid/unused opcodes safely.
+  - [ ] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
   - [ ] Add table-driven instruction tests for arithmetic, loads, and bit ops.
 - [ ] **CPU timing**
   - [ ] Instruction cycle counts.
@@ -257,15 +258,15 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Suggested Delivery Order
 
-1. Cartridge + Bus
-2. CPU + Interrupt core
-3. Timers + Boot
-4. PPU + Input + DMA
-5. Frontend minimum playable loop (+ `.sav` integration)
-6. Serial test-output support
+1. Cartridge + Bus + save-data plumbing baseline
+2. CPU core (full opcode coverage + deterministic timing scaffolding)
+3. Timers + Interrupt controller integration + boot/no-boot startup defaults
+4. PPU timing + DMA + input integration (first visual/playability milestone)
+5. Serial test-output support (to unlock Blargg/Mooneye automation feedback loops)
+6. Frontend minimum playable loop hardening (controls UX, `.sav` lifecycle checkpoints, reset/hot-reload behavior)
 7. APU
-8. Compatibility hardening
-9. Optional CGB/link enhancements
+8. Compatibility hardening and CI automation of ROM suites
+9. Optional CGB/link/platform enhancements
 
 ---
 
