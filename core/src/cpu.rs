@@ -145,6 +145,17 @@ impl Cpu {
         let opcode = self.fetch8(bus);
         match opcode {
             0x00 => 4, // NOP
+            0x01 | 0x11 | 0x21 | 0x31 => {
+                let value = self.fetch16(bus);
+                match (opcode >> 4) & 0x03 {
+                    0x00 => self.registers.set_bc(value),
+                    0x01 => self.registers.set_de(value),
+                    0x02 => self.registers.set_hl(value),
+                    0x03 => self.sp = value,
+                    _ => unreachable!("register pair index is masked to 2 bits"),
+                }
+                12
+            }
             0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x3E => {
                 let value = self.fetch8(bus);
                 self.write_r8(opcode >> 3, value, bus);
@@ -153,10 +164,6 @@ impl Cpu {
                 } else {
                     8
                 }
-            }
-            0x31 => {
-                self.sp = self.fetch16(bus);
-                12
             }
             0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C => {
                 let register_index = opcode >> 3;
@@ -215,9 +222,27 @@ impl Cpu {
                     4
                 }
             }
+            0x88..=0x8F => {
+                let value = self.read_r8(opcode & 0x07, bus);
+                self.adc_to_a(value);
+                if (opcode & 0x07) == 0x06 {
+                    8
+                } else {
+                    4
+                }
+            }
             0x90..=0x97 => {
                 let value = self.read_r8(opcode & 0x07, bus);
                 self.sub_from_a(value);
+                if (opcode & 0x07) == 0x06 {
+                    8
+                } else {
+                    4
+                }
+            }
+            0x98..=0x9F => {
+                let value = self.read_r8(opcode & 0x07, bus);
+                self.sbc_from_a(value);
                 if (opcode & 0x07) == 0x06 {
                     8
                 } else {
@@ -260,10 +285,50 @@ impl Cpu {
                     4
                 }
             }
+            0xC6 => {
+                let value = self.fetch8(bus);
+                self.add_to_a(value);
+                8
+            }
+            0xCE => {
+                let value = self.fetch8(bus);
+                self.adc_to_a(value);
+                8
+            }
+            0xD6 => {
+                let value = self.fetch8(bus);
+                self.sub_from_a(value);
+                8
+            }
+            0xDE => {
+                let value = self.fetch8(bus);
+                self.sbc_from_a(value);
+                8
+            }
+            0xE6 => {
+                let value = self.fetch8(bus);
+                self.and_with_a(value);
+                8
+            }
             0xEA => {
                 let address = self.fetch16(bus);
                 bus.write8(address, self.registers.a);
                 16
+            }
+            0xEE => {
+                let value = self.fetch8(bus);
+                self.xor_with_a(value);
+                8
+            }
+            0xF6 => {
+                let value = self.fetch8(bus);
+                self.or_with_a(value);
+                8
+            }
+            0xFE => {
+                let value = self.fetch8(bus);
+                self.compare_a(value);
+                8
             }
             0xC3 => {
                 let address = self.fetch16(bus);
@@ -337,6 +402,42 @@ impl Cpu {
         self.registers
             .set_flag(Flag::HalfCarry, (previous & 0x0F) < (value & 0x0F));
         self.registers.set_flag(Flag::Carry, previous < value);
+    }
+
+    fn adc_to_a(&mut self, value: u8) {
+        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+        let previous = self.registers.a;
+        let result = previous.wrapping_add(value).wrapping_add(carry_in);
+        self.registers.a = result;
+
+        self.registers.set_flag(Flag::Zero, result == 0);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(
+            Flag::HalfCarry,
+            (previous & 0x0F) + (value & 0x0F) + carry_in > 0x0F,
+        );
+        self.registers.set_flag(
+            Flag::Carry,
+            u16::from(previous) + u16::from(value) + u16::from(carry_in) > 0xFF,
+        );
+    }
+
+    fn sbc_from_a(&mut self, value: u8) {
+        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+        let previous = self.registers.a;
+        let result = previous.wrapping_sub(value).wrapping_sub(carry_in);
+        self.registers.a = result;
+
+        self.registers.set_flag(Flag::Zero, result == 0);
+        self.registers.set_flag(Flag::Subtract, true);
+        self.registers.set_flag(
+            Flag::HalfCarry,
+            (previous & 0x0F) < ((value & 0x0F) + carry_in),
+        );
+        self.registers.set_flag(
+            Flag::Carry,
+            u16::from(previous) < (u16::from(value) + u16::from(carry_in)),
+        );
     }
 
     fn and_with_a(&mut self, value: u8) {
@@ -516,6 +617,75 @@ mod tests {
         assert_eq!(cpu.registers.a, 0x11);
         assert_eq!(cpu.registers.f & FLAG_C, 0);
         assert_eq!(cpu.registers.f & FLAG_Z, 0);
+    }
+
+    #[test]
+    fn ld_rr_d16_loads_all_16_bit_register_pairs() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[
+            0x01, 0x34, 0x12, // LD BC, 1234
+            0x11, 0x78, 0x56, // LD DE, 5678
+            0x21, 0xBC, 0x9A, // LD HL, 9ABC
+            0x31, 0xF0, 0xFF, // LD SP, FFF0
+        ]);
+
+        cpu.step(&mut bus);
+        cpu.step(&mut bus);
+        cpu.step(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.registers.bc(), 0x1234);
+        assert_eq!(cpu.registers.de(), 0x5678);
+        assert_eq!(cpu.registers.hl(), 0x9ABC);
+        assert_eq!(cpu.sp, 0xFFF0);
+    }
+
+    #[test]
+    fn adc_sbc_and_immediate_alu_opcodes_execute_with_expected_flags() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0x0F;
+        cpu.registers.b = 0x00;
+        cpu.registers.f = FLAG_C;
+        let mut bus = make_bus_with_program(&[
+            0x88, // ADC A, B => 10 (carry-in consumed), H set
+            0xCE, 0xEF, // ADC A, EF => FF
+            0xDE, 0xF0, // SBC A, F0 => 0F, N set
+            0xD6, 0x0E, // SUB 0E => 01
+            0xE6, 0x01, // AND 01 => 01
+            0xEE, 0x01, // XOR 01 => 00
+            0xF6, 0x80, // OR 80 => 80
+            0xFE, 0x80, // CP 80 => Z set, A unchanged
+        ]);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x10);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & FLAG_C, 0);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0xFF);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x0F);
+        assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x01);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x01);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x00);
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x80);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.a, 0x80);
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
     }
 
     #[test]
