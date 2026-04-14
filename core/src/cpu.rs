@@ -672,8 +672,8 @@ impl Cpu {
                     }
                     0x04 => (value << 1, (value & 0x80) != 0), // SLA
                     0x05 => (((value >> 1) | (value & 0x80)), (value & 0x01) != 0), // SRA
-                    0x06 => (value.rotate_left(4), false),      // SWAP
-                    0x07 => (value >> 1, (value & 0x01) != 0),  // SRL
+                    0x06 => (value.rotate_left(4), false),     // SWAP
+                    0x07 => (value >> 1, (value & 0x01) != 0), // SRL
                     _ => unreachable!("bit index is masked to 3 bits"),
                 };
 
@@ -683,7 +683,11 @@ impl Cpu {
                 self.registers.set_flag(Flag::HalfCarry, false);
                 self.registers.set_flag(Flag::Carry, carry);
 
-                if register_index == 0x06 { 16 } else { 8 }
+                if register_index == 0x06 {
+                    16
+                } else {
+                    8
+                }
             }
             0x01 => {
                 let value = self.read_r8(register_index, bus);
@@ -691,17 +695,29 @@ impl Cpu {
                     .set_flag(Flag::Zero, (value & (1 << bit_index)) == 0);
                 self.registers.set_flag(Flag::Subtract, false);
                 self.registers.set_flag(Flag::HalfCarry, true);
-                if register_index == 0x06 { 12 } else { 8 }
+                if register_index == 0x06 {
+                    12
+                } else {
+                    8
+                }
             }
             0x02 => {
                 let value = self.read_r8(register_index, bus) & !(1 << bit_index);
                 self.write_r8(register_index, value, bus);
-                if register_index == 0x06 { 16 } else { 8 }
+                if register_index == 0x06 {
+                    16
+                } else {
+                    8
+                }
             }
             0x03 => {
                 let value = self.read_r8(register_index, bus) | (1 << bit_index);
                 self.write_r8(register_index, value, bus);
-                if register_index == 0x06 { 16 } else { 8 }
+                if register_index == 0x06 {
+                    16
+                } else {
+                    8
+                }
             }
             _ => unreachable!("cb opcode group is masked to 2 bits"),
         }
