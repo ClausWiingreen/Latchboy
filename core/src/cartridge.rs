@@ -399,4 +399,67 @@ mod tests {
 
         assert_eq!(header.title, "AAAAAAAAAAAAAAA");
     }
+
+    #[test]
+    fn parse_supports_representative_cartridge_variants() {
+        let cases = [
+            (
+                CartridgeType::RomOnly.code(),
+                RomSize::Banks2.code(),
+                RamSize::None.code(),
+                CartridgeType::RomOnly,
+                RomSize::Banks2,
+                RamSize::None,
+            ),
+            (
+                CartridgeType::Mbc1.code(),
+                RomSize::Banks32.code(),
+                RamSize::KibiBytes32.code(),
+                CartridgeType::Mbc1,
+                RomSize::Banks32,
+                RamSize::KibiBytes32,
+            ),
+            (
+                CartridgeType::Mbc3.code(),
+                RomSize::Banks64.code(),
+                RamSize::KibiBytes32.code(),
+                CartridgeType::Mbc3,
+                RomSize::Banks64,
+                RamSize::KibiBytes32,
+            ),
+            (
+                CartridgeType::Mbc5.code(),
+                RomSize::Banks128.code(),
+                RamSize::KibiBytes128.code(),
+                CartridgeType::Mbc5,
+                RomSize::Banks128,
+                RamSize::KibiBytes128,
+            ),
+        ];
+
+        for (
+            cartridge_type_code,
+            rom_size_code,
+            ram_size_code,
+            expected_cartridge_type,
+            expected_rom_size,
+            expected_ram_size,
+        ) in cases
+        {
+            let mut rom = make_test_rom();
+            rom[CARTRIDGE_TYPE_OFFSET] = cartridge_type_code;
+            rom[ROM_SIZE_OFFSET] = rom_size_code;
+            rom[RAM_SIZE_OFFSET] = ram_size_code;
+            rom[HEADER_CHECKSUM_OFFSET] =
+                compute_header_checksum(&rom).expect("checksum should compute");
+
+            let header = CartridgeHeader::parse(&rom).expect("header should parse");
+
+            assert_eq!(header.cartridge_type, expected_cartridge_type);
+            assert_eq!(header.rom_size, expected_rom_size);
+            assert_eq!(header.ram_size, expected_ram_size);
+            assert!(header.has_valid_header_checksum());
+            assert!(header.warnings().is_empty());
+        }
+    }
 }
