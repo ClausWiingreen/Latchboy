@@ -14,6 +14,10 @@ pub enum SaveLoadStatus {
     ReadError,
 }
 
+pub const fn should_persist_after_load(status: SaveLoadStatus) -> bool {
+    matches!(status, SaveLoadStatus::Loaded | SaveLoadStatus::NotFound)
+}
+
 /// Derives a deterministic save path for a ROM file.
 pub fn save_path_from_rom_path(rom_path: &Path) -> PathBuf {
     rom_path.with_extension("sav")

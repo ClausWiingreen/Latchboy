@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use latchboy_core::cartridge::Cartridge;
 use latchboy_desktop::savefile::{
-    load_save_data_if_available, persist_save_data, save_path_from_rom_path, SaveLoadStatus,
+    load_save_data_if_available, persist_save_data, save_path_from_rom_path,
+    should_persist_after_load,
 };
 
 struct SaveOnDrop {
@@ -54,7 +55,7 @@ fn main() {
 
     let save_path = save_path_from_rom_path(&rom_path);
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
-    let persist_enabled = !matches!(load_status, SaveLoadStatus::InvalidData);
+    let persist_enabled = should_persist_after_load(load_status);
 
     let _runtime = SaveOnDrop {
         cartridge,

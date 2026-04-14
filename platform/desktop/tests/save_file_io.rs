@@ -4,7 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use latchboy_core::cartridge::{Cartridge, CartridgeType, DestinationCode, RomSize};
 use latchboy_desktop::savefile::{
-    load_save_data_if_available, persist_save_data, save_path_from_rom_path, SaveLoadStatus,
+    load_save_data_if_available, persist_save_data, save_path_from_rom_path,
+    should_persist_after_load, SaveLoadStatus,
 };
 
 const CARTRIDGE_TYPE_OFFSET: usize = 0x0147;
@@ -75,13 +76,29 @@ fn invalid_save_load_can_be_used_to_skip_persist_and_preserve_original_file() {
 
     let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
-    let persist_enabled = !matches!(load_status, SaveLoadStatus::InvalidData);
+    let persist_enabled = should_persist_after_load(load_status);
     if persist_enabled {
         persist_save_data(&cartridge, &save_path);
     }
 
     let after = fs::read(&save_path).expect("save file should remain readable");
     assert_eq!(after, original);
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn read_error_load_status_disables_persist_gate() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("locked.sav");
+    fs::create_dir_all(&save_path).expect("directory path should trigger read error");
+
+    let rom = build_rom(CartridgeType::RomRamBattery.code(), 0x02);
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
+
+    let load_status = load_save_data_if_available(&mut cartridge, &save_path);
+    assert_eq!(load_status, SaveLoadStatus::ReadError);
+    assert!(!should_persist_after_load(load_status));
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
