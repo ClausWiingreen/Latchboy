@@ -42,15 +42,22 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Implement MBC5.
 - [x] **External RAM handling**
   - [x] RAM enable/disable behavior.
-  - [x] Battery-backed save persistence (`.sav`).
+  - [ ] Battery-backed save persistence (`.sav`) via platform filesystem integration.
+  - [x] In-memory save serialization/deserialization API (`save_data` / `load_save_data`).
 - [x] **Address bus mapping**
   - [x] Map all DMG address ranges and mirroring (including WRAM echo and unusable regions).
   - [x] Correctly route reads/writes between components.
   - [x] Add FF50 boot ROM disable register behavior hook.
 
 **Acceptance criteria**
-- ROM-only games boot into code execution.
+- [ ] ROM-only games boot into code execution.
 - MBC bank switching passes targeted unit/integration tests.
+
+**Implementation review notes (2026-04-14)**
+- Header parsing, warnings, checksum handling, and representative mapper coverage (ROM-only, MBC1, MBC3, MBC5) are implemented with unit tests.
+- DMG bus mapping is implemented for all core ranges listed in this milestone, including WRAM echo, unusable region behavior, and FF50 boot ROM disable hook behavior.
+- Battery-backed RAM currently supports in-memory persistence APIs, but no `.sav` file load/save plumbing exists yet in a frontend/platform layer.
+- The first acceptance criterion remains open because CPU execution is still a stub and ROM boot-to-code execution cannot happen yet.
 
 ---
 
@@ -177,6 +184,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [ ] Window creation, frame blit, vsync toggle.
   - [ ] Keyboard/gamepad mapping and remapping.
 - [ ] **Runtime features**
+  - [ ] Cartridge save-file management (`.sav`) wired to battery-backed RAM APIs.
+  - [ ] Auto-load saves on ROM open and flush saves on shutdown/reset/periodic checkpoint.
   - [ ] Save/load state slots.
   - [ ] Fast-forward and frame stepping.
   - [ ] Pause/reset and ROM hot-reload.
@@ -252,8 +261,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 2. CPU + Interrupt core
 3. Timers + Boot
 4. PPU + Input + DMA
-5. Serial test-output support
-6. Frontend minimum playable loop
+5. Frontend minimum playable loop (+ `.sav` integration)
+6. Serial test-output support
 7. APU
 8. Compatibility hardening
 9. Optional CGB/link enhancements
