@@ -24,16 +24,21 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Add links to public hardware docs and test ROM suites.
 
 **Acceptance criteria**
-- Clean build in CI.
-- Modules compile with stubs and interface contracts.
+- [x] Clean build in CI.
+- [x] Modules compile with stubs and interface contracts.
 
 ---
 
 ## Milestone 1 — Cartridge & Memory Subsystem
 
+- [ ] **ROM loading**
+  - [ ] Parse cartridge header (title, type, ROM/RAM size, destination).
+  - [ ] Validate header checksum and expose warnings.
+  - [ ] Add unit tests for representative header variants (ROM-only, MBC1, MBC3, MBC5).
 - [x] **ROM loading**
   - [x] Parse cartridge header (title, type, ROM/RAM size, destination).
   - [x] Validate header checksum and expose warnings.
+  - [ ] Add unit tests for representative header variants (ROM-only, MBC1, MBC3, MBC5).
 - [ ] **Memory Bank Controllers (MBC)**
   - [ ] Implement ROM-only (no MBC).
   - [ ] Implement MBC1.
@@ -43,8 +48,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [ ] RAM enable/disable behavior.
   - [ ] Battery-backed save persistence (`.sav`).
 - [ ] **Address bus mapping**
-  - [ ] Map all DMG address ranges and mirroring.
+  - [ ] Map all DMG address ranges and mirroring (including WRAM echo and unusable regions).
   - [ ] Correctly route reads/writes between components.
+  - [ ] Add FF50 boot ROM disable register behavior hook.
 
 **Acceptance criteria**
 - ROM-only games boot into code execution.
@@ -61,6 +67,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [ ] Implement base opcode table.
   - [ ] Implement CB-prefixed table.
   - [ ] Handle invalid/unused opcodes safely.
+  - [ ] Add table-driven instruction tests for arithmetic, loads, and bit ops.
 - [ ] **CPU timing**
   - [ ] Instruction cycle counts.
   - [ ] Memory access timing interactions.
@@ -69,6 +76,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Interrupt mechanism**
   - [ ] IME behavior and delayed EI semantics.
   - [ ] IF/IE register interaction.
+  - [ ] HALT bug behavior (deferred final-accuracy tuning allowed).
 
 **Acceptance criteria**
 - Passes CPU instruction correctness test ROMs.
@@ -87,6 +95,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Boot ROM handling**
   - [ ] Optional boot ROM execution path.
   - [ ] Post-boot register defaults for no-boot mode.
+  - [ ] Document exact startup assumptions in code comments/tests.
 
 **Acceptance criteria**
 - Timer test ROMs pass.
@@ -118,16 +127,13 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
-## Milestone 5 — Input, DMA, and Serial
+## Milestone 5 — Input and DMA
 
 - [ ] **Joypad input (FF00)**
   - [ ] Button matrix selection and polling.
   - [ ] Joypad interrupt generation.
 - [ ] **DMA transfer (FF46)**
   - [ ] OAM DMA timing and CPU bus impact.
-- [ ] **Serial link registers**
-  - [ ] Basic internal clock transfer stub.
-  - [ ] Optional test hook/log output for serial test ROMs.
 
 **Acceptance criteria**
 - Input works consistently in at least 3 games.
@@ -135,7 +141,19 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
-## Milestone 6 — APU (Audio)
+## Milestone 6 — Serial I/O
+
+- [ ] **Serial link registers**
+  - [ ] Implement SB/SC read-write behavior.
+  - [ ] Basic internal clock transfer stub.
+  - [ ] Test hook/log output for serial-based test ROMs.
+
+**Acceptance criteria**
+- Blargg/mooneye serial-output ROMs can report pass/fail via serial capture.
+
+---
+
+## Milestone 7 — APU (Audio)
 
 - [ ] **Audio architecture setup**
   - [ ] Frame sequencer implementation.
@@ -157,7 +175,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
-## Milestone 7 — Frontend, UX, and Debug Tooling
+## Milestone 8 — Frontend, UX, and Debug Tooling
 
 - [ ] **Desktop frontend**
   - [ ] Window creation, frame blit, vsync toggle.
@@ -177,7 +195,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
-## Milestone 8 — Accuracy & Compatibility Hardening
+## Milestone 9 — Accuracy & Compatibility Hardening
 
 - [ ] **Test ROM automation**
   - [ ] Integrate Blargg and Mooneye test runs in CI.
@@ -197,7 +215,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
-## Milestone 9 — Optional Extensions
+## Milestone 10 — Optional Extensions
 
 - [ ] **Game Boy Color (CGB) support**
   - [ ] Double-speed mode.
@@ -238,10 +256,11 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 2. CPU + Interrupt core
 3. Timers + Boot
 4. PPU + Input + DMA
-5. Frontend minimum playable loop
-6. APU
-7. Compatibility hardening
-8. Optional CGB/link enhancements
+5. Serial test-output support
+6. Frontend minimum playable loop
+7. APU
+8. Compatibility hardening
+9. Optional CGB/link enhancements
 
 ---
 
