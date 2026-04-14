@@ -620,7 +620,7 @@ impl Cpu {
             _ => self.handle_unimplemented_opcode(opcode),
         };
 
-        if enable_ime_after_instruction {
+        if enable_ime_after_instruction && opcode != 0xF3 {
             self.ime = true;
         }
 
@@ -1512,6 +1512,22 @@ mod tests {
         assert_eq!(cpu.pc(), 0x5678);
         assert_eq!(cpu.sp(), 0xFFFE);
         assert!(cpu.ime());
+
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[
+            0xFB, // EI
+            0xF3, // DI (must cancel delayed EI effect)
+            0x00, // NOP
+        ]);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.ime());
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.ime());
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.ime());
     }
 
     #[test]
