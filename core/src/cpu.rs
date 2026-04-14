@@ -4,6 +4,7 @@ const FLAG_Z: u8 = 0b1000_0000;
 const FLAG_N: u8 = 0b0100_0000;
 const FLAG_H: u8 = 0b0010_0000;
 const FLAG_C: u8 = 0b0001_0000;
+const FLAGS_MASK: u8 = FLAG_Z | FLAG_N | FLAG_H | FLAG_C;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Registers {
@@ -15,6 +16,76 @@ pub struct Registers {
     pub e: u8,
     pub h: u8,
     pub l: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Flag {
+    Zero,
+    Subtract,
+    HalfCarry,
+    Carry,
+}
+
+impl Flag {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Zero => FLAG_Z,
+            Self::Subtract => FLAG_N,
+            Self::HalfCarry => FLAG_H,
+            Self::Carry => FLAG_C,
+        }
+    }
+}
+
+impl Registers {
+    pub const fn af(&self) -> u16 {
+        u16::from_be_bytes([self.a, self.f])
+    }
+
+    pub const fn bc(&self) -> u16 {
+        u16::from_be_bytes([self.b, self.c])
+    }
+
+    pub const fn de(&self) -> u16 {
+        u16::from_be_bytes([self.d, self.e])
+    }
+
+    pub const fn hl(&self) -> u16 {
+        u16::from_be_bytes([self.h, self.l])
+    }
+
+    pub fn set_af(&mut self, value: u16) {
+        let [a, f] = value.to_be_bytes();
+        self.a = a;
+        self.f = f & FLAGS_MASK;
+    }
+
+    pub fn set_bc(&mut self, value: u16) {
+        let [b, c] = value.to_be_bytes();
+        self.b = b;
+        self.c = c;
+    }
+
+    pub fn set_de(&mut self, value: u16) {
+        let [d, e] = value.to_be_bytes();
+        self.d = d;
+        self.e = e;
+    }
+
+    pub fn set_hl(&mut self, value: u16) {
+        let [h, l] = value.to_be_bytes();
+        self.h = h;
+        self.l = l;
+    }
+
+    fn set_flag(&mut self, flag: Flag, enabled: bool) {
+        if enabled {
+            self.f |= flag.bit();
+        } else {
+            self.f &= !flag.bit();
+        }
+        self.f &= FLAGS_MASK;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,15 +162,12 @@ impl Cpu {
                 let result = previous.wrapping_add(1);
                 self.registers.a = result;
 
-                let mut flags = self.registers.f & FLAG_C;
-                flags &= !FLAG_N;
-                if result == 0 {
-                    flags |= FLAG_Z;
-                }
-                if (previous & 0x0F) == 0x0F {
-                    flags |= FLAG_H;
-                }
-                self.registers.f = flags;
+                self.registers.set_flag(Flag::Zero, result == 0);
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers
+                    .set_flag(Flag::HalfCarry, (previous & 0x0F) == 0x0F);
+                self.registers
+                    .set_flag(Flag::Carry, (self.registers.f & FLAG_C) != 0);
 
                 4
             }
@@ -187,6 +255,36 @@ mod tests {
         assert_eq!(cpu.registers.a, 0x0F);
         assert_eq!(cpu.registers.f & FLAG_Z, 0);
         assert_eq!(cpu.registers.f & FLAG_H, 0);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+    }
+
+    #[test]
+    fn register_pair_access_round_trips() {
+        let mut registers = Registers::default();
+
+        registers.set_af(0x12F3);
+        registers.set_bc(0x3456);
+        registers.set_de(0x789A);
+        registers.set_hl(0xBCDE);
+
+        assert_eq!(registers.af(), 0x12F0);
+        assert_eq!(registers.bc(), 0x3456);
+        assert_eq!(registers.de(), 0x789A);
+        assert_eq!(registers.hl(), 0xBCDE);
+    }
+
+    #[test]
+    fn inc_a_flag_behavior_matches_lr35902_rules() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0xFF;
+        cpu.registers.f = FLAG_C;
+        let mut bus = make_bus_with_program(&[0x3C]); // INC A
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
         assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
     }
 }

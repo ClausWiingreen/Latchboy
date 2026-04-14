@@ -64,9 +64,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Milestone 2 — CPU Core (Sharp LR35902)
 
-- [ ] **Register model and flags**
-  - [ ] AF, BC, DE, HL, SP, PC.
-  - [ ] Accurate Z/N/H/C flag behavior per instruction.
+- [x] **Register model and flags**
+  - [x] AF, BC, DE, HL, SP, PC.
+  - [x] Accurate Z/N/H/C flag behavior per instruction.
 - [ ] **Instruction decoder + executor**
   - [ ] Implement base opcode table (current scaffold includes a small subset used by smoke tests).
   - [ ] Implement CB-prefixed table.
