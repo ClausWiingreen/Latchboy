@@ -1,5 +1,10 @@
 use crate::bus::Bus;
 
+const FLAG_Z: u8 = 0b1000_0000;
+const FLAG_N: u8 = 0b0100_0000;
+const FLAG_H: u8 = 0b0010_0000;
+const FLAG_C: u8 = 0b0001_0000;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Registers {
     pub a: u8,
@@ -82,7 +87,20 @@ impl Cpu {
                 12
             }
             0x3C => {
-                self.registers.a = self.registers.a.wrapping_add(1);
+                let previous = self.registers.a;
+                let result = previous.wrapping_add(1);
+                self.registers.a = result;
+
+                let mut flags = self.registers.f & FLAG_C;
+                flags &= !FLAG_N;
+                if result == 0 {
+                    flags |= FLAG_Z;
+                }
+                if (previous & 0x0F) == 0x0F {
+                    flags |= FLAG_H;
+                }
+                self.registers.f = flags;
+
                 4
             }
             0x3E => {
@@ -117,5 +135,58 @@ impl Cpu {
         let lo = self.fetch8(bus) as u16;
         let hi = self.fetch8(bus) as u16;
         (hi << 8) | lo
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::{
+        compute_header_checksum, Cartridge, CartridgeType, DestinationCode, RamSize, RomSize,
+    };
+
+    fn make_bus_with_program(program: &[u8]) -> Bus {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[..program.len()].copy_from_slice(program);
+        rom[0x0134..0x0138].copy_from_slice(b"CPUT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] = compute_header_checksum(&rom).expect("header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        Bus::new(cartridge)
+    }
+
+    #[test]
+    fn inc_a_sets_z_and_h_and_clears_n() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0xFF;
+        cpu.registers.f = FLAG_C | FLAG_N;
+        let mut bus = make_bus_with_program(&[0x3C]); // INC A
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.registers.a, 0x00);
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+    }
+
+    #[test]
+    fn inc_a_clears_z_when_result_non_zero() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0x0E;
+        cpu.registers.f = FLAG_Z | FLAG_C;
+        let mut bus = make_bus_with_program(&[0x3C]); // INC A
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.registers.a, 0x0F);
+        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, 0);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
     }
 }
