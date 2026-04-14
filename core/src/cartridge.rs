@@ -452,8 +452,8 @@ impl Cartridge {
                     }
 
                     if let Some(ram) = &mut self.external_ram {
-                        let bank = if *banking_mode == 0 { 0 } else { *bank_upper2 } as usize;
-                        let offset = bank * 0x2000 + (address - 0xA000) as usize;
+                        let offset =
+                            Self::mbc1_ram_offset(address, *banking_mode, *bank_upper2, ram.len());
                         if let Some(slot) = ram.get_mut(offset) {
                             *slot = value;
                         }
@@ -502,12 +502,8 @@ impl Cartridge {
                 self.external_ram
                     .as_ref()
                     .and_then(|ram| {
-                        let bank = if banking_mode == 0 {
-                            0
-                        } else {
-                            bank_upper2 as usize
-                        };
-                        let offset = bank * 0x2000 + (address as usize - 0xA000);
+                        let offset =
+                            Self::mbc1_ram_offset(address, banking_mode, bank_upper2, ram.len());
                         ram.get(offset)
                     })
                     .copied()
@@ -515,6 +511,17 @@ impl Cartridge {
             }
             _ => 0xFF,
         }
+    }
+
+    fn mbc1_ram_offset(address: u16, banking_mode: u8, bank_upper2: u8, ram_len: usize) -> usize {
+        let ram_bank_count = (ram_len / 0x2000).max(1);
+        let bank = if banking_mode == 0 {
+            0
+        } else {
+            (bank_upper2 as usize) % ram_bank_count
+        };
+
+        bank * 0x2000 + (address as usize - 0xA000)
     }
 }
 
@@ -810,6 +817,25 @@ mod tests {
 
         assert_eq!(cartridge.read(0x0000), 0x20);
         assert_eq!(cartridge.read(0x4000), 0x21);
+    }
+
+    #[test]
+    fn mbc1_clamps_ram_bank_to_available_ram_size() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1Ram.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes8.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc1 should be supported");
+        cartridge.write(0x0000, 0x0A);
+        cartridge.write(0x6000, 0x01);
+        cartridge.write(0x4000, 0x03);
+        cartridge.write(0xA000, 0x66);
+
+        assert_eq!(cartridge.read(0xA000), 0x66);
     }
 
     #[test]
