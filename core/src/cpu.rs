@@ -94,6 +94,8 @@ pub struct Cpu {
     pc: u16,
     sp: u16,
     halted: bool,
+    ime: bool,
+    ime_enable_pending: bool,
     last_unimplemented_opcode: Option<u8>,
 }
 
@@ -119,6 +121,8 @@ impl Cpu {
             pc: 0x0000,
             sp: 0xFFFE,
             halted: false,
+            ime: false,
+            ime_enable_pending: false,
             last_unimplemented_opcode: None,
         }
     }
@@ -139,11 +143,20 @@ impl Cpu {
         self.halted
     }
 
+    pub const fn ime(&self) -> bool {
+        self.ime
+    }
+
     pub const fn last_unimplemented_opcode(&self) -> Option<u8> {
         self.last_unimplemented_opcode
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
+        if self.ime_enable_pending {
+            self.ime = true;
+            self.ime_enable_pending = false;
+        }
+
         if self.halted {
             return 4;
         }
@@ -248,6 +261,11 @@ impl Cpu {
             }
             0x0F => {
                 self.rrca();
+                4
+            }
+            0x10 => {
+                let _ = self.fetch8(bus);
+                self.halted = true;
                 4
             }
             0x18 => {
@@ -513,6 +531,12 @@ impl Cpu {
                 self.sub_from_a(value);
                 8
             }
+            0xD9 => {
+                self.pc = self.pop_stack16(bus);
+                self.ime = true;
+                self.ime_enable_pending = false;
+                16
+            }
             0xDE => {
                 let value = self.fetch8(bus);
                 self.sbc_from_a(value);
@@ -575,10 +599,19 @@ impl Cpu {
                 self.registers.a = bus.read8(0xFF00u16 + u16::from(self.registers.c));
                 8
             }
+            0xF3 => {
+                self.ime = false;
+                self.ime_enable_pending = false;
+                4
+            }
             0xFA => {
                 let address = self.fetch16(bus);
                 self.registers.a = bus.read8(address);
                 16
+            }
+            0xFB => {
+                self.ime_enable_pending = true;
+                4
             }
             0xFE => {
                 let value = self.fetch8(bus);
@@ -1435,6 +1468,45 @@ mod tests {
         assert_eq!(cpu.step(&mut bus), 12);
         assert_eq!(cpu.registers.f & FLAG_Z, 0);
         assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+    }
+
+    #[test]
+    fn stop_di_ei_and_reti_update_cpu_interrupt_state() {
+        let mut cpu = Cpu::new();
+        cpu.sp = 0xFFFC;
+        let mut bus = make_bus_with_program(&[
+            0xFB, // EI (IME enabled after next instruction)
+            0x00, // NOP (completes EI delay)
+            0xF3, // DI
+            0x10, 0x00, // STOP 00
+        ]);
+        bus.write8(0xFFFC, 0x34);
+        bus.write8(0xFFFD, 0x12);
+
+        assert!(!cpu.ime());
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.ime());
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(cpu.ime());
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.ime());
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(cpu.halted());
+        assert_eq!(cpu.pc(), 0x0005);
+
+        let mut cpu = Cpu::new();
+        cpu.sp = 0xFFFC;
+        let mut bus = make_bus_with_program(&[0xD9]); // RETI
+        bus.write8(0xFFFC, 0x78);
+        bus.write8(0xFFFD, 0x56);
+
+        assert_eq!(cpu.step(&mut bus), 16);
+        assert_eq!(cpu.pc(), 0x5678);
+        assert_eq!(cpu.sp(), 0xFFFE);
+        assert!(cpu.ime());
     }
 
     #[test]
