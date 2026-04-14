@@ -73,7 +73,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Handle invalid/unused opcodes safely in non-test builds (avoid panic-based control flow).
   - [x] Add table-driven instruction tests for arithmetic, loads, and bit ops.
 - [ ] **CPU timing**
-  - [ ] Instruction cycle counts.
+  - [x] Instruction cycle counts.
   - [ ] Memory access timing interactions.
 - [ ] **Control flow and stack**
   - [ ] CALL/RET/RETI, JP/JR, RST, PUSH/POP.
@@ -92,6 +92,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Instruction decode/execute coverage is now feature-complete for all implemented base and CB opcode families in this milestone scope; only hardware-invalid opcodes route to diagnostics.
 - Invalid/unused opcode dispatch now avoids panic-based control flow by halting execution and recording the offending opcode for diagnostics.
 - Remaining valid base opcodes now include `STOP`, `RETI`, `DI`, and `EI` semantics, leaving only hardware-invalid instructions to trigger unimplemented-opcode diagnostics.
+- Instruction timing coverage now includes table-driven tests for representative base and CB opcode cycle counts, including branch taken/not-taken paths and stack-return timing differences.
 
 **Acceptance criteria**
 - Passes CPU instruction correctness test ROMs.

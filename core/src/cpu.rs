@@ -1686,4 +1686,110 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn table_driven_instruction_cycle_counts_cover_branch_and_memory_paths() {
+        struct Case {
+            name: &'static str,
+            program: &'static [u8],
+            setup: fn(&mut Cpu, &mut Bus),
+            expected_cycles: u32,
+            expected_pc: u16,
+        }
+
+        let cases = [
+            Case {
+                name: "nop",
+                program: &[0x00],
+                setup: |_, _| {},
+                expected_cycles: 4,
+                expected_pc: 0x0001,
+            },
+            Case {
+                name: "jr_taken",
+                program: &[0x18, 0x02],
+                setup: |_, _| {},
+                expected_cycles: 12,
+                expected_pc: 0x0004,
+            },
+            Case {
+                name: "jr_nz_not_taken",
+                program: &[0x20, 0x02],
+                setup: |cpu, _| cpu.registers.f = FLAG_Z,
+                expected_cycles: 8,
+                expected_pc: 0x0002,
+            },
+            Case {
+                name: "jr_nz_taken",
+                program: &[0x20, 0x02],
+                setup: |cpu, _| cpu.registers.f = 0,
+                expected_cycles: 12,
+                expected_pc: 0x0004,
+            },
+            Case {
+                name: "ld_hl_d8_memory_path",
+                program: &[0x36, 0x5A],
+                setup: |cpu, _| cpu.registers.set_hl(0xC000),
+                expected_cycles: 12,
+                expected_pc: 0x0002,
+            },
+            Case {
+                name: "ld_b_c_register_path",
+                program: &[0x41],
+                setup: |cpu, _| cpu.registers.c = 0x99,
+                expected_cycles: 4,
+                expected_pc: 0x0001,
+            },
+            Case {
+                name: "ld_hl_b_memory_destination",
+                program: &[0x70],
+                setup: |cpu, _| {
+                    cpu.registers.b = 0x33;
+                    cpu.registers.set_hl(0xC123);
+                },
+                expected_cycles: 8,
+                expected_pc: 0x0001,
+            },
+            Case {
+                name: "ret_nz_not_taken",
+                program: &[0xC0],
+                setup: |cpu, _| cpu.registers.f = FLAG_Z,
+                expected_cycles: 8,
+                expected_pc: 0x0001,
+            },
+            Case {
+                name: "ret_nz_taken",
+                program: &[0xC0],
+                setup: |cpu, bus| {
+                    cpu.sp = 0xFFFC;
+                    cpu.registers.f = 0;
+                    bus.write8(0xFFFC, 0x34);
+                    bus.write8(0xFFFD, 0x12);
+                },
+                expected_cycles: 20,
+                expected_pc: 0x1234,
+            },
+            Case {
+                name: "cb_bit_hl",
+                program: &[0xCB, 0x46],
+                setup: |cpu, bus| {
+                    cpu.registers.set_hl(0xC222);
+                    bus.write8(0xC222, 0x01);
+                },
+                expected_cycles: 12,
+                expected_pc: 0x0002,
+            },
+        ];
+
+        for case in cases {
+            let mut cpu = Cpu::new();
+            let mut bus = make_bus_with_program(case.program);
+            (case.setup)(&mut cpu, &mut bus);
+
+            let cycles = cpu.step(&mut bus);
+
+            assert_eq!(cycles, case.expected_cycles, "case: {}", case.name);
+            assert_eq!(cpu.pc(), case.expected_pc, "case: {}", case.name);
+        }
+    }
 }
