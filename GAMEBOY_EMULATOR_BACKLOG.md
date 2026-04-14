@@ -82,6 +82,11 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [ ] IF/IE register interaction.
   - [ ] HALT bug behavior (deferred final-accuracy tuning allowed).
 
+**Implementation review notes (2026-04-14)**
+- Base opcode coverage has been expanded beyond the original smoke-test subset to include `LD rr,d16` for all register pairs, `ADC`/`SBC` register forms, and immediate ALU forms (`ADD/ADC/SUB/SBC/AND/XOR/OR/CP d8`).
+- CPU unit tests now include focused coverage for 16-bit register-pair loads and carry-sensitive ALU behavior for both register and immediate instruction forms.
+- Remaining work for this milestone still includes full base/CB table completion, invalid opcode behavior policy, and broader timing/control-flow/interrupt conformance.
+
 **Acceptance criteria**
 - Passes CPU instruction correctness test ROMs.
 - Passes interrupt behavior test subset.
