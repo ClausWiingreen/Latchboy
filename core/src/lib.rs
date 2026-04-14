@@ -79,7 +79,7 @@ impl Emulator {
                     & self.bus.read8(INTERRUPT_ENABLE_REGISTER)
                     & INTERRUPT_MASK;
 
-                if pending_interrupts == 0 {
+                if pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable() {
                     let remaining = target - available;
                     let halted_advance = remaining.div_ceil(4) * 4;
                     available += halted_advance;

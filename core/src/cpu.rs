@@ -148,6 +148,10 @@ impl Cpu {
         self.halted
     }
 
+    pub const fn halted_is_interrupt_wakeable(&self) -> bool {
+        self.halted && !self.halted_by_unimplemented_opcode
+    }
+
     pub const fn ime(&self) -> bool {
         self.ime
     }
