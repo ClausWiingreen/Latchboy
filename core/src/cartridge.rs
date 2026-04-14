@@ -1445,7 +1445,9 @@ mod tests {
         cartridge.write(0x6000, 0x01);
         cartridge.write(0xA010, 0x5A);
 
-        let save = cartridge.save_data().expect("battery-backed save available");
+        let save = cartridge
+            .save_data()
+            .expect("battery-backed save available");
         let mut reloaded = Cartridge::from_rom(cartridge.rom.clone()).expect("rom reload works");
         reloaded
             .load_save_data(&save)
@@ -1471,7 +1473,9 @@ mod tests {
         cartridge.write(0x4000, 0x01);
         cartridge.write(0xA010, 0xA5);
 
-        let save = cartridge.save_data().expect("battery-backed save available");
+        let save = cartridge
+            .save_data()
+            .expect("battery-backed save available");
         let mut reloaded = Cartridge::from_rom(cartridge.rom.clone()).expect("rom reload works");
         reloaded
             .load_save_data(&save)
