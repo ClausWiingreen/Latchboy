@@ -98,6 +98,16 @@ impl Bus {
         }
     }
 
+    pub fn reset(&mut self) {
+        let cartridge = self.cartridge.clone();
+        let boot_rom = self.boot_rom.clone();
+        let boot_rom_enabled = self.boot_rom_enabled;
+
+        *self = Self::new(cartridge);
+        self.boot_rom = boot_rom;
+        self.boot_rom_enabled = boot_rom_enabled;
+    }
+
     pub fn write8(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x7FFF => self.cartridge.write(address, value),

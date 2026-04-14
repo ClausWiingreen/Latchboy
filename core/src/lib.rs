@@ -52,19 +52,23 @@ impl Emulator {
         }
     }
 
-    /// Resets emulator state to defaults.
+    /// Resets CPU and bus state while preserving the loaded cartridge.
     pub fn reset(&mut self) {
-        *self = Self::new();
+        self.cpu = Cpu::new();
+        self.bus.reset();
+        self.total_cycles = 0;
     }
 
     /// Advances execution by at least `cycles` machine cycles.
     pub fn step_cycles(&mut self, cycles: u32) {
-        let mut executed = 0u32;
-        while executed < cycles {
-            executed = executed.wrapping_add(self.cpu.step(&mut self.bus));
+        let target = cycles as u64;
+        let mut executed = 0u64;
+
+        while executed < target {
+            executed += self.cpu.step(&mut self.bus) as u64;
         }
 
-        self.total_cycles = self.total_cycles.wrapping_add(executed as u64);
+        self.total_cycles = self.total_cycles.wrapping_add(executed);
     }
 
     pub const fn cpu(&self) -> &Cpu {
@@ -135,5 +139,33 @@ mod tests {
         assert_eq!(emulator.cpu().registers().a, 0x43);
         assert_eq!(emulator.bus().read8(0xC000), 0x42);
         assert_eq!(emulator.bus().read8(0xC001), 0x43);
+    }
+
+    #[test]
+    fn reset_preserves_loaded_cartridge_program() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0x3E; // LD A, d8
+        rom[0x0001] = 0x99;
+        rom[0x0002] = 0x76; // HALT
+
+        rom[0x0134..0x0138].copy_from_slice(b"RSET");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+
+        emulator.step_cycles(16);
+        assert_eq!(emulator.cpu().registers().a, 0x99);
+
+        emulator.reset();
+        emulator.step_cycles(16);
+
+        assert_eq!(emulator.cpu().registers().a, 0x99);
+        assert_eq!(emulator.cpu().pc(), 0x0003);
     }
 }
