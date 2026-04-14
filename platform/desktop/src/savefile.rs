@@ -1,5 +1,6 @@
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -29,7 +30,28 @@ pub fn load_save_data_if_available(cartridge: &mut Cartridge, save_path: &Path) 
         return SaveLoadStatus::NotBatteryBacked;
     }
 
-    let save_data = match fs::read(save_path) {
+    let expected_save_size = cartridge.save_data().map_or(0, |save_data| save_data.len());
+    let actual_file_size = match fs::metadata(save_path) {
+        Ok(metadata) => metadata.len() as usize,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return SaveLoadStatus::NotFound,
+        Err(error) => {
+            eprintln!(
+                "warning: failed to inspect save file '{}': {error}",
+                save_path.display()
+            );
+            return SaveLoadStatus::ReadError;
+        }
+    };
+
+    if actual_file_size != expected_save_size {
+        eprintln!(
+            "warning: save file '{}' size mismatch (expected {expected_save_size} bytes, got {actual_file_size}); continuing with zeroed RAM",
+            save_path.display()
+        );
+        return SaveLoadStatus::InvalidData;
+    }
+
+    let save_data = match read_exact_save(save_path, expected_save_size) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return SaveLoadStatus::NotFound,
         Err(error) => {
@@ -64,6 +86,13 @@ pub fn load_save_data_if_available(cartridge: &mut Cartridge, save_path: &Path) 
             SaveLoadStatus::InvalidData
         }
     }
+}
+
+fn read_exact_save(path: &Path, expected_size: usize) -> io::Result<Vec<u8>> {
+    let mut file = fs::File::open(path)?;
+    let mut save_data = vec![0; expected_size];
+    file.read_exact(&mut save_data)?;
+    Ok(save_data)
 }
 
 /// Persists battery-backed cartridge save data to disk via an atomic rename.

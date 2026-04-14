@@ -89,16 +89,23 @@ fn invalid_save_load_can_be_used_to_skip_persist_and_preserve_original_file() {
 
 #[test]
 fn read_error_load_status_disables_persist_gate() {
+    assert!(!should_persist_after_load(SaveLoadStatus::ReadError));
+}
+
+#[test]
+fn oversized_save_is_rejected_via_size_check_before_loading() {
     let temp_dir = create_temp_dir();
-    let save_path = temp_dir.join("locked.sav");
-    fs::create_dir_all(&save_path).expect("directory path should trigger read error");
-
+    let rom_path = temp_dir.join("oversized.gb");
+    let save_path = save_path_from_rom_path(&rom_path);
     let rom = build_rom(CartridgeType::RomRamBattery.code(), 0x02);
-    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
 
+    fs::write(&save_path, vec![0xEE; 512 * 1024]).expect("oversized save should be written");
+
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
-    assert_eq!(load_status, SaveLoadStatus::ReadError);
+    assert_eq!(load_status, SaveLoadStatus::InvalidData);
     assert!(!should_persist_after_load(load_status));
+    assert_eq!(cartridge.read(0xA000), 0x00);
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
