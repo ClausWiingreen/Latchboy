@@ -86,7 +86,6 @@ impl Registers {
         }
         self.f &= FLAGS_MASK;
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
