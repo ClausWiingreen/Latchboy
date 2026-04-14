@@ -78,8 +78,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [x] **Control flow and stack**
   - [x] CALL/RET/RETI, JP/JR, RST, PUSH/POP.
 - [ ] **Interrupt mechanism**
-  - [ ] IME behavior and delayed EI semantics.
-  - [ ] IF/IE register interaction.
+  - [x] IME behavior and delayed EI semantics.
+  - [x] IF/IE register interaction.
   - [ ] HALT bug behavior (deferred final-accuracy tuning allowed).
 
 **Implementation review notes (2026-04-14)**
@@ -93,6 +93,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Invalid/unused opcode dispatch now avoids panic-based control flow by halting execution and recording the offending opcode for diagnostics.
 - Remaining valid base opcodes now include `STOP`, `RETI`, `DI`, and `EI` semantics, leaving only hardware-invalid instructions to trigger unimplemented-opcode diagnostics.
 - Instruction timing coverage now includes table-driven tests for representative base and CB opcode cycle counts, including branch taken/not-taken paths and stack-return timing differences.
+- CPU step sequencing now performs IF/IE pending-interrupt arbitration ahead of opcode fetch, services enabled interrupts by priority when IME is set, and exits HALT state when interrupts are pending.
 
 **Acceptance criteria**
 - Passes CPU instruction correctness test ROMs.
