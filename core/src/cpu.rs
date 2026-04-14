@@ -155,6 +155,13 @@ impl Cpu {
                 self.rlca();
                 4
             }
+            0x08 => {
+                let address = self.fetch16(bus);
+                let [lo, hi] = self.sp.to_le_bytes();
+                bus.write8(address, lo);
+                bus.write8(address.wrapping_add(1), hi);
+                20
+            }
             0x02 | 0x12 => {
                 let address = if opcode == 0x02 {
                     self.registers.bc()
@@ -242,6 +249,20 @@ impl Cpu {
             0x0F => {
                 self.rrca();
                 4
+            }
+            0x18 => {
+                let offset = self.fetch8(bus) as i8;
+                self.pc = self.pc.wrapping_add_signed(i16::from(offset));
+                12
+            }
+            0x20 | 0x28 | 0x30 | 0x38 => {
+                let offset = self.fetch8(bus) as i8;
+                if self.condition_met((opcode >> 3) & 0x03) {
+                    self.pc = self.pc.wrapping_add_signed(i16::from(offset));
+                    12
+                } else {
+                    8
+                }
             }
             0x17 => {
                 self.rla();
@@ -408,10 +429,80 @@ impl Cpu {
                 self.add_to_a(value);
                 8
             }
+            0xC0 | 0xC8 | 0xD0 | 0xD8 => {
+                if self.condition_met((opcode >> 3) & 0x03) {
+                    self.pc = self.pop_stack16(bus);
+                    20
+                } else {
+                    8
+                }
+            }
+            0xC1 | 0xD1 | 0xE1 | 0xF1 => {
+                let value = self.pop_stack16(bus);
+                match (opcode >> 4) & 0x03 {
+                    0x00 => self.registers.set_bc(value),
+                    0x01 => self.registers.set_de(value),
+                    0x02 => self.registers.set_hl(value),
+                    0x03 => self.registers.set_af(value),
+                    _ => unreachable!("register pair index is masked to 2 bits"),
+                }
+                12
+            }
+            0xC2 | 0xCA | 0xD2 | 0xDA => {
+                let address = self.fetch16(bus);
+                if self.condition_met((opcode >> 3) & 0x03) {
+                    self.pc = address;
+                    16
+                } else {
+                    12
+                }
+            }
             0xCE => {
                 let value = self.fetch8(bus);
                 self.adc_to_a(value);
                 8
+            }
+            0xC3 => {
+                let address = self.fetch16(bus);
+                self.pc = address;
+                16
+            }
+            0xC4 | 0xCC | 0xD4 | 0xDC => {
+                let address = self.fetch16(bus);
+                if self.condition_met((opcode >> 3) & 0x03) {
+                    self.push_stack16(bus, self.pc);
+                    self.pc = address;
+                    24
+                } else {
+                    12
+                }
+            }
+            0xC5 | 0xD5 | 0xE5 | 0xF5 => {
+                let value = match (opcode >> 4) & 0x03 {
+                    0x00 => self.registers.bc(),
+                    0x01 => self.registers.de(),
+                    0x02 => self.registers.hl(),
+                    0x03 => self.registers.af(),
+                    _ => unreachable!("register pair index is masked to 2 bits"),
+                };
+                self.push_stack16(bus, value);
+                16
+            }
+            0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
+                let vector = u16::from(opcode & 0x38);
+                self.push_stack16(bus, self.pc);
+                self.pc = vector;
+                16
+            }
+            0xC9 => {
+                self.pc = self.pop_stack16(bus);
+                16
+            }
+            0xCD => {
+                let address = self.fetch16(bus);
+                self.push_stack16(bus, self.pc);
+                self.pc = address;
+                24
             }
             0xD6 => {
                 let value = self.fetch8(bus);
@@ -427,6 +518,15 @@ impl Cpu {
                 let value = self.fetch8(bus);
                 self.and_with_a(value);
                 8
+            }
+            0xE8 => {
+                let offset = self.fetch8(bus) as i8;
+                self.sp = self.add_signed_to_sp(offset);
+                16
+            }
+            0xE9 => {
+                self.pc = self.registers.hl();
+                4
             }
             0xE0 => {
                 let offset = self.fetch8(bus);
@@ -452,6 +552,16 @@ impl Cpu {
                 self.or_with_a(value);
                 8
             }
+            0xF8 => {
+                let offset = self.fetch8(bus) as i8;
+                let result = self.add_signed_to_sp(offset);
+                self.registers.set_hl(result);
+                12
+            }
+            0xF9 => {
+                self.sp = self.registers.hl();
+                8
+            }
             0xF0 => {
                 let offset = self.fetch8(bus);
                 self.registers.a = bus.read8(0xFF00u16 + u16::from(offset));
@@ -470,11 +580,6 @@ impl Cpu {
                 let value = self.fetch8(bus);
                 self.compare_a(value);
                 8
-            }
-            0xC3 => {
-                let address = self.fetch16(bus);
-                self.pc = address;
-                16
             }
             _ => self.handle_unimplemented_opcode(opcode),
         }
@@ -496,6 +601,48 @@ impl Cpu {
         let lo = self.fetch8(bus) as u16;
         let hi = self.fetch8(bus) as u16;
         (hi << 8) | lo
+    }
+
+    fn push_stack16(&mut self, bus: &mut Bus, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.sp = self.sp.wrapping_sub(1);
+        bus.write8(self.sp, hi);
+        self.sp = self.sp.wrapping_sub(1);
+        bus.write8(self.sp, lo);
+    }
+
+    fn pop_stack16(&mut self, bus: &Bus) -> u16 {
+        let lo = bus.read8(self.sp);
+        self.sp = self.sp.wrapping_add(1);
+        let hi = bus.read8(self.sp);
+        self.sp = self.sp.wrapping_add(1);
+        u16::from_le_bytes([lo, hi])
+    }
+
+    fn condition_met(&self, condition_index: u8) -> bool {
+        match condition_index & 0x03 {
+            0x00 => (self.registers.f & FLAG_Z) == 0,
+            0x01 => (self.registers.f & FLAG_Z) != 0,
+            0x02 => (self.registers.f & FLAG_C) == 0,
+            0x03 => (self.registers.f & FLAG_C) != 0,
+            _ => unreachable!("condition index is masked to 2 bits"),
+        }
+    }
+
+    fn add_signed_to_sp(&mut self, offset: i8) -> u16 {
+        let sp = self.sp;
+        let signed = i16::from(offset);
+        let result = sp.wrapping_add_signed(signed);
+        let offset_u16 = u16::from(offset as u8);
+        self.registers.set_flag(Flag::Zero, false);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(
+            Flag::HalfCarry,
+            (sp & 0x000F) + (offset_u16 & 0x000F) > 0x000F,
+        );
+        self.registers
+            .set_flag(Flag::Carry, (sp & 0x00FF) + (offset_u16 & 0x00FF) > 0x00FF);
+        result
     }
 
     fn read_r8(&self, register_index: u8, bus: &Bus) -> u8 {
@@ -1091,6 +1238,77 @@ mod tests {
         assert_eq!(cpu.registers.f & FLAG_C, 0);
         assert_eq!(cpu.registers.f & FLAG_N, 0);
         assert_eq!(cpu.registers.f & FLAG_H, 0);
+    }
+
+    #[test]
+    fn jump_call_ret_and_stack_opcodes_follow_control_flow() {
+        let mut cpu = Cpu::new();
+        cpu.registers.set_bc(0xBEEF);
+        cpu.registers.f = FLAG_Z;
+        let mut bus = make_bus_with_program(&[
+            0x20, 0x02, // JR NZ,+2 (not taken because Z set)
+            0x00, // NOP
+            0xCD, 0x09, 0x00, // CALL 0009
+            0xC3, 0x0C, 0x00, // JP 000C
+            0xC5, // [0009] PUSH BC
+            0xD1, // POP DE
+            0xC9, // RET
+            0x18, 0x02, // [000C] JR +2
+            0x00, // skipped NOP
+            0x00, // final NOP
+        ]);
+
+        cpu.step(&mut bus); // JR NZ,+2 (not taken)
+        assert_eq!(cpu.pc(), 0x0002);
+
+        cpu.step(&mut bus); // NOP
+        cpu.step(&mut bus); // CALL 0008
+        assert_eq!(cpu.pc(), 0x0009);
+
+        cpu.step(&mut bus); // PUSH BC
+        cpu.step(&mut bus); // POP DE
+        assert_eq!(cpu.registers.de(), 0xBEEF);
+
+        cpu.step(&mut bus); // RET
+        assert_eq!(cpu.pc(), 0x0006);
+
+        cpu.step(&mut bus); // JP 000C
+        assert_eq!(cpu.pc(), 0x000C);
+
+        cpu.step(&mut bus); // JR +2
+        assert_eq!(cpu.pc(), 0x0010);
+    }
+
+    #[test]
+    fn sp_offset_loads_set_flags_and_destinations() {
+        let mut cpu = Cpu::new();
+        cpu.sp = 0xFFF8;
+        cpu.registers.f = FLAG_Z | FLAG_N;
+        let mut bus = make_bus_with_program(&[
+            0xE8, 0x08, // ADD SP,+8 => 0000, H and C set
+            0xF8, 0xF8, // LD HL,SP-8 => FFF8
+            0xF9, // LD SP,HL
+            0x08, 0x00, 0xC1, // LD (C100),SP
+        ]);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.sp, 0x0000);
+        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.registers.hl(), 0xFFF8);
+        assert_eq!(cpu.registers.f & FLAG_H, 0);
+        assert_eq!(cpu.registers.f & FLAG_C, 0);
+
+        cpu.step(&mut bus);
+        assert_eq!(cpu.sp, 0xFFF8);
+
+        cpu.step(&mut bus);
+        assert_eq!(bus.read8(0xC100), 0xF8);
+        assert_eq!(bus.read8(0xC101), 0xFF);
     }
 
     #[test]
