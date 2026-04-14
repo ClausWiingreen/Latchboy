@@ -38,7 +38,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Memory Bank Controllers (MBC)**
   - [x] Implement ROM-only (no MBC).
   - [x] Implement MBC1.
-  - [ ] Implement MBC3 (RTC optional phase split).
+  - [x] Implement MBC3 (RTC optional phase split).
   - [ ] Implement MBC5.
 - [ ] **External RAM handling**
   - [ ] RAM enable/disable behavior.
