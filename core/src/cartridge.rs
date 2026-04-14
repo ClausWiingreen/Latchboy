@@ -693,9 +693,8 @@ impl Cartridge {
         match address {
             0x0000..=0x3FFF => self.rom.get(address as usize).copied().unwrap_or(0xFF),
             0x4000..=0x7FFF => {
-                let bank = ((((rom_bank_high1 as usize) << 8) | rom_bank_low8 as usize)
-                    % rom_bank_count)
-                    .max(1);
+                let bank =
+                    (((rom_bank_high1 as usize) << 8) | rom_bank_low8 as usize) % rom_bank_count;
                 let offset = bank * 0x4000 + (address as usize - 0x4000);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
@@ -1144,6 +1143,25 @@ mod tests {
         cartridge.write(0x2000, 0x01);
         cartridge.write(0x3000, 0x01);
         assert_eq!(cartridge.read(0x4000), 0x57);
+    }
+
+    #[test]
+    fn mbc5_allows_selecting_rom_bank_zero_in_switchable_window() {
+        let mut rom = vec![0u8; 4 * 0x4000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc5.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[0x4000] = 0x11;
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc5 should be supported");
+        assert_eq!(cartridge.read(0x4000), 0x11);
+
+        cartridge.write(0x2000, 0x00);
+        cartridge.write(0x3000, 0x00);
+        assert_eq!(cartridge.read(0x4000), 0x00);
     }
 
     #[test]
