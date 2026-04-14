@@ -145,6 +145,25 @@ impl Cpu {
         let opcode = self.fetch8(bus);
         match opcode {
             0x00 => 4, // NOP
+            0x02 | 0x12 => {
+                let address = if opcode == 0x02 {
+                    self.registers.bc()
+                } else {
+                    self.registers.de()
+                };
+                bus.write8(address, self.registers.a);
+                8
+            }
+            0x03 | 0x13 | 0x23 | 0x33 => {
+                match (opcode >> 4) & 0x03 {
+                    0x00 => self.registers.set_bc(self.registers.bc().wrapping_add(1)),
+                    0x01 => self.registers.set_de(self.registers.de().wrapping_add(1)),
+                    0x02 => self.registers.set_hl(self.registers.hl().wrapping_add(1)),
+                    0x03 => self.sp = self.sp.wrapping_add(1),
+                    _ => unreachable!("register pair index is masked to 2 bits"),
+                }
+                8
+            }
             0x01 | 0x11 | 0x21 | 0x31 => {
                 let value = self.fetch16(bus);
                 match (opcode >> 4) & 0x03 {
@@ -155,6 +174,60 @@ impl Cpu {
                     _ => unreachable!("register pair index is masked to 2 bits"),
                 }
                 12
+            }
+            0x0A | 0x1A => {
+                let address = if opcode == 0x0A {
+                    self.registers.bc()
+                } else {
+                    self.registers.de()
+                };
+                self.registers.a = bus.read8(address);
+                8
+            }
+            0x0B | 0x1B | 0x2B | 0x3B => {
+                match (opcode >> 4) & 0x03 {
+                    0x00 => self.registers.set_bc(self.registers.bc().wrapping_sub(1)),
+                    0x01 => self.registers.set_de(self.registers.de().wrapping_sub(1)),
+                    0x02 => self.registers.set_hl(self.registers.hl().wrapping_sub(1)),
+                    0x03 => self.sp = self.sp.wrapping_sub(1),
+                    _ => unreachable!("register pair index is masked to 2 bits"),
+                }
+                8
+            }
+            0x09 | 0x19 | 0x29 | 0x39 => {
+                let value = match (opcode >> 4) & 0x03 {
+                    0x00 => self.registers.bc(),
+                    0x01 => self.registers.de(),
+                    0x02 => self.registers.hl(),
+                    0x03 => self.sp,
+                    _ => unreachable!("register pair index is masked to 2 bits"),
+                };
+                self.add_to_hl(value);
+                8
+            }
+            0x22 => {
+                let address = self.registers.hl();
+                bus.write8(address, self.registers.a);
+                self.registers.set_hl(address.wrapping_add(1));
+                8
+            }
+            0x2A => {
+                let address = self.registers.hl();
+                self.registers.a = bus.read8(address);
+                self.registers.set_hl(address.wrapping_add(1));
+                8
+            }
+            0x32 => {
+                let address = self.registers.hl();
+                bus.write8(address, self.registers.a);
+                self.registers.set_hl(address.wrapping_sub(1));
+                8
+            }
+            0x3A => {
+                let address = self.registers.hl();
+                self.registers.a = bus.read8(address);
+                self.registers.set_hl(address.wrapping_sub(1));
+                8
             }
             0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x3E => {
                 let value = self.fetch8(bus);
@@ -310,6 +383,15 @@ impl Cpu {
                 self.and_with_a(value);
                 8
             }
+            0xE0 => {
+                let offset = self.fetch8(bus);
+                bus.write8(0xFF00u16 + u16::from(offset), self.registers.a);
+                12
+            }
+            0xE2 => {
+                bus.write8(0xFF00u16 + u16::from(self.registers.c), self.registers.a);
+                8
+            }
             0xEA => {
                 let address = self.fetch16(bus);
                 bus.write8(address, self.registers.a);
@@ -324,6 +406,20 @@ impl Cpu {
                 let value = self.fetch8(bus);
                 self.or_with_a(value);
                 8
+            }
+            0xF0 => {
+                let offset = self.fetch8(bus);
+                self.registers.a = bus.read8(0xFF00u16 + u16::from(offset));
+                12
+            }
+            0xF2 => {
+                self.registers.a = bus.read8(0xFF00u16 + u16::from(self.registers.c));
+                8
+            }
+            0xFA => {
+                let address = self.fetch16(bus);
+                self.registers.a = bus.read8(address);
+                16
             }
             0xFE => {
                 let value = self.fetch8(bus);
@@ -473,6 +569,18 @@ impl Cpu {
         self.registers
             .set_flag(Flag::HalfCarry, (previous & 0x0F) < (value & 0x0F));
         self.registers.set_flag(Flag::Carry, previous < value);
+    }
+
+    fn add_to_hl(&mut self, value: u16) {
+        let hl = self.registers.hl();
+        let result = hl.wrapping_add(value);
+        self.registers.set_hl(result);
+
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers
+            .set_flag(Flag::HalfCarry, (hl & 0x0FFF) + (value & 0x0FFF) > 0x0FFF);
+        self.registers
+            .set_flag(Flag::Carry, u32::from(hl) + u32::from(value) > 0xFFFF);
     }
 }
 
@@ -708,6 +816,93 @@ mod tests {
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.c, 0xFF);
         assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
+        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+    }
+
+    #[test]
+    fn ld_indirect_a_variants_round_trip_through_memory() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0x42;
+        cpu.registers.set_bc(0xC100);
+        cpu.registers.set_de(0xC101);
+        cpu.registers.set_hl(0xC102);
+        let mut bus = make_bus_with_program(&[
+            0x02, // LD (BC),A
+            0x12, // LD (DE),A
+            0x22, // LD (HL+),A
+            0x3E, 0x00, // LD A,00
+            0x0A, // LD A,(BC)
+            0x1A, // LD A,(DE)
+            0x2A, // LD A,(HL+) ; reads C103 (default 00)
+        ]);
+
+        for _ in 0..7 {
+            cpu.step(&mut bus);
+        }
+
+        assert_eq!(bus.read8(0xC100), 0x42);
+        assert_eq!(bus.read8(0xC101), 0x42);
+        assert_eq!(bus.read8(0xC102), 0x42);
+        assert_eq!(cpu.registers.a, 0x00);
+        assert_eq!(cpu.registers.hl(), 0xC104);
+    }
+
+    #[test]
+    fn ldh_and_absolute_a_transfers_work() {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0x9C;
+        cpu.registers.c = 0x12;
+        let mut bus = make_bus_with_program(&[
+            0xE0, 0x80, // LDH (80),A
+            0xE2, // LD (C),A
+            0xEA, 0x34, 0xC2, // LD (C234),A
+            0x3E, 0x00, // LD A,00
+            0xF0, 0x80, // LDH A,(80)
+            0xF2, // LD A,(C)
+            0xFA, 0x34, 0xC2, // LD A,(C234)
+        ]);
+
+        for _ in 0..7 {
+            cpu.step(&mut bus);
+        }
+
+        assert_eq!(bus.read8(0xFF80), 0x9C);
+        assert_eq!(bus.read8(0xFF12), 0x9C);
+        assert_eq!(bus.read8(0xC234), 0x9C);
+        assert_eq!(cpu.registers.a, 0x9C);
+    }
+
+    #[test]
+    fn sixteen_bit_inc_dec_and_add_hl_follow_expected_rules() {
+        let mut cpu = Cpu::new();
+        cpu.registers.set_bc(0x0FFF);
+        cpu.registers.set_de(0x0001);
+        cpu.registers.set_hl(0x8FFF);
+        cpu.sp = 0xFFFF;
+        cpu.registers.f = FLAG_Z;
+        let mut bus = make_bus_with_program(&[
+            0x03, // INC BC
+            0x13, // INC DE
+            0x33, // INC SP
+            0x0B, // DEC BC
+            0x1B, // DEC DE
+            0x3B, // DEC SP
+            0x09, // ADD HL,BC
+            0x19, // ADD HL,DE
+            0x39, // ADD HL,SP
+        ]);
+
+        for _ in 0..9 {
+            cpu.step(&mut bus);
+        }
+
+        assert_eq!(cpu.registers.bc(), 0x0FFF);
+        assert_eq!(cpu.registers.de(), 0x0001);
+        assert_eq!(cpu.sp, 0xFFFF);
+        assert_eq!(cpu.registers.hl(), 0x9FFE);
+        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & FLAG_N, 0);
         assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
         assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
     }
