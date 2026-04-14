@@ -8,6 +8,9 @@ const ROM_SIZE_OFFSET: usize = 0x0148;
 const RAM_SIZE_OFFSET: usize = 0x0149;
 const DESTINATION_OFFSET: usize = 0x014A;
 const HEADER_CHECKSUM_OFFSET: usize = 0x014D;
+const ROM_BANK_SIZE: usize = 0x4000;
+const RAM_BANK_SIZE: usize = 0x2000;
+const EXTERNAL_RAM_START: u16 = 0xA000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CartridgeError {
@@ -468,11 +471,7 @@ impl Cartridge {
         match &mut self.mapper {
             Mapper::RomOnly => {
                 if let 0xA000..=0xBFFF = address {
-                    if let Some(ram) = &mut self.external_ram {
-                        if let Some(slot) = ram.get_mut((address - 0xA000) as usize) {
-                            *slot = value;
-                        }
-                    }
+                    Self::write_external_ram(&mut self.external_ram, address, value);
                 }
             }
             Mapper::Mbc1 {
@@ -480,99 +479,147 @@ impl Cartridge {
                 rom_bank_low5,
                 bank_upper2,
                 banking_mode,
-            } => match address {
-                0x0000..=0x1FFF => {
-                    *ram_enabled = value & 0x0F == 0x0A;
-                }
-                0x2000..=0x3FFF => {
-                    let selected = value & 0x1F;
-                    *rom_bank_low5 = if selected == 0 { 1 } else { selected };
-                }
-                0x4000..=0x5FFF => {
-                    *bank_upper2 = value & 0x03;
-                }
-                0x6000..=0x7FFF => {
-                    *banking_mode = value & 0x01;
-                }
-                0xA000..=0xBFFF => {
-                    if !*ram_enabled {
-                        return;
-                    }
-
-                    if let Some(ram) = &mut self.external_ram {
-                        let offset =
-                            Self::mbc1_ram_offset(address, *banking_mode, *bank_upper2, ram.len());
-                        if let Some(slot) = ram.get_mut(offset) {
-                            *slot = value;
-                        }
-                    }
-                }
-                _ => {}
-            },
+            } => Self::write_mbc1(
+                &mut self.external_ram,
+                address,
+                value,
+                ram_enabled,
+                rom_bank_low5,
+                bank_upper2,
+                banking_mode,
+            ),
             Mapper::Mbc3 {
                 ram_enabled,
                 rom_bank,
                 ram_bank_or_rtc,
-            } => match address {
-                0x0000..=0x1FFF => {
-                    *ram_enabled = value & 0x0F == 0x0A;
-                }
-                0x2000..=0x3FFF => {
-                    let selected = value & 0x7F;
-                    *rom_bank = if selected == 0 { 1 } else { selected };
-                }
-                0x4000..=0x5FFF => {
-                    *ram_bank_or_rtc = value & 0x0F;
-                }
-                0x6000..=0x7FFF => {
-                    // RTC latch unsupported in this phase.
-                }
-                0xA000..=0xBFFF => {
-                    if !*ram_enabled || *ram_bank_or_rtc > 0x03 {
-                        return;
-                    }
-
-                    if let Some(ram) = &mut self.external_ram {
-                        let offset = Self::mbc3_ram_offset(address, *ram_bank_or_rtc, ram.len());
-                        if let Some(slot) = ram.get_mut(offset) {
-                            *slot = value;
-                        }
-                    }
-                }
-                _ => {}
-            },
+            } => Self::write_mbc3(
+                &mut self.external_ram,
+                address,
+                value,
+                ram_enabled,
+                rom_bank,
+                ram_bank_or_rtc,
+            ),
             Mapper::Mbc5 {
                 ram_enabled,
                 rom_bank_low8,
                 rom_bank_high1,
                 ram_bank,
-            } => match address {
-                0x0000..=0x1FFF => {
-                    *ram_enabled = value & 0x0F == 0x0A;
-                }
-                0x2000..=0x2FFF => {
-                    *rom_bank_low8 = value;
-                }
-                0x3000..=0x3FFF => {
-                    *rom_bank_high1 = value & 0x01;
-                }
-                0x4000..=0x5FFF => {
-                    *ram_bank = value & 0x0F;
-                }
-                0xA000..=0xBFFF => {
-                    if !*ram_enabled {
-                        return;
-                    }
+            } => Self::write_mbc5(
+                &mut self.external_ram,
+                address,
+                value,
+                ram_enabled,
+                rom_bank_low8,
+                rom_bank_high1,
+                ram_bank,
+            ),
+        }
+    }
 
-                    if let Some(ram) = &mut self.external_ram {
-                        let offset = Self::mbc5_ram_offset(address, *ram_bank, ram.len());
-                        if let Some(slot) = ram.get_mut(offset) {
-                            *slot = value;
-                        }
+    fn write_external_ram(external_ram: &mut Option<Vec<u8>>, address: u16, value: u8) {
+        if let Some(ram) = external_ram {
+            if let Some(slot) = ram.get_mut((address - EXTERNAL_RAM_START) as usize) {
+                *slot = value;
+            }
+        }
+    }
+
+    fn write_mbc1(
+        external_ram: &mut Option<Vec<u8>>,
+        address: u16,
+        value: u8,
+        ram_enabled: &mut bool,
+        rom_bank_low5: &mut u8,
+        bank_upper2: &mut u8,
+        banking_mode: &mut u8,
+    ) {
+        match address {
+            0x0000..=0x1FFF => *ram_enabled = value & 0x0F == 0x0A,
+            0x2000..=0x3FFF => {
+                let selected = value & 0x1F;
+                *rom_bank_low5 = if selected == 0 { 1 } else { selected };
+            }
+            0x4000..=0x5FFF => *bank_upper2 = value & 0x03,
+            0x6000..=0x7FFF => *banking_mode = value & 0x01,
+            0xA000..=0xBFFF => {
+                if !*ram_enabled {
+                    return;
+                }
+
+                if let Some(ram) = external_ram {
+                    let offset =
+                        Self::mbc1_ram_offset(address, *banking_mode, *bank_upper2, ram.len());
+                    if let Some(slot) = ram.get_mut(offset) {
+                        *slot = value;
                     }
                 }
-                _ => {}
-            },
+            }
+            _ => {}
+        }
+    }
+
+    fn write_mbc3(
+        external_ram: &mut Option<Vec<u8>>,
+        address: u16,
+        value: u8,
+        ram_enabled: &mut bool,
+        rom_bank: &mut u8,
+        ram_bank_or_rtc: &mut u8,
+    ) {
+        match address {
+            0x0000..=0x1FFF => *ram_enabled = value & 0x0F == 0x0A,
+            0x2000..=0x3FFF => {
+                let selected = value & 0x7F;
+                *rom_bank = if selected == 0 { 1 } else { selected };
+            }
+            0x4000..=0x5FFF => *ram_bank_or_rtc = value & 0x0F,
+            0x6000..=0x7FFF => {
+                // RTC latch unsupported in this phase.
+            }
+            0xA000..=0xBFFF => {
+                if !*ram_enabled || *ram_bank_or_rtc > 0x03 {
+                    return;
+                }
+
+                if let Some(ram) = external_ram {
+                    let offset = Self::mbc3_ram_offset(address, *ram_bank_or_rtc, ram.len());
+                    if let Some(slot) = ram.get_mut(offset) {
+                        *slot = value;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn write_mbc5(
+        external_ram: &mut Option<Vec<u8>>,
+        address: u16,
+        value: u8,
+        ram_enabled: &mut bool,
+        rom_bank_low8: &mut u8,
+        rom_bank_high1: &mut u8,
+        ram_bank: &mut u8,
+    ) {
+        match address {
+            0x0000..=0x1FFF => *ram_enabled = value & 0x0F == 0x0A,
+            0x2000..=0x2FFF => *rom_bank_low8 = value,
+            0x3000..=0x3FFF => *rom_bank_high1 = value & 0x01,
+            0x4000..=0x5FFF => *ram_bank = value & 0x0F,
+            0xA000..=0xBFFF => {
+                if !*ram_enabled {
+                    return;
+                }
+
+                if let Some(ram) = external_ram {
+                    let offset = Self::mbc5_ram_offset(address, *ram_bank, ram.len());
+                    if let Some(slot) = ram.get_mut(offset) {
+                        *slot = value;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -584,7 +631,7 @@ impl Cartridge {
         bank_upper2: u8,
         banking_mode: u8,
     ) -> u8 {
-        let rom_bank_count = self.rom.len() / 0x4000;
+        let rom_bank_count = self.rom.len() / ROM_BANK_SIZE;
         if rom_bank_count == 0 {
             return 0xFF;
         }
@@ -596,14 +643,14 @@ impl Cartridge {
                 } else {
                     ((bank_upper2 as usize) << 5) % rom_bank_count
                 };
-                let offset = bank * 0x4000 + address as usize;
+                let offset = bank * ROM_BANK_SIZE + address as usize;
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
             0x4000..=0x7FFF => {
                 let bank = ((((bank_upper2 as usize) << 5) | rom_bank_low5 as usize)
                     % rom_bank_count)
                     .max(1);
-                let offset = bank * 0x4000 + (address as usize - 0x4000);
+                let offset = bank * ROM_BANK_SIZE + (address as usize - ROM_BANK_SIZE);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
             0xA000..=0xBFFF => {
@@ -626,18 +673,18 @@ impl Cartridge {
     }
 
     fn mbc1_ram_offset(address: u16, banking_mode: u8, bank_upper2: u8, ram_len: usize) -> usize {
-        let ram_bank_count = (ram_len / 0x2000).max(1);
+        let ram_bank_count = (ram_len / RAM_BANK_SIZE).max(1);
         let bank = if banking_mode == 0 {
             0
         } else {
             (bank_upper2 as usize) % ram_bank_count
         };
 
-        bank * 0x2000 + (address as usize - 0xA000)
+        bank * RAM_BANK_SIZE + (address as usize - EXTERNAL_RAM_START as usize)
     }
 
     fn read_mbc3(&self, address: u16, ram_enabled: bool, rom_bank: u8, ram_bank_or_rtc: u8) -> u8 {
-        let rom_bank_count = self.rom.len() / 0x4000;
+        let rom_bank_count = self.rom.len() / ROM_BANK_SIZE;
         if rom_bank_count == 0 {
             return 0xFF;
         }
@@ -646,7 +693,7 @@ impl Cartridge {
             0x0000..=0x3FFF => self.rom.get(address as usize).copied().unwrap_or(0xFF),
             0x4000..=0x7FFF => {
                 let bank = (rom_bank as usize % rom_bank_count).max(1);
-                let offset = bank * 0x4000 + (address as usize - 0x4000);
+                let offset = bank * ROM_BANK_SIZE + (address as usize - ROM_BANK_SIZE);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
             0xA000..=0xBFFF => {
@@ -672,9 +719,9 @@ impl Cartridge {
     }
 
     fn mbc3_ram_offset(address: u16, ram_bank_or_rtc: u8, ram_len: usize) -> usize {
-        let ram_bank_count = (ram_len / 0x2000).max(1);
+        let ram_bank_count = (ram_len / RAM_BANK_SIZE).max(1);
         let bank = (ram_bank_or_rtc as usize) % ram_bank_count;
-        bank * 0x2000 + (address as usize - 0xA000)
+        bank * RAM_BANK_SIZE + (address as usize - EXTERNAL_RAM_START as usize)
     }
 
     fn read_mbc5(
@@ -685,7 +732,7 @@ impl Cartridge {
         rom_bank_high1: u8,
         ram_bank: u8,
     ) -> u8 {
-        let rom_bank_count = self.rom.len() / 0x4000;
+        let rom_bank_count = self.rom.len() / ROM_BANK_SIZE;
         if rom_bank_count == 0 {
             return 0xFF;
         }
@@ -695,7 +742,7 @@ impl Cartridge {
             0x4000..=0x7FFF => {
                 let bank =
                     (((rom_bank_high1 as usize) << 8) | rom_bank_low8 as usize) % rom_bank_count;
-                let offset = bank * 0x4000 + (address as usize - 0x4000);
+                let offset = bank * ROM_BANK_SIZE + (address as usize - ROM_BANK_SIZE);
                 self.rom.get(offset).copied().unwrap_or(0xFF)
             }
             0xA000..=0xBFFF => {
@@ -717,9 +764,9 @@ impl Cartridge {
     }
 
     fn mbc5_ram_offset(address: u16, ram_bank: u8, ram_len: usize) -> usize {
-        let ram_bank_count = (ram_len / 0x2000).max(1);
+        let ram_bank_count = (ram_len / RAM_BANK_SIZE).max(1);
         let bank = (ram_bank as usize) % ram_bank_count;
-        bank * 0x2000 + (address as usize - 0xA000)
+        bank * RAM_BANK_SIZE + (address as usize - EXTERNAL_RAM_START as usize)
     }
 }
 
