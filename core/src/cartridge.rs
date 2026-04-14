@@ -1410,4 +1410,74 @@ mod tests {
 
         assert_eq!(error, SaveDataError::NotBatteryBackedRam);
     }
+
+    #[test]
+    fn cartridge_load_save_data_rejects_battery_types_without_external_ram() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::RomRamBattery.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks2.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::None.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("rom should load");
+        let error = cartridge
+            .load_save_data(&[0u8; 8])
+            .expect_err("cartridge has no external ram");
+
+        assert_eq!(error, SaveDataError::NoExternalRam);
+    }
+
+    #[test]
+    fn mbc1_battery_backed_external_ram_round_trips() {
+        let mut rom = vec![0u8; 0x10000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc1RamBattery.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes32.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc1 cartridge loads");
+        cartridge.write(0x0000, 0x0A);
+        cartridge.write(0x4000, 0x01);
+        cartridge.write(0x6000, 0x01);
+        cartridge.write(0xA010, 0x5A);
+
+        let save = cartridge.save_data().expect("battery-backed save available");
+        let mut reloaded = Cartridge::from_rom(cartridge.rom.clone()).expect("rom reload works");
+        reloaded
+            .load_save_data(&save)
+            .expect("save data should load into cartridge");
+        reloaded.write(0x0000, 0x0A);
+        reloaded.write(0x4000, 0x01);
+        reloaded.write(0x6000, 0x01);
+        assert_eq!(reloaded.read(0xA010), 0x5A);
+    }
+
+    #[test]
+    fn mbc5_battery_backed_external_ram_round_trips() {
+        let mut rom = vec![0u8; 0x10000];
+        rom[CARTRIDGE_TYPE_OFFSET] = CartridgeType::Mbc5RamBattery.code();
+        rom[ROM_SIZE_OFFSET] = RomSize::Banks4.code();
+        rom[RAM_SIZE_OFFSET] = RamSize::KibiBytes32.code();
+        rom[DESTINATION_OFFSET] = DestinationCode::Japanese.code();
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let mut cartridge = Cartridge::from_rom(rom).expect("mbc5 cartridge loads");
+        cartridge.write(0x0000, 0x0A);
+        cartridge.write(0x4000, 0x01);
+        cartridge.write(0xA010, 0xA5);
+
+        let save = cartridge.save_data().expect("battery-backed save available");
+        let mut reloaded = Cartridge::from_rom(cartridge.rom.clone()).expect("rom reload works");
+        reloaded
+            .load_save_data(&save)
+            .expect("save data should load into cartridge");
+        reloaded.write(0x0000, 0x0A);
+        reloaded.write(0x4000, 0x01);
+        assert_eq!(reloaded.read(0xA010), 0xA5);
+    }
 }

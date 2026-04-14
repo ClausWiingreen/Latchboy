@@ -40,7 +40,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Implement MBC1.
   - [x] Implement MBC3 (RTC optional phase split).
   - [x] Implement MBC5.
-- [ ] **External RAM handling**
+- [x] **External RAM handling**
   - [x] RAM enable/disable behavior.
   - [x] Battery-backed save persistence (`.sav`).
 - [ ] **Address bus mapping**
