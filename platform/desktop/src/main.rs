@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use latchboy_core::cartridge::Cartridge;
 use latchboy_desktop::savefile::{
@@ -22,12 +23,12 @@ impl Drop for SaveOnDrop {
     }
 }
 
-fn main() {
+fn main() -> ExitCode {
     let rom_path = match env::args().nth(1) {
         Some(path) => PathBuf::from(path),
         None => {
             eprintln!("usage: latchboy-desktop <path-to-rom.gb>");
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -38,7 +39,7 @@ fn main() {
                 "error: failed to read ROM '{}': {error}",
                 rom_path.display()
             );
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -49,7 +50,7 @@ fn main() {
                 "error: failed to parse cartridge from ROM '{}': {error:?}",
                 rom_path.display()
             );
-            return;
+            return ExitCode::FAILURE;
         }
     };
 
@@ -64,4 +65,5 @@ fn main() {
     };
 
     println!("Latchboy desktop frontend scaffold");
+    ExitCode::SUCCESS
 }
