@@ -72,7 +72,7 @@ impl Emulator {
         while available < target {
             if self.cpu.halted() {
                 let remaining = target - available;
-                let halted_advance = ((remaining + 3) / 4) * 4;
+                let halted_advance = remaining.div_ceil(4) * 4;
                 available += halted_advance;
                 break;
             }
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn large_step_on_halted_cpu_fast_forwards_without_state_changes() {
         let mut emulator = Emulator::new();
-        assert!(emulator.cpu().halted() == false);
+        assert!(!emulator.cpu().halted());
 
         emulator.step_cycles(4);
         assert!(emulator.cpu().halted());
