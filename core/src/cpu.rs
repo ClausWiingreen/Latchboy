@@ -1892,4 +1892,61 @@ mod tests {
             assert_eq!(cpu.pc(), case.expected_pc, "case: {}", case.name);
         }
     }
+
+    #[test]
+    fn memory_operand_paths_include_expected_timing_penalty() {
+        struct Case {
+            name: &'static str,
+            program: &'static [u8],
+            setup: fn(&mut Cpu, &mut Bus),
+            expected_cycles: u32,
+        }
+
+        let cases = [
+            Case {
+                name: "add_a_b_register_path",
+                program: &[0x80], // ADD A,B
+                setup: |cpu, _| {
+                    cpu.registers.a = 0x01;
+                    cpu.registers.b = 0x02;
+                },
+                expected_cycles: 4,
+            },
+            Case {
+                name: "add_a_hl_memory_path",
+                program: &[0x86], // ADD A,(HL)
+                setup: |cpu, bus| {
+                    cpu.registers.a = 0x01;
+                    cpu.registers.set_hl(0xC300);
+                    bus.write8(0xC300, 0x02);
+                },
+                expected_cycles: 8,
+            },
+            Case {
+                name: "cb_rlc_b_register_path",
+                program: &[0xCB, 0x00], // RLC B
+                setup: |cpu, _| cpu.registers.b = 0x81,
+                expected_cycles: 8,
+            },
+            Case {
+                name: "cb_rlc_hl_memory_path",
+                program: &[0xCB, 0x06], // RLC (HL)
+                setup: |cpu, bus| {
+                    cpu.registers.set_hl(0xC301);
+                    bus.write8(0xC301, 0x81);
+                },
+                expected_cycles: 16,
+            },
+        ];
+
+        for case in cases {
+            let mut cpu = Cpu::new();
+            let mut bus = make_bus_with_program(case.program);
+            (case.setup)(&mut cpu, &mut bus);
+
+            let cycles = cpu.step(&mut bus);
+
+            assert_eq!(cycles, case.expected_cycles, "case: {}", case.name);
+        }
+    }
 }
