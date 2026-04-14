@@ -153,12 +153,30 @@ fn replace_atomically(temp_path: &Path, path: &Path) -> io::Result<()> {
         }
     }
 
+    replace_file_with_overwrite(temp_path, path).inspect_err(|_| {
+        let _ = fs::remove_file(temp_path);
+    })
+}
+
+#[cfg(not(windows))]
+fn replace_file_with_overwrite(temp_path: &Path, path: &Path) -> io::Result<()> {
+    fs::rename(temp_path, path)
+}
+
+#[cfg(windows)]
+fn replace_file_with_overwrite(temp_path: &Path, path: &Path) -> io::Result<()> {
     match fs::rename(temp_path, path) {
         Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = fs::remove_file(temp_path);
-            Err(error)
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::AlreadyExists | io::ErrorKind::PermissionDenied
+            ) && path.exists() =>
+        {
+            fs::remove_file(path)?;
+            fs::rename(temp_path, path)
         }
+        Err(error) => Err(error),
     }
 }
 
