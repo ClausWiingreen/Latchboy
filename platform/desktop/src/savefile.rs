@@ -135,45 +135,27 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     temp_file.sync_all()?;
     drop(temp_file);
 
-    let replace_result = match fs::rename(&temp_path, path) {
-        Ok(()) => Ok(()),
-        Err(rename_error) => replace_via_backup(path, &temp_path, rename_error),
-    };
-
-    replace_result?;
+    replace_atomically(&temp_path, path)?;
     sync_parent_directory(path)
 }
 
-fn replace_via_backup(path: &Path, temp_path: &Path, rename_error: io::Error) -> io::Result<()> {
-    if !path.exists() {
-        let _ = fs::remove_file(temp_path);
-        return Err(rename_error);
+fn replace_atomically(temp_path: &Path, path: &Path) -> io::Result<()> {
+    if let Ok(metadata) = fs::metadata(path) {
+        if !metadata.is_file() {
+            let _ = fs::remove_file(temp_path);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "save destination '{}' exists and is not a regular file",
+                    path.display()
+                ),
+            ));
+        }
     }
 
-    let mut backup_path = path.to_path_buf();
-    let unique = format!(
-        "{}.{}.bak",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    );
-    let extension = match path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) if !ext.is_empty() => format!("{ext}.{unique}"),
-        _ => unique,
-    };
-    backup_path.set_extension(extension);
-
-    fs::rename(path, &backup_path)?;
-
     match fs::rename(temp_path, path) {
-        Ok(()) => {
-            let _ = fs::remove_file(&backup_path);
-            Ok(())
-        }
+        Ok(()) => Ok(()),
         Err(error) => {
-            let _ = fs::rename(&backup_path, path);
             let _ = fs::remove_file(temp_path);
             Err(error)
         }
@@ -205,12 +187,43 @@ fn sync_parent_directory(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::sync_parent_directory;
+    use super::{replace_atomically, sync_parent_directory};
+    use std::fs;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn sync_parent_directory_accepts_cwd_relative_paths() {
         sync_parent_directory(Path::new("test.sav"))
             .expect("syncing current working directory should succeed");
+    }
+
+    #[test]
+    fn replace_atomically_rejects_directory_destination() {
+        let mut temp_dir = std::env::temp_dir();
+        temp_dir.push(format!(
+            "latchboy-savefile-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&temp_dir).expect("temp dir should be created");
+
+        let temp_path = temp_dir.join("candidate.tmp");
+        let destination_path = temp_dir.join("save.sav");
+        fs::write(&temp_path, [0xAA, 0xBB]).expect("temp file should be created");
+        fs::create_dir_all(&destination_path).expect("destination directory should be created");
+
+        let error = replace_atomically(&temp_path, &destination_path)
+            .expect_err("directory destination should be rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            !temp_path.exists(),
+            "temp file should be cleaned up after failed replacement"
+        );
+
+        fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
     }
 }
