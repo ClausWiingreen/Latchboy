@@ -204,24 +204,14 @@ impl Cpu {
                 8
             }
             0x03 | 0x13 | 0x23 | 0x33 => {
-                match (opcode >> 4) & 0x03 {
-                    0x00 => self.registers.set_bc(self.registers.bc().wrapping_add(1)),
-                    0x01 => self.registers.set_de(self.registers.de().wrapping_add(1)),
-                    0x02 => self.registers.set_hl(self.registers.hl().wrapping_add(1)),
-                    0x03 => self.sp = self.sp.wrapping_add(1),
-                    _ => unreachable!("register pair index is masked to 2 bits"),
-                }
+                let register_pair_index = (opcode >> 4) & 0x03;
+                let value = self.read_r16_by_index(register_pair_index).wrapping_add(1);
+                self.write_r16_by_index(register_pair_index, value);
                 8
             }
             0x01 | 0x11 | 0x21 | 0x31 => {
                 let value = self.fetch16(bus);
-                match (opcode >> 4) & 0x03 {
-                    0x00 => self.registers.set_bc(value),
-                    0x01 => self.registers.set_de(value),
-                    0x02 => self.registers.set_hl(value),
-                    0x03 => self.sp = value,
-                    _ => unreachable!("register pair index is masked to 2 bits"),
-                }
+                self.write_r16_by_index((opcode >> 4) & 0x03, value);
                 12
             }
             0x0A | 0x1A => {
@@ -234,23 +224,13 @@ impl Cpu {
                 8
             }
             0x0B | 0x1B | 0x2B | 0x3B => {
-                match (opcode >> 4) & 0x03 {
-                    0x00 => self.registers.set_bc(self.registers.bc().wrapping_sub(1)),
-                    0x01 => self.registers.set_de(self.registers.de().wrapping_sub(1)),
-                    0x02 => self.registers.set_hl(self.registers.hl().wrapping_sub(1)),
-                    0x03 => self.sp = self.sp.wrapping_sub(1),
-                    _ => unreachable!("register pair index is masked to 2 bits"),
-                }
+                let register_pair_index = (opcode >> 4) & 0x03;
+                let value = self.read_r16_by_index(register_pair_index).wrapping_sub(1);
+                self.write_r16_by_index(register_pair_index, value);
                 8
             }
             0x09 | 0x19 | 0x29 | 0x39 => {
-                let value = match (opcode >> 4) & 0x03 {
-                    0x00 => self.registers.bc(),
-                    0x01 => self.registers.de(),
-                    0x02 => self.registers.hl(),
-                    0x03 => self.sp,
-                    _ => unreachable!("register pair index is masked to 2 bits"),
-                };
+                let value = self.read_r16_by_index((opcode >> 4) & 0x03);
                 self.add_to_hl(value);
                 8
             }
@@ -647,6 +627,26 @@ impl Cpu {
         let hi = bus.read8(self.sp);
         self.sp = self.sp.wrapping_add(1);
         u16::from_le_bytes([lo, hi])
+    }
+
+    fn read_r16_by_index(&self, register_pair_index: u8) -> u16 {
+        match register_pair_index & 0x03 {
+            0x00 => self.registers.bc(),
+            0x01 => self.registers.de(),
+            0x02 => self.registers.hl(),
+            0x03 => self.sp,
+            _ => unreachable!("register pair index is masked to 2 bits"),
+        }
+    }
+
+    fn write_r16_by_index(&mut self, register_pair_index: u8, value: u16) {
+        match register_pair_index & 0x03 {
+            0x00 => self.registers.set_bc(value),
+            0x01 => self.registers.set_de(value),
+            0x02 => self.registers.set_hl(value),
+            0x03 => self.sp = value,
+            _ => unreachable!("register pair index is masked to 2 bits"),
+        }
     }
 
     fn condition_met(&self, condition_index: u8) -> bool {
