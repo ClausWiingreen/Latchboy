@@ -121,6 +121,20 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
+## Milestone 3.5 — External Validation Harness
+
+- [x] **ROM manifest + loader for headless runs**
+  - [x] Add a versioned manifest file in `tests/` for suite registration and per-ROM budgets.
+  - [x] Add loader/runner coverage in `core/tests` for deterministic headless execution.
+- [x] **Milestone 2 suite registration**
+  - [x] Register Blargg `cpu_instrs` coverage.
+  - [x] Register Blargg `instr_timing` coverage.
+  - [x] Register a Mooneye CPU acceptance subset.
+- [x] **Deterministic execution budgets**
+  - [x] Enforce per-ROM cycle/frame/wall-time limits.
+- [x] **CI gate behavior**
+  - [x] Fail CI (external validation flow) when any required Milestone 2 ROM case fails.
+
 ## Milestone 4 — PPU (Graphics Pipeline)
 
 - [ ] **VRAM/OAM and LCD registers**
