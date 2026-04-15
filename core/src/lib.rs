@@ -124,7 +124,12 @@ impl Emulator {
             let halted_before = self.cpu.halted();
             let interrupt_flag = self.bus.read8(interrupt_regs::FLAG_REGISTER);
             let interrupt_enable = self.bus.read8(interrupt_regs::ENABLE_REGISTER);
-            let opcode_hint = (!halted_before).then_some(self.bus.read8(pc_before));
+            let will_service_interrupt = self.cpu.will_service_interrupt(&self.bus);
+            let opcode_hint = if halted_before || will_service_interrupt {
+                None
+            } else {
+                Some(self.bus.read8(pc_before))
+            };
 
             let cycles_taken = self.cpu.step(&mut self.bus);
             available += cycles_taken as u64;
@@ -408,5 +413,42 @@ mod tests {
             })
             .collect();
         assert_eq!(opcodes, vec![Some(0x00), Some(0x00), Some(0x76)]);
+    }
+
+    #[test]
+    fn observer_suppresses_opcode_hint_when_interrupt_is_serviced() {
+        use crate::observability::{EmulatorEvent, TraceBuffer};
+
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0xFB; // EI
+        rom[0x0001] = 0x76; // HALT
+
+        rom[0x0134..0x0138].copy_from_slice(b"INTT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+
+        emulator.step_cycles(8);
+        emulator.bus.write8(0xFF0F, 0x01);
+        emulator.bus.write8(0xFFFF, 0x01);
+
+        let mut trace = TraceBuffer::new(8);
+        emulator.step_cycles_with_observer(20, &mut trace);
+
+        let interrupt_event = trace.iter().find_map(|event| match event {
+            EmulatorEvent::CpuStep(observation) if observation.pc_after == 0x0040 => {
+                Some(observation)
+            }
+            _ => None,
+        });
+
+        let interrupt_event = interrupt_event.expect("interrupt service step should be traced");
+        assert_eq!(interrupt_event.opcode_hint, None);
     }
 }

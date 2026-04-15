@@ -274,13 +274,11 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
 
         let elapsed_ms = start.elapsed().as_millis();
         if elapsed_ms > u128::from(rom.wall_time_limit_ms) {
-            let trace =
-                collect_recent_trace(cartridge.clone(), executed_cycles, TRACE_EVENTS_ON_FAILURE);
             return Err(format!(
-                "exceeded wall-time budget of {}ms at {}ms\nrecent execution trace:\n{}",
+                "exceeded wall-time budget of {}ms at {}ms\nstate at timeout: {}",
                 rom.wall_time_limit_ms,
                 elapsed_ms,
-                format_trace(&trace)
+                format_timeout_state(&emulator, executed_cycles)
             ));
         }
 
@@ -377,6 +375,25 @@ fn format_trace(trace: &TraceBuffer) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn format_timeout_state(emulator: &Emulator, executed_cycles: u64) -> String {
+    let registers = emulator.cpu().registers();
+    format!(
+        "cycle={} pc={:04X} sp={:04X} a={:02X} f={:02X} bc={:04X} de={:04X} hl={:04X} ime={} halted={} if={:02X} ie={:02X}",
+        executed_cycles,
+        emulator.cpu().pc(),
+        emulator.cpu().sp(),
+        registers.a,
+        registers.f,
+        registers.bc(),
+        registers.de(),
+        registers.hl(),
+        emulator.cpu().ime(),
+        emulator.cpu().halted(),
+        emulator.bus().read8(0xFF0F),
+        emulator.bus().read8(0xFFFF)
+    )
 }
 
 #[test]

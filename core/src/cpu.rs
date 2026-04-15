@@ -160,6 +160,11 @@ impl Cpu {
         self.last_unimplemented_opcode
     }
 
+    pub(crate) fn will_service_interrupt(&self, bus: &Bus) -> bool {
+        let pending_interrupts = self.pending_interrupts(bus);
+        pending_interrupts != 0 && !self.halted_by_unimplemented_opcode && self.ime
+    }
+
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
         let pending_interrupts = self.pending_interrupts(bus);
         if pending_interrupts != 0 && !self.halted_by_unimplemented_opcode {
