@@ -1,13 +1,11 @@
 use crate::bus::Bus;
+use crate::interrupts;
 
 const FLAG_Z: u8 = 0b1000_0000;
 const FLAG_N: u8 = 0b0100_0000;
 const FLAG_H: u8 = 0b0010_0000;
 const FLAG_C: u8 = 0b0001_0000;
 const FLAGS_MASK: u8 = FLAG_Z | FLAG_N | FLAG_H | FLAG_C;
-const INTERRUPT_FLAG_REGISTER: u16 = 0xFF0F;
-const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
-const INTERRUPT_MASK: u8 = 0x1F;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Registers {
@@ -570,17 +568,18 @@ impl Cpu {
     }
 
     fn pending_interrupts(&self, bus: &Bus) -> u8 {
-        bus.read8(INTERRUPT_FLAG_REGISTER) & bus.read8(INTERRUPT_ENABLE_REGISTER) & INTERRUPT_MASK
+        bus.read8(interrupts::FLAG_REGISTER)
+            & bus.read8(interrupts::ENABLE_REGISTER)
+            & interrupts::MASK
     }
 
     fn service_interrupt(&mut self, bus: &mut Bus, pending_interrupts: u8) -> u32 {
         let interrupt_index = pending_interrupts.trailing_zeros() as u16;
         let interrupt_mask = 1 << interrupt_index;
-        let vectors = [0x40, 0x48, 0x50, 0x58, 0x60];
-        let vector = vectors[interrupt_index as usize];
+        let vector = interrupts::VECTORS[interrupt_index as usize];
 
-        let interrupt_flags = bus.read8(INTERRUPT_FLAG_REGISTER);
-        bus.write8(INTERRUPT_FLAG_REGISTER, interrupt_flags & !interrupt_mask);
+        let interrupt_flags = bus.read8(interrupts::FLAG_REGISTER);
+        bus.write8(interrupts::FLAG_REGISTER, interrupt_flags & !interrupt_mask);
 
         self.ime = false;
         self.ime_enable_pending = false;
@@ -1554,6 +1553,23 @@ mod tests {
         assert_eq!(bus.read8(0xFF0F), 0x00);
         assert_eq!(bus.read8(0xFFFC), 0x34);
         assert_eq!(bus.read8(0xFFFD), 0x12);
+    }
+
+    #[test]
+    fn interrupt_service_uses_hardware_priority_order() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0x00]); // NOP (must not execute)
+
+        cpu.pc = 0x3000;
+        cpu.ime = true;
+        bus.write8(0xFFFF, 0b0001_1111);
+        bus.write8(0xFF0F, 0b0001_1000);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.pc(), 0x0058);
+        assert_eq!(bus.read8(0xFF0F), 0b0001_0000);
     }
 
     #[test]

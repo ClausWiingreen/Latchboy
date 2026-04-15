@@ -77,7 +77,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Memory access timing interactions.
 - [x] **Control flow and stack**
   - [x] CALL/RET/RETI, JP/JR, RST, PUSH/POP.
-- [ ] **Interrupt mechanism**
+- [x] **Interrupt mechanism**
   - [x] IME behavior and delayed EI semantics.
   - [x] IF/IE register interaction.
   - [x] HALT bug behavior (deferred final-accuracy tuning allowed).

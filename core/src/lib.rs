@@ -14,11 +14,8 @@ use cartridge::{
     compute_header_checksum, Cartridge, CartridgeType, DestinationCode, RamSize, RomSize,
 };
 use cpu::Cpu;
+use interrupts as interrupt_regs;
 use std::hash::{Hash, Hasher};
-
-const INTERRUPT_FLAG_REGISTER: u16 = 0xFF0F;
-const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
-const INTERRUPT_MASK: u8 = 0x1F;
 
 /// Top-level emulator state container for subsystem wiring.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,9 +72,9 @@ impl Emulator {
 
         while available < target {
             if self.cpu.halted() {
-                let pending_interrupts = self.bus.read8(INTERRUPT_FLAG_REGISTER)
-                    & self.bus.read8(INTERRUPT_ENABLE_REGISTER)
-                    & INTERRUPT_MASK;
+                let pending_interrupts = self.bus.read8(interrupt_regs::FLAG_REGISTER)
+                    & self.bus.read8(interrupt_regs::ENABLE_REGISTER)
+                    & interrupt_regs::MASK;
 
                 if pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable() {
                     let remaining = target - available;
