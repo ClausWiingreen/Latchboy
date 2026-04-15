@@ -238,13 +238,21 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
             ));
         }
 
+        let elapsed_ms = start.elapsed().as_millis();
+        if elapsed_ms > u128::from(rom.wall_time_limit_ms) {
+            return Err(format!(
+                "exceeded wall-time budget of {}ms at {}ms",
+                rom.wall_time_limit_ms, elapsed_ms
+            ));
+        }
+
         match check_pass_condition(&emulator, rom) {
             PassCheck::Passed => {
                 let mut hasher = DefaultHasher::new();
                 emulator.hash(&mut hasher);
 
                 return Ok(RomRunResult {
-                    elapsed_ms: start.elapsed().as_millis(),
+                    elapsed_ms,
                     executed_cycles,
                     final_hash: hasher.finish(),
                 });
@@ -256,14 +264,6 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
                 ));
             }
             PassCheck::Pending => {}
-        }
-
-        if start.elapsed().as_millis() > u128::from(rom.wall_time_limit_ms) {
-            return Err(format!(
-                "exceeded wall-time budget of {}ms at {}ms",
-                rom.wall_time_limit_ms,
-                start.elapsed().as_millis()
-            ));
         }
     }
 
