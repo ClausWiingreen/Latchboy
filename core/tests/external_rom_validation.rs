@@ -92,7 +92,7 @@ fn parse_manifest(manifest_path: &Path) -> RomManifest {
         });
 
         let key = key.trim();
-        let value = value.trim();
+        let value = strip_inline_comment(value.trim());
         match key {
             "id" => entry.id = parse_string(value),
             "suite" => entry.suite = parse_string(value),
@@ -132,6 +132,28 @@ fn parse_string(value: &str) -> String {
         .and_then(|v| v.strip_suffix('"'))
         .unwrap_or_else(|| panic!("expected quoted string, got '{value}'"))
         .to_owned()
+}
+
+fn strip_inline_comment(value: &str) -> &str {
+    let mut in_string = false;
+    let mut escape_active = false;
+
+    for (index, ch) in value.char_indices() {
+        if ch == '"' && !escape_active {
+            in_string = !in_string;
+        }
+
+        if ch == '#' && !in_string {
+            return value[..index].trim_end();
+        }
+
+        escape_active = ch == '\\' && !escape_active;
+        if ch != '\\' {
+            escape_active = false;
+        }
+    }
+
+    value.trim_end()
 }
 
 fn parse_u64(value: &str) -> u64 {
@@ -329,6 +351,40 @@ fn rom_manifest_registers_required_milestone_2_suites() {
             );
         }
     }
+}
+
+#[test]
+fn manifest_parser_accepts_inline_toml_comments() {
+    let temp_dir = std::env::temp_dir();
+    let manifest_path = temp_dir.join(format!(
+        "latchboy-inline-comment-manifest-{}.toml",
+        std::process::id()
+    ));
+
+    let content = r#"
+[[roms]]
+id = "inline-comment-case" # identifier
+suite = "blargg_cpu_instrs" # suite
+path = "blargg/cpu_instrs/individual/01-special.gb" # path
+milestone = 2 # backlog milestone
+required = true # should be parsed as bool
+cycle_limit = 20_000_000 # numeric with underscore
+frame_limit = 300 # frame budget
+wall_time_limit_ms = 8_000 # time budget
+pass_condition = "blargg_mem" # suite signal
+"#;
+
+    fs::write(&manifest_path, content).expect("temporary manifest should be writable");
+    let manifest = parse_manifest(&manifest_path);
+    fs::remove_file(&manifest_path).expect("temporary manifest should be removable");
+
+    assert_eq!(manifest.roms.len(), 1);
+    let rom = &manifest.roms[0];
+    assert_eq!(rom.id, "inline-comment-case");
+    assert!(rom.required);
+    assert_eq!(rom.cycle_limit, 20_000_000);
+    assert_eq!(rom.frame_limit, 300);
+    assert_eq!(rom.wall_time_limit_ms, 8_000);
 }
 
 #[test]
