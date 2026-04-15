@@ -5,6 +5,7 @@ pub mod cpu;
 pub mod frontend;
 pub mod input;
 pub mod interrupts;
+pub mod observability;
 pub mod ppu;
 pub mod serial;
 pub mod timer;
@@ -15,6 +16,9 @@ use cartridge::{
 };
 use cpu::Cpu;
 use interrupts as interrupt_regs;
+use observability::{
+    CpuStepObservation, EmulatorEvent, EmulatorObserver, HaltedFastForwardObservation,
+};
 use std::hash::{Hash, Hasher};
 
 /// Top-level emulator state container for subsystem wiring.
@@ -67,6 +71,21 @@ impl Emulator {
 
     /// Advances execution by at least `cycles` machine cycles.
     pub fn step_cycles(&mut self, cycles: u32) {
+        struct NoopObserver;
+        impl EmulatorObserver for NoopObserver {
+            fn on_event(&mut self, _event: EmulatorEvent) {}
+        }
+
+        let mut observer = NoopObserver;
+        self.step_cycles_with_observer(cycles, &mut observer);
+    }
+
+    /// Advances execution by at least `cycles` machine cycles and emits detailed execution events.
+    pub fn step_cycles_with_observer<O: EmulatorObserver>(
+        &mut self,
+        cycles: u32,
+        observer: &mut O,
+    ) {
         let target = cycles as u64;
         let mut available = self.cycle_carry as u64;
 
@@ -79,12 +98,60 @@ impl Emulator {
                 if pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable() {
                     let remaining = target - available;
                     let halted_advance = remaining.div_ceil(4) * 4;
+                    observer.on_event(EmulatorEvent::HaltedFastForward(
+                        HaltedFastForwardObservation {
+                            start_cycle: self.total_cycles.wrapping_add(available),
+                            end_cycle: self
+                                .total_cycles
+                                .wrapping_add(available)
+                                .wrapping_add(halted_advance),
+                            pc: self.cpu.pc(),
+                            cycles: halted_advance,
+                            interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
+                            interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
+                        },
+                    ));
                     available += halted_advance;
                     break;
                 }
             }
 
-            available += self.cpu.step(&mut self.bus) as u64;
+            let start_cycle = self.total_cycles.wrapping_add(available);
+            let pc_before = self.cpu.pc();
+            let sp_before = self.cpu.sp();
+            let registers_before = *self.cpu.registers();
+            let ime_before = self.cpu.ime();
+            let halted_before = self.cpu.halted();
+            let interrupt_flag = self.bus.read8(interrupt_regs::FLAG_REGISTER);
+            let interrupt_enable = self.bus.read8(interrupt_regs::ENABLE_REGISTER);
+            let will_service_interrupt = self.cpu.will_service_interrupt(&self.bus);
+            let opcode_hint = if halted_before || will_service_interrupt {
+                None
+            } else {
+                Some(self.bus.read8(pc_before))
+            };
+
+            let cycles_taken = self.cpu.step(&mut self.bus);
+            available += cycles_taken as u64;
+
+            observer.on_event(EmulatorEvent::CpuStep(CpuStepObservation {
+                start_cycle,
+                end_cycle: start_cycle.wrapping_add(cycles_taken as u64),
+                pc_before,
+                pc_after: self.cpu.pc(),
+                sp_before,
+                sp_after: self.cpu.sp(),
+                opcode_hint,
+                cycles: cycles_taken,
+                registers_before,
+                registers_after: *self.cpu.registers(),
+                ime_before,
+                ime_after: self.cpu.ime(),
+                halted_before,
+                halted_after: self.cpu.halted(),
+                interrupt_flag,
+                interrupt_enable,
+            }));
         }
 
         self.cycle_carry = (available - target) as u32;
@@ -313,5 +380,75 @@ mod tests {
 
         assert_eq!(emulator.cpu().registers().a, 0x99);
         assert_eq!(emulator.cpu().pc(), 0x0003);
+    }
+
+    #[test]
+    fn step_cycles_observer_captures_opcode_flow() {
+        use crate::observability::{EmulatorEvent, TraceBuffer};
+
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0x00; // NOP
+        rom[0x0001] = 0x00; // NOP
+        rom[0x0002] = 0x76; // HALT
+
+        rom[0x0134..0x0138].copy_from_slice(b"OBSV");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+        let mut trace = TraceBuffer::new(8);
+
+        emulator.step_cycles_with_observer(12, &mut trace);
+
+        let opcodes: Vec<Option<u8>> = trace
+            .iter()
+            .filter_map(|event| match event {
+                EmulatorEvent::CpuStep(observation) => Some(observation.opcode_hint),
+                EmulatorEvent::HaltedFastForward(_) => None,
+            })
+            .collect();
+        assert_eq!(opcodes, vec![Some(0x00), Some(0x00), Some(0x76)]);
+    }
+
+    #[test]
+    fn observer_suppresses_opcode_hint_when_interrupt_is_serviced() {
+        use crate::observability::{EmulatorEvent, TraceBuffer};
+
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0xFB; // EI
+        rom[0x0001] = 0x76; // HALT
+
+        rom[0x0134..0x0138].copy_from_slice(b"INTT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+
+        emulator.step_cycles(8);
+        emulator.bus.write8(0xFF0F, 0x01);
+        emulator.bus.write8(0xFFFF, 0x01);
+
+        let mut trace = TraceBuffer::new(8);
+        emulator.step_cycles_with_observer(20, &mut trace);
+
+        let interrupt_event = trace.iter().find_map(|event| match event {
+            EmulatorEvent::CpuStep(observation) if observation.pc_after == 0x0040 => {
+                Some(observation)
+            }
+            _ => None,
+        });
+
+        let interrupt_event = interrupt_event.expect("interrupt service step should be traced");
+        assert_eq!(interrupt_event.opcode_hint, None);
     }
 }

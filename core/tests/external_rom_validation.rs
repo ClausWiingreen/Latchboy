@@ -4,11 +4,16 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use latchboy_core::{cartridge::Cartridge, Emulator};
+use latchboy_core::{
+    cartridge::Cartridge,
+    observability::{EmulatorEvent, TraceBuffer},
+    Emulator,
+};
 
 const CYCLES_PER_FRAME: u32 = 70_224;
 const ROM_MANIFEST_PATH: &str = "../tests/rom_manifest.toml";
 const ROM_ROOT_ENV: &str = "LATCHBOY_ROM_ROOT";
+const TRACE_EVENTS_ON_FAILURE: usize = 64;
 
 #[derive(Debug)]
 struct RomManifest {
@@ -249,7 +254,7 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
     let frame_cycles = rom.frame_limit.saturating_mul(CYCLES_PER_FRAME as u64);
     let cycle_budget = rom.cycle_limit.min(frame_cycles);
 
-    let mut emulator = Emulator::from_cartridge(cartridge);
+    let mut emulator = Emulator::from_cartridge(cartridge.clone());
     let start = Instant::now();
 
     let mut executed_cycles = 0u64;
@@ -259,16 +264,21 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
         executed_cycles += u64::from(step);
 
         if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
+            let trace =
+                collect_recent_trace(cartridge.clone(), executed_cycles, TRACE_EVENTS_ON_FAILURE);
             return Err(format!(
-                "encountered unimplemented opcode 0x{opcode:02X} after {executed_cycles} cycles"
+                "encountered unimplemented opcode 0x{opcode:02X} after {executed_cycles} cycles\nrecent execution trace:\n{}",
+                format_trace(&trace)
             ));
         }
 
         let elapsed_ms = start.elapsed().as_millis();
         if elapsed_ms > u128::from(rom.wall_time_limit_ms) {
             return Err(format!(
-                "exceeded wall-time budget of {}ms at {}ms",
-                rom.wall_time_limit_ms, elapsed_ms
+                "exceeded wall-time budget of {}ms at {}ms\nstate at timeout: {}",
+                rom.wall_time_limit_ms,
+                elapsed_ms,
+                format_timeout_state(&emulator, executed_cycles)
             ));
         }
 
@@ -284,19 +294,106 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
                 });
             }
             PassCheck::Failed => {
+                let trace = collect_recent_trace(
+                    cartridge.clone(),
+                    executed_cycles,
+                    TRACE_EVENTS_ON_FAILURE,
+                );
                 return Err(format!(
-                    "ROM reported failure via pass_condition {:?} after {executed_cycles} cycles",
-                    rom.pass_condition
+                    "ROM reported failure via pass_condition {:?} after {executed_cycles} cycles\nrecent execution trace:\n{}",
+                    rom.pass_condition,
+                    format_trace(&trace)
                 ));
             }
             PassCheck::Pending => {}
         }
     }
 
+    let trace = collect_recent_trace(cartridge, executed_cycles, TRACE_EVENTS_ON_FAILURE);
     Err(format!(
-        "ROM did not satisfy pass_condition {:?} within {} cycles (frame_limit {}, wall_time_limit_ms {})",
-        rom.pass_condition, rom.cycle_limit, rom.frame_limit, rom.wall_time_limit_ms
+        "ROM did not satisfy pass_condition {:?} within {} cycles (frame_limit {}, wall_time_limit_ms {})\nrecent execution trace:\n{}",
+        rom.pass_condition,
+        rom.cycle_limit,
+        rom.frame_limit,
+        rom.wall_time_limit_ms,
+        format_trace(&trace)
     ))
+}
+
+fn collect_recent_trace(cartridge: Cartridge, cycles: u64, capacity: usize) -> TraceBuffer {
+    let mut emulator = Emulator::from_cartridge(cartridge);
+    let mut trace = TraceBuffer::new(capacity);
+    let mut executed_cycles = 0u64;
+
+    while executed_cycles < cycles {
+        let step = (cycles - executed_cycles).min(4_096) as u32;
+        emulator.step_cycles_with_observer(step, &mut trace);
+        executed_cycles += u64::from(step);
+    }
+
+    trace
+}
+
+fn format_trace(trace: &TraceBuffer) -> String {
+    if trace.is_empty() {
+        return "<empty>".to_owned();
+    }
+
+    trace
+        .iter()
+        .enumerate()
+        .map(|(index, event)| match event {
+            EmulatorEvent::CpuStep(step) => format!(
+                "#{index:02} cycle={}..{} opcode={} pc={:04X}->{:04X} sp={:04X}->{:04X} a={:02X} f={:02X} bc={:04X} de={:04X} hl={:04X} ime={} halted={}",
+                step.start_cycle,
+                step.end_cycle,
+                step
+                    .opcode_hint
+                    .map(|opcode| format!("0x{opcode:02X}"))
+                    .unwrap_or_else(|| "none".to_owned()),
+                step.pc_before,
+                step.pc_after,
+                step.sp_before,
+                step.sp_after,
+                step.registers_after.a,
+                step.registers_after.f,
+                step.registers_after.bc(),
+                step.registers_after.de(),
+                step.registers_after.hl(),
+                step.ime_after,
+                step.halted_after
+            ),
+            EmulatorEvent::HaltedFastForward(halted) => format!(
+                "#{index:02} cycle={}..{} HALT_FAST_FORWARD pc={:04X} cycles={} if={:02X} ie={:02X}",
+                halted.start_cycle,
+                halted.end_cycle,
+                halted.pc,
+                halted.cycles,
+                halted.interrupt_flag,
+                halted.interrupt_enable
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_timeout_state(emulator: &Emulator, executed_cycles: u64) -> String {
+    let registers = emulator.cpu().registers();
+    format!(
+        "cycle={} pc={:04X} sp={:04X} a={:02X} f={:02X} bc={:04X} de={:04X} hl={:04X} ime={} halted={} if={:02X} ie={:02X}",
+        executed_cycles,
+        emulator.cpu().pc(),
+        emulator.cpu().sp(),
+        registers.a,
+        registers.f,
+        registers.bc(),
+        registers.de(),
+        registers.hl(),
+        emulator.cpu().ime(),
+        emulator.cpu().halted(),
+        emulator.bus().read8(0xFF0F),
+        emulator.bus().read8(0xFFFF)
+    )
 }
 
 #[test]
