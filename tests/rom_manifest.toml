@@ -1,0 +1,59 @@
+# External ROM validation manifest used by core/tests/external_rom_validation.rs.
+#
+# ROM binaries are expected to be present under $LATCHBOY_ROM_ROOT and are never
+# committed to this repository (see docs/rom-usage-policy.md).
+
+[[roms]]
+id = "blargg-cpu-instrs-01-special"
+suite = "blargg_cpu_instrs"
+path = "blargg/cpu_instrs/individual/01-special.gb"
+milestone = 2
+required = true
+cycle_limit = 20_000_000
+frame_limit = 300
+wall_time_limit_ms = 8_000
+pass_condition = "blargg_mem"
+
+[[roms]]
+id = "blargg-instr-timing"
+suite = "blargg_instr_timing"
+path = "blargg/instr_timing/instr_timing.gb"
+milestone = 2
+required = true
+cycle_limit = 20_000_000
+frame_limit = 300
+wall_time_limit_ms = 8_000
+pass_condition = "blargg_mem"
+
+[[roms]]
+id = "mooneye-acceptance-add-sp-e-timing"
+suite = "mooneye_acceptance_cpu"
+path = "mooneye/acceptance/add_sp_e_timing.gb"
+milestone = 2
+required = true
+cycle_limit = 10_000_000
+frame_limit = 180
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+[[roms]]
+id = "mooneye-acceptance-call-cc-timing"
+suite = "mooneye_acceptance_cpu"
+path = "mooneye/acceptance/call_cc_timing.gb"
+milestone = 2
+required = true
+cycle_limit = 10_000_000
+frame_limit = 180
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+[[roms]]
+id = "mooneye-acceptance-jp-cc-timing"
+suite = "mooneye_acceptance_cpu"
+path = "mooneye/acceptance/jp_cc_timing.gb"
+milestone = 2
+required = true
+cycle_limit = 10_000_000
+frame_limit = 180
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"

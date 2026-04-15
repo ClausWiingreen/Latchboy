@@ -9,6 +9,8 @@ on:
 jobs:
   rust-checks:
     runs-on: ubuntu-latest
+    env:
+      LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}
 
     steps:
       - name: Checkout
@@ -30,3 +32,4 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --all-targets
+
