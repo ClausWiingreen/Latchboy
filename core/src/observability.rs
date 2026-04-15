@@ -36,7 +36,7 @@ pub struct HaltedFastForwardObservation {
     pub start_cycle: u64,
     pub end_cycle: u64,
     pub pc: u16,
-    pub cycles: u32,
+    pub cycles: u64,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
 }

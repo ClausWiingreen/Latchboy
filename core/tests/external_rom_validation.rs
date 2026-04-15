@@ -254,17 +254,18 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
     let frame_cycles = rom.frame_limit.saturating_mul(CYCLES_PER_FRAME as u64);
     let cycle_budget = rom.cycle_limit.min(frame_cycles);
 
-    let mut emulator = Emulator::from_cartridge(cartridge);
-    let mut trace = TraceBuffer::new(TRACE_EVENTS_ON_FAILURE);
+    let mut emulator = Emulator::from_cartridge(cartridge.clone());
     let start = Instant::now();
 
     let mut executed_cycles = 0u64;
     while executed_cycles < cycle_budget {
         let step = (cycle_budget - executed_cycles).min(4_096) as u32;
-        emulator.step_cycles_with_observer(step, &mut trace);
+        emulator.step_cycles(step);
         executed_cycles += u64::from(step);
 
         if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
+            let trace =
+                collect_recent_trace(cartridge.clone(), executed_cycles, TRACE_EVENTS_ON_FAILURE);
             return Err(format!(
                 "encountered unimplemented opcode 0x{opcode:02X} after {executed_cycles} cycles\nrecent execution trace:\n{}",
                 format_trace(&trace)
@@ -273,6 +274,8 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
 
         let elapsed_ms = start.elapsed().as_millis();
         if elapsed_ms > u128::from(rom.wall_time_limit_ms) {
+            let trace =
+                collect_recent_trace(cartridge.clone(), executed_cycles, TRACE_EVENTS_ON_FAILURE);
             return Err(format!(
                 "exceeded wall-time budget of {}ms at {}ms\nrecent execution trace:\n{}",
                 rom.wall_time_limit_ms,
@@ -293,6 +296,11 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
                 });
             }
             PassCheck::Failed => {
+                let trace = collect_recent_trace(
+                    cartridge.clone(),
+                    executed_cycles,
+                    TRACE_EVENTS_ON_FAILURE,
+                );
                 return Err(format!(
                     "ROM reported failure via pass_condition {:?} after {executed_cycles} cycles\nrecent execution trace:\n{}",
                     rom.pass_condition,
@@ -303,6 +311,7 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
         }
     }
 
+    let trace = collect_recent_trace(cartridge, executed_cycles, TRACE_EVENTS_ON_FAILURE);
     Err(format!(
         "ROM did not satisfy pass_condition {:?} within {} cycles (frame_limit {}, wall_time_limit_ms {})\nrecent execution trace:\n{}",
         rom.pass_condition,
@@ -311,6 +320,20 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
         rom.wall_time_limit_ms,
         format_trace(&trace)
     ))
+}
+
+fn collect_recent_trace(cartridge: Cartridge, cycles: u64, capacity: usize) -> TraceBuffer {
+    let mut emulator = Emulator::from_cartridge(cartridge);
+    let mut trace = TraceBuffer::new(capacity);
+    let mut executed_cycles = 0u64;
+
+    while executed_cycles < cycles {
+        let step = (cycles - executed_cycles).min(4_096) as u32;
+        emulator.step_cycles_with_observer(step, &mut trace);
+        executed_cycles += u64::from(step);
+    }
+
+    trace
 }
 
 fn format_trace(trace: &TraceBuffer) -> String {

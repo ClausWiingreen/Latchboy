@@ -106,7 +106,7 @@ impl Emulator {
                                 .wrapping_add(available)
                                 .wrapping_add(halted_advance),
                             pc: self.cpu.pc(),
-                            cycles: halted_advance as u32,
+                            cycles: halted_advance,
                             interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
                             interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
                         },
