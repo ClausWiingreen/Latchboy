@@ -170,6 +170,10 @@ fn rom_root_from_env() -> Option<PathBuf> {
     Some(PathBuf::from(trimmed))
 }
 
+fn is_noop_pass_condition(pass_condition: PassCondition) -> bool {
+    matches!(pass_condition, PassCondition::None)
+}
+
 fn check_pass_condition(emulator: &Emulator, rom: &RomEntry) -> PassCheck {
     match rom.pass_condition {
         PassCondition::None => PassCheck::Passed,
@@ -316,6 +320,14 @@ fn rom_manifest_registers_required_milestone_2_suites() {
             "{} wall_time_limit_ms must be positive",
             rom.id
         );
+
+        if rom.required && rom.milestone == 2 {
+            assert!(
+                !is_noop_pass_condition(rom.pass_condition),
+                "{} is required for milestone 2 and must not use pass_condition = \"none\"",
+                rom.id
+            );
+        }
     }
 }
 
@@ -347,6 +359,14 @@ fn required_milestone_2_roms_pass_under_external_validation_flow() {
         !required_m2_roms.is_empty(),
         "manifest must define required milestone 2 ROM cases"
     );
+
+    for rom in &required_m2_roms {
+        assert!(
+            !is_noop_pass_condition(rom.pass_condition),
+            "{} is required for milestone 2 and must not use pass_condition = \"none\"",
+            rom.id
+        );
+    }
 
     let mut failures = Vec::new();
     for rom in required_m2_roms {
