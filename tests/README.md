@@ -37,5 +37,7 @@ Each `[[roms]]` entry defines deterministic execution budgets:
 - `cycle_limit`: absolute cycle budget.
 - `frame_limit`: frame budget (runner uses 70,224 cycles/frame).
 - `wall_time_limit_ms`: runtime wall-time budget per case.
+- `pass_condition`: suite-specific success signal (`blargg_mem` or `mooneye_registers`).
 
-The runner executes each required Milestone 2 entry with deterministic cycle stepping, fails on unimplemented opcode dispatch, and fails when any required case exceeds its time/cycle/frame budget.
+The runner treats unset **or empty** `LATCHBOY_ROM_ROOT` as disabled and skips external ROM execution in that environment.
+When enabled, it executes each required Milestone 2 entry with deterministic cycle stepping, fails on unimplemented opcode dispatch, and fails when a required case does not positively report pass before exceeding its time/cycle/frame budget.

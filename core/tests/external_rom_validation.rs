@@ -25,6 +25,15 @@ struct RomEntry {
     cycle_limit: u64,
     frame_limit: u64,
     wall_time_limit_ms: u64,
+    pass_condition: PassCondition,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+enum PassCondition {
+    #[default]
+    None,
+    BlarggMem,
+    MooneyeRegisters,
 }
 
 #[derive(Debug)]
@@ -32,6 +41,13 @@ struct RomRunResult {
     elapsed_ms: u128,
     executed_cycles: u64,
     final_hash: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PassCheck {
+    Pending,
+    Passed,
+    Failed,
 }
 
 fn parse_manifest(manifest_path: &Path) -> RomManifest {
@@ -86,6 +102,7 @@ fn parse_manifest(manifest_path: &Path) -> RomManifest {
             "cycle_limit" => entry.cycle_limit = parse_u64(value),
             "frame_limit" => entry.frame_limit = parse_u64(value),
             "wall_time_limit_ms" => entry.wall_time_limit_ms = parse_u64(value),
+            "pass_condition" => entry.pass_condition = parse_pass_condition(value),
             _ => {
                 panic!(
                     "unknown key '{key}' at {}:{}",
@@ -132,6 +149,65 @@ fn parse_bool(value: &str) -> bool {
     }
 }
 
+fn parse_pass_condition(value: &str) -> PassCondition {
+    match parse_string(value).as_str() {
+        "none" => PassCondition::None,
+        "blargg_mem" => PassCondition::BlarggMem,
+        "mooneye_registers" => PassCondition::MooneyeRegisters,
+        other => panic!(
+            "unknown pass_condition '{other}', expected one of: none, blargg_mem, mooneye_registers"
+        ),
+    }
+}
+
+fn rom_root_from_env() -> Option<PathBuf> {
+    let value = std::env::var(ROM_ROOT_ENV).ok()?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(PathBuf::from(trimmed))
+}
+
+fn check_pass_condition(emulator: &Emulator, rom: &RomEntry) -> PassCheck {
+    match rom.pass_condition {
+        PassCondition::None => PassCheck::Passed,
+        PassCondition::BlarggMem => {
+            let signature = [
+                emulator.bus().read8(0xA001),
+                emulator.bus().read8(0xA002),
+                emulator.bus().read8(0xA003),
+            ];
+
+            if signature != [0xDE, 0xB0, 0x61] {
+                return PassCheck::Pending;
+            }
+
+            let status = emulator.bus().read8(0xA000);
+            match status {
+                0x00 => PassCheck::Passed,
+                0x80 => PassCheck::Pending,
+                _ => PassCheck::Failed,
+            }
+        }
+        PassCondition::MooneyeRegisters => {
+            let registers = emulator.cpu().registers();
+            if registers.b == 3
+                && registers.c == 5
+                && registers.d == 8
+                && registers.e == 13
+                && registers.h == 21
+                && registers.l == 34
+            {
+                PassCheck::Passed
+            } else {
+                PassCheck::Pending
+            }
+        }
+    }
+}
+
 fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
     let rom_path = rom_root.join(&rom.path);
     let rom_bytes = fs::read(&rom_path)
@@ -162,6 +238,26 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
             ));
         }
 
+        match check_pass_condition(&emulator, rom) {
+            PassCheck::Passed => {
+                let mut hasher = DefaultHasher::new();
+                emulator.hash(&mut hasher);
+
+                return Ok(RomRunResult {
+                    elapsed_ms: start.elapsed().as_millis(),
+                    executed_cycles,
+                    final_hash: hasher.finish(),
+                });
+            }
+            PassCheck::Failed => {
+                return Err(format!(
+                    "ROM reported failure via pass_condition {:?} after {executed_cycles} cycles",
+                    rom.pass_condition
+                ));
+            }
+            PassCheck::Pending => {}
+        }
+
         if start.elapsed().as_millis() > u128::from(rom.wall_time_limit_ms) {
             return Err(format!(
                 "exceeded wall-time budget of {}ms at {}ms",
@@ -171,14 +267,10 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
         }
     }
 
-    let mut hasher = DefaultHasher::new();
-    emulator.hash(&mut hasher);
-
-    Ok(RomRunResult {
-        elapsed_ms: start.elapsed().as_millis(),
-        executed_cycles,
-        final_hash: hasher.finish(),
-    })
+    Err(format!(
+        "ROM did not satisfy pass_condition {:?} within {} cycles (frame_limit {}, wall_time_limit_ms {})",
+        rom.pass_condition, rom.cycle_limit, rom.frame_limit, rom.wall_time_limit_ms
+    ))
 }
 
 #[test]
@@ -232,14 +324,11 @@ fn required_milestone_2_roms_pass_under_external_validation_flow() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
-    let rom_root = match std::env::var(ROM_ROOT_ENV) {
-        Ok(value) => PathBuf::from(value),
-        Err(_) => {
-            eprintln!(
-                "skipping required ROM run: set {ROM_ROOT_ENV} to execute external ROM validation"
-            );
-            return;
-        }
+    let Some(rom_root) = rom_root_from_env() else {
+        eprintln!(
+            "skipping required ROM run: set {ROM_ROOT_ENV} to execute external ROM validation"
+        );
+        return;
     };
 
     assert!(
@@ -278,12 +367,9 @@ fn rom_runs_are_deterministic_for_same_entry() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
-    let rom_root = match std::env::var(ROM_ROOT_ENV) {
-        Ok(value) => PathBuf::from(value),
-        Err(_) => {
-            eprintln!("skipping deterministic ROM check: set {ROM_ROOT_ENV}");
-            return;
-        }
+    let Some(rom_root) = rom_root_from_env() else {
+        eprintln!("skipping deterministic ROM check: set {ROM_ROOT_ENV}");
+        return;
     };
 
     let rom = manifest

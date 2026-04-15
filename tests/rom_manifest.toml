@@ -12,6 +12,7 @@ required = true
 cycle_limit = 20_000_000
 frame_limit = 300
 wall_time_limit_ms = 8_000
+pass_condition = "blargg_mem"
 
 [[roms]]
 id = "blargg-instr-timing"
@@ -22,6 +23,7 @@ required = true
 cycle_limit = 20_000_000
 frame_limit = 300
 wall_time_limit_ms = 8_000
+pass_condition = "blargg_mem"
 
 [[roms]]
 id = "mooneye-acceptance-add-sp-e-timing"
@@ -32,6 +34,7 @@ required = true
 cycle_limit = 10_000_000
 frame_limit = 180
 wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
 
 [[roms]]
 id = "mooneye-acceptance-call-cc-timing"
@@ -42,6 +45,7 @@ required = true
 cycle_limit = 10_000_000
 frame_limit = 180
 wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
 
 [[roms]]
 id = "mooneye-acceptance-jp-cc-timing"
@@ -52,3 +56,4 @@ required = true
 cycle_limit = 10_000_000
 frame_limit = 180
 wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
