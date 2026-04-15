@@ -383,7 +383,7 @@ fn required_milestone_2_roms_pass_under_external_validation_flow() {
 }
 
 #[test]
-fn rom_runs_are_deterministic_for_same_entry() {
+fn required_milestone_2_rom_runs_are_deterministic() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
@@ -392,34 +392,41 @@ fn rom_runs_are_deterministic_for_same_entry() {
         return;
     };
 
-    let rom = manifest
+    let required_m2_roms: Vec<&RomEntry> = manifest
         .roms
         .iter()
-        .find(|rom| rom.required && rom.milestone == 2)
-        .expect("manifest must contain at least one required milestone 2 ROM");
-
-    let first = run_rom(&rom_root, rom).expect("first ROM run should succeed");
-    let second = run_rom(&rom_root, rom).expect("second ROM run should succeed");
-
-    assert_eq!(
-        first.executed_cycles, second.executed_cycles,
-        "deterministic cycle total mismatch for {}",
-        rom.id
-    );
-    assert_eq!(
-        first.final_hash, second.final_hash,
-        "deterministic state hash mismatch for {}",
-        rom.id
-    );
+        .filter(|rom| rom.required && rom.milestone == 2)
+        .collect();
 
     assert!(
-        first.elapsed_ms <= u128::from(rom.wall_time_limit_ms),
-        "first run exceeded wall-time limit for {}",
-        rom.id
+        !required_m2_roms.is_empty(),
+        "manifest must define required milestone 2 ROM cases"
     );
-    assert!(
-        second.elapsed_ms <= u128::from(rom.wall_time_limit_ms),
-        "second run exceeded wall-time limit for {}",
-        rom.id
-    );
+
+    for rom in required_m2_roms {
+        let first = run_rom(&rom_root, rom).expect("first ROM run should succeed");
+        let second = run_rom(&rom_root, rom).expect("second ROM run should succeed");
+
+        assert_eq!(
+            first.executed_cycles, second.executed_cycles,
+            "deterministic cycle total mismatch for {}",
+            rom.id
+        );
+        assert_eq!(
+            first.final_hash, second.final_hash,
+            "deterministic state hash mismatch for {}",
+            rom.id
+        );
+
+        assert!(
+            first.elapsed_ms <= u128::from(rom.wall_time_limit_ms),
+            "first run exceeded wall-time limit for {}",
+            rom.id
+        );
+        assert!(
+            second.elapsed_ms <= u128::from(rom.wall_time_limit_ms),
+            "second run exceeded wall-time limit for {}",
+            rom.id
+        );
+    }
 }
