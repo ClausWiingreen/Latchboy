@@ -212,6 +212,7 @@ mod tests {
 
         assert_eq!(emulator.bus().read8(0xFF40), 0x91);
         assert_eq!(emulator.bus().read8(0xFF47), 0xFC);
+        assert_eq!(emulator.bus().read8(0xFF50), 0x01);
         assert_eq!(emulator.bus().read8(0xFFFF), 0x00);
     }
 
