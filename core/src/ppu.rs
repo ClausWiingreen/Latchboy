@@ -31,10 +31,18 @@ const STAT_LYC_EQUAL_BIT: u8 = 0x04;
 
 const STAT_MODE_MASK: u8 = 0x03;
 const LCDC_ENABLED_BIT: u8 = 0x80;
+const LCDC_BG_ENABLE_BIT: u8 = 0x01;
+const LCDC_BG_TILE_MAP_SELECT_BIT: u8 = 0x08;
+const LCDC_BG_TILE_DATA_SELECT_BIT: u8 = 0x10;
 const INTERRUPT_VBLANK_BIT: u8 = 0x01;
 const INTERRUPT_STAT_BIT: u8 = 0x02;
 const INTERRUPT_ENABLE_VBLANK_BIT: u8 = 0x01;
 const INTERRUPT_ENABLE_STAT_BIT: u8 = 0x02;
+
+const BG_MAP_0_OFFSET: usize = 0x1800; // 0x9800-0x9BFF
+const BG_MAP_1_OFFSET: usize = 0x1C00; // 0x9C00-0x9FFF
+const TILE_BLOCK_0_OFFSET: usize = 0x0000; // 0x8000-0x87FF
+const TILE_BLOCK_2_OFFSET: usize = 0x1000; // 0x9000-0x97FF
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ppu {
@@ -82,6 +90,25 @@ impl Default for Ppu {
 }
 
 impl Ppu {
+    fn bg_map_base_offset(&self) -> usize {
+        if (self.lcdc & LCDC_BG_TILE_MAP_SELECT_BIT) != 0 {
+            BG_MAP_1_OFFSET
+        } else {
+            BG_MAP_0_OFFSET
+        }
+    }
+
+    fn tile_data_row_offset(&self, tile_index: u8, row_in_tile: u8) -> usize {
+        let row_base = usize::from(row_in_tile) * 2;
+        if (self.lcdc & LCDC_BG_TILE_DATA_SELECT_BIT) != 0 {
+            TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + row_base
+        } else {
+            let signed_index = i8::from_ne_bytes([tile_index]);
+            let tile_offset = (isize::from(signed_index) * 16) as isize;
+            (TILE_BLOCK_2_OFFSET as isize + tile_offset + row_base as isize) as usize
+        }
+    }
+
     fn current_mode(&self) -> u8 {
         self.stat & STAT_MODE_MASK
     }
@@ -256,6 +283,36 @@ impl Ppu {
         }
 
         true
+    }
+
+    /// Returns the 2-bit DMG background color index (0-3) for the given screen pixel.
+    ///
+    /// This method implements the Milestone 4 background tile fetch + map addressing path:
+    /// - Selects tile map base from LCDC bit 3 (`0x9800` vs `0x9C00`).
+    /// - Selects tile data addressing mode from LCDC bit 4 (unsigned `0x8000` region or
+    ///   signed indexing around `0x9000`).
+    /// - Applies scroll offsets using `SCX/SCY`.
+    pub fn background_pixel_color_id(&self, screen_x: u8, screen_y: u8) -> u8 {
+        if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+            return 0;
+        }
+
+        let bg_x = screen_x.wrapping_add(self.scx);
+        let bg_y = screen_y.wrapping_add(self.scy);
+        let tile_col = (bg_x / 8) as usize;
+        let tile_row = (bg_y / 8) as usize;
+        let row_in_tile = bg_y % 8;
+        let pixel_in_tile = 7 - (bg_x % 8);
+
+        let map_index = tile_row * 32 + tile_col;
+        let tile_index = self.vram[self.bg_map_base_offset() + map_index];
+        let tile_row_offset = self.tile_data_row_offset(tile_index, row_in_tile);
+        let low = self.vram[tile_row_offset];
+        let high = self.vram[tile_row_offset + 1];
+
+        let low_bit = (low >> pixel_in_tile) & 0x01;
+        let high_bit = (high >> pixel_in_tile) & 0x01;
+        (high_bit << 1) | low_bit
     }
 
     pub fn take_stat_irq_pending(&mut self) -> bool {
@@ -542,5 +599,46 @@ mod tests {
             STAT_LYC_EQUAL_BIT
         );
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, 0);
+    }
+
+    #[test]
+    fn background_pixel_fetch_uses_unsigned_tile_data_region() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT);
+
+        ppu.write_vram(0x9800, 0x02);
+        ppu.write_vram(0x8020, 0b1000_0000);
+        ppu.write_vram(0x8021, 0b1000_0000);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 3);
+    }
+
+    #[test]
+    fn background_pixel_fetch_uses_signed_tile_data_region() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+
+        ppu.write_vram(0x9800, 0xFF);
+        ppu.write_vram(0x8FF0, 0b1000_0000);
+        ppu.write_vram(0x8FF1, 0b0000_0000);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 1);
+    }
+
+    #[test]
+    fn background_pixel_fetch_selects_background_map_and_applies_scroll() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_MAP_SELECT_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(SCX_REGISTER, 8);
+        ppu.write_register(SCY_REGISTER, 16);
+
+        ppu.write_vram(0x9C41, 0x03);
+        ppu.write_vram(0x8030, 0b0000_0000);
+        ppu.write_vram(0x8031, 0b1000_0000);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 2);
     }
 }
