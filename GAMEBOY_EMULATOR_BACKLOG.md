@@ -120,9 +120,16 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [x] **DIV/TIMA/TMA/TAC**
   - [x] Falling-edge timer behavior.
   - [x] Overflow/reload edge cases and interrupt requests.
-- [ ] **Interrupt controller integration**
-  - [ ] Priority ordering.
-  - [ ] HALT behavior and wake-up behavior.
+- [x] **Interrupt controller integration**
+  - [x] Priority ordering.
+  - [x] HALT behavior and wake-up behavior.
+
+
+**Implementation review notes (2026-04-16)**
+- CPU interrupt servicing is integrated into prefetch step sequencing with hardware-priority dispatch (VBlank → LCD STAT → Timer → Serial → Joypad) via lowest-set-bit selection on IF/IE pending state.
+- HALT wake-up behavior is covered for both IME-enabled service and IME-disabled wake-without-service paths, including HALT-bug sequencing when interrupts are pending while IME is clear.
+- Current coverage is anchored by focused CPU tests (`interrupt_service_uses_hardware_priority_order`, `halted_cpu_wakes_on_pending_interrupt_even_when_ime_is_disabled`, and `halt_bug_repeats_next_opcode_fetch_when_ime_is_disabled_with_pending_interrupt`).
+
 - [ ] **Boot ROM handling**
   - [ ] Optional boot ROM execution path.
   - [ ] Post-boot register defaults for no-boot mode.
