@@ -16,6 +16,9 @@ const OAM_START: u16 = 0xFE00;
 
 const VRAM_SIZE: usize = 0x2000;
 const OAM_SIZE: usize = 0xA0;
+const OAM_ENTRY_SIZE: usize = 4;
+const OAM_SPRITE_COUNT: usize = OAM_SIZE / OAM_ENTRY_SIZE;
+const MAX_SPRITES_PER_SCANLINE: usize = 10;
 const CYCLES_PER_SCANLINE: u16 = 456;
 const VISIBLE_SCANLINES: u8 = 144;
 const TOTAL_SCANLINES: u8 = 154;
@@ -371,9 +374,26 @@ impl Ppu {
             return None;
         }
 
-        let mut candidate: Option<(u8, usize, SpritePixel)> = None;
-        for sprite_index in 0..40usize {
-            let base = sprite_index * 4;
+        let mut scanline_sprites = [0usize; MAX_SPRITES_PER_SCANLINE];
+        let mut scanline_sprite_count = 0usize;
+        let py = i16::from(screen_y);
+
+        for sprite_index in 0..OAM_SPRITE_COUNT {
+            let base = sprite_index * OAM_ENTRY_SIZE;
+            let sprite_y = self.oam[base];
+            let sprite_top = i16::from(sprite_y) - 16;
+            if py >= sprite_top && py < sprite_top + 8 {
+                scanline_sprites[scanline_sprite_count] = sprite_index;
+                scanline_sprite_count += 1;
+                if scanline_sprite_count == MAX_SPRITES_PER_SCANLINE {
+                    break;
+                }
+            }
+        }
+
+        let mut candidate: Option<(u8, usize, SpritePixel, u8)> = None;
+        for sprite_index in scanline_sprites.into_iter().take(scanline_sprite_count) {
+            let base = sprite_index * OAM_ENTRY_SIZE;
             let sprite_y = self.oam[base];
             let sprite_x = self.oam[base + 1];
             let tile_index = self.oam[base + 2];
@@ -382,9 +402,9 @@ impl Ppu {
             let sprite_top = i16::from(sprite_y) - 16;
             let sprite_left = i16::from(sprite_x) - 8;
             let px = i16::from(screen_x);
-            let py = i16::from(screen_y);
 
-            if px < sprite_left || px >= sprite_left + 8 || py < sprite_top || py >= sprite_top + 8 {
+            if px < sprite_left || px >= sprite_left + 8 || py < sprite_top || py >= sprite_top + 8
+            {
                 continue;
             }
 
@@ -397,16 +417,13 @@ impl Ppu {
                 col = 7 - col;
             }
 
-            let tile_row_offset = TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + usize::from(row) * 2;
+            let tile_row_offset =
+                TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + usize::from(row) * 2;
             let low = self.vram[tile_row_offset];
             let high = self.vram[tile_row_offset + 1];
             let bit = 7 - col;
             let color_id = (((high >> bit) & 1) << 1) | ((low >> bit) & 1);
             if color_id == 0 {
-                continue;
-            }
-
-            if (attributes & SPRITE_ATTRIBUTE_PRIORITY_BIT) != 0 && bg_color_id != 0 {
                 continue;
             }
 
@@ -416,15 +433,23 @@ impl Ppu {
             };
 
             match candidate {
-                None => candidate = Some((sprite_x, sprite_index, pixel)),
-                Some((best_x, best_index, _)) if sprite_x < best_x || (sprite_x == best_x && sprite_index < best_index) => {
-                    candidate = Some((sprite_x, sprite_index, pixel));
+                None => candidate = Some((sprite_x, sprite_index, pixel, attributes)),
+                Some((best_x, best_index, _, _))
+                    if sprite_x < best_x || (sprite_x == best_x && sprite_index < best_index) =>
+                {
+                    candidate = Some((sprite_x, sprite_index, pixel, attributes));
                 }
                 _ => {}
             }
         }
 
-        candidate.map(|(_, _, pixel)| pixel)
+        candidate.and_then(|(_, _, pixel, attributes)| {
+            if (attributes & SPRITE_ATTRIBUTE_PRIORITY_BIT) != 0 && bg_color_id != 0 {
+                None
+            } else {
+                Some(pixel)
+            }
+        })
     }
 
     pub fn take_stat_irq_pending(&mut self) -> bool {
@@ -845,7 +870,10 @@ mod tests {
             })
         );
 
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_X_FLIP_BIT | SPRITE_ATTRIBUTE_Y_FLIP_BIT);
+        ppu.write_oam(
+            0xFE03,
+            SPRITE_ATTRIBUTE_X_FLIP_BIT | SPRITE_ATTRIBUTE_Y_FLIP_BIT,
+        );
         ppu.write_vram(0x802E, 0b1000_0000);
         ppu.write_vram(0x802F, 0b0000_0000);
         assert_eq!(
@@ -876,13 +904,7 @@ mod tests {
         ppu.write_vram(0x8040, 0b1000_0000);
         ppu.write_vram(0x8041, 0b0000_0000);
 
-        assert_eq!(
-            ppu.sprite_pixel(0, 0, 2),
-            Some(SpritePixel {
-                color_id: 1,
-                use_obp1: false
-            })
-        );
+        assert_eq!(ppu.sprite_pixel(0, 0, 2), None);
         assert_eq!(
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
@@ -901,6 +923,61 @@ mod tests {
         ppu.write_oam(0xFE02, 0x01);
         ppu.write_vram(0x8010, 0b1000_0000);
         ppu.write_vram(0x8011, 0);
+
+        assert_eq!(ppu.sprite_pixel(0, 0, 0), None);
+    }
+
+    #[test]
+    fn sprite_pixel_does_not_leak_lower_priority_obj_behind_non_zero_bg() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+
+        // Higher-priority sprite in OAM order, masked by BG-over-OBJ when BG is non-zero.
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x05);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY_BIT);
+        ppu.write_vram(0x8050, 0b1000_0000);
+        ppu.write_vram(0x8051, 0b0000_0000);
+
+        // Lower-priority overlapping sprite should not shine through in this case.
+        ppu.write_oam(0xFE04, 16);
+        ppu.write_oam(0xFE05, 8);
+        ppu.write_oam(0xFE06, 0x06);
+        ppu.write_oam(0xFE07, 0x00);
+        ppu.write_vram(0x8060, 0b1000_0000);
+        ppu.write_vram(0x8061, 0b0000_0000);
+
+        assert_eq!(ppu.sprite_pixel(0, 0, 2), None);
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_limits_scanline_selection_to_first_10_oam_entries() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+
+        for sprite_index in 0..10usize {
+            let base = 0xFE00 + (sprite_index as u16) * 4;
+            ppu.write_oam(base, 16);
+            ppu.write_oam(base + 1, 16);
+            ppu.write_oam(base + 2, 0x00);
+            ppu.write_oam(base + 3, 0x00);
+        }
+
+        // 11th sprite has a visible pixel at (0, 0) but should be ignored by scanline limit.
+        ppu.write_oam(0xFE28, 16);
+        ppu.write_oam(0xFE29, 8);
+        ppu.write_oam(0xFE2A, 0x07);
+        ppu.write_oam(0xFE2B, 0x00);
+        ppu.write_vram(0x8070, 0b1000_0000);
+        ppu.write_vram(0x8071, 0b0000_0000);
 
         assert_eq!(ppu.sprite_pixel(0, 0, 0), None);
     }
