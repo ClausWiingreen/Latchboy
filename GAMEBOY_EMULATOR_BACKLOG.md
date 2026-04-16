@@ -190,7 +190,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Tile fetching and map addressing.
   - [x] Scroll/window positioning rules.
 - [ ] **Sprite rendering**
-  - [ ] OAM priority, X/Y offsets, flipping, palette selection.
+  - [x] OAM priority, X/Y offsets, flipping, palette selection.
   - [ ] 8x8 and 8x16 object modes.
 - [ ] **OAM DMA dependency (moved earlier from Milestone 5)**
   - [ ] Implement DMA transfer register `FF46`.

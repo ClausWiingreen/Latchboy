@@ -32,6 +32,8 @@ const STAT_LYC_EQUAL_BIT: u8 = 0x04;
 const STAT_MODE_MASK: u8 = 0x03;
 const LCDC_ENABLED_BIT: u8 = 0x80;
 const LCDC_BG_ENABLE_BIT: u8 = 0x01;
+const LCDC_SPRITE_ENABLE_BIT: u8 = 0x02;
+const LCDC_SPRITE_SIZE_BIT: u8 = 0x04;
 const LCDC_WINDOW_ENABLE_BIT: u8 = 0x20;
 const LCDC_WINDOW_TILE_MAP_SELECT_BIT: u8 = 0x40;
 const LCDC_BG_TILE_MAP_SELECT_BIT: u8 = 0x08;
@@ -45,6 +47,16 @@ const BG_MAP_0_OFFSET: usize = 0x1800; // 0x9800-0x9BFF
 const BG_MAP_1_OFFSET: usize = 0x1C00; // 0x9C00-0x9FFF
 const TILE_BLOCK_0_OFFSET: usize = 0x0000; // 0x8000-0x87FF
 const TILE_BLOCK_2_OFFSET: usize = 0x1000; // 0x9000-0x97FF
+const SPRITE_ATTRIBUTE_PRIORITY_BIT: u8 = 0x80;
+const SPRITE_ATTRIBUTE_Y_FLIP_BIT: u8 = 0x40;
+const SPRITE_ATTRIBUTE_X_FLIP_BIT: u8 = 0x20;
+const SPRITE_ATTRIBUTE_PALETTE_BIT: u8 = 0x10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpritePixel {
+    pub color_id: u8,
+    pub use_obp1: bool,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ppu {
@@ -339,6 +351,80 @@ impl Ppu {
         let low_bit = (low >> pixel_in_tile) & 0x01;
         let high_bit = (high >> pixel_in_tile) & 0x01;
         (high_bit << 1) | low_bit
+    }
+
+    /// Returns the visible sprite pixel at the given screen coordinate, if any.
+    ///
+    /// DMG selection rules covered here:
+    /// - Sprite coordinates use `OAM.x - 8`, `OAM.y - 16` offsets.
+    /// - Supports per-sprite X/Y flip and OBP0/OBP1 palette selection.
+    /// - Honors sprite priority bit: when set, non-zero background pixels win.
+    /// - Resolves overlapping sprites by DMG priority (lowest X, then lowest OAM index).
+    ///
+    /// Sprite size in this step is 8x8. 8x16 mode support is deferred.
+    pub fn sprite_pixel(&self, screen_x: u8, screen_y: u8, bg_color_id: u8) -> Option<SpritePixel> {
+        if (self.lcdc & LCDC_SPRITE_ENABLE_BIT) == 0 {
+            return None;
+        }
+
+        if (self.lcdc & LCDC_SPRITE_SIZE_BIT) != 0 {
+            return None;
+        }
+
+        let mut candidate: Option<(u8, usize, SpritePixel)> = None;
+        for sprite_index in 0..40usize {
+            let base = sprite_index * 4;
+            let sprite_y = self.oam[base];
+            let sprite_x = self.oam[base + 1];
+            let tile_index = self.oam[base + 2];
+            let attributes = self.oam[base + 3];
+
+            let sprite_top = i16::from(sprite_y) - 16;
+            let sprite_left = i16::from(sprite_x) - 8;
+            let px = i16::from(screen_x);
+            let py = i16::from(screen_y);
+
+            if px < sprite_left || px >= sprite_left + 8 || py < sprite_top || py >= sprite_top + 8 {
+                continue;
+            }
+
+            let mut row = (py - sprite_top) as u8;
+            let mut col = (px - sprite_left) as u8;
+            if (attributes & SPRITE_ATTRIBUTE_Y_FLIP_BIT) != 0 {
+                row = 7 - row;
+            }
+            if (attributes & SPRITE_ATTRIBUTE_X_FLIP_BIT) != 0 {
+                col = 7 - col;
+            }
+
+            let tile_row_offset = TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + usize::from(row) * 2;
+            let low = self.vram[tile_row_offset];
+            let high = self.vram[tile_row_offset + 1];
+            let bit = 7 - col;
+            let color_id = (((high >> bit) & 1) << 1) | ((low >> bit) & 1);
+            if color_id == 0 {
+                continue;
+            }
+
+            if (attributes & SPRITE_ATTRIBUTE_PRIORITY_BIT) != 0 && bg_color_id != 0 {
+                continue;
+            }
+
+            let pixel = SpritePixel {
+                color_id,
+                use_obp1: (attributes & SPRITE_ATTRIBUTE_PALETTE_BIT) != 0,
+            };
+
+            match candidate {
+                None => candidate = Some((sprite_x, sprite_index, pixel)),
+                Some((best_x, best_index, _)) if sprite_x < best_x || (sprite_x == best_x && sprite_index < best_index) => {
+                    candidate = Some((sprite_x, sprite_index, pixel));
+                }
+                _ => {}
+            }
+        }
+
+        candidate.map(|(_, _, pixel)| pixel)
     }
 
     pub fn take_stat_irq_pending(&mut self) -> bool {
@@ -709,5 +795,113 @@ mod tests {
         ppu.write_vram(0x8021, 0b1000_0000);
 
         assert_eq!(ppu.background_pixel_color_id(0, 0), 1);
+    }
+
+    #[test]
+    fn sprite_pixel_uses_dmg_offsets_and_selects_obp0_or_obp1() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x01);
+        ppu.write_oam(0xFE03, 0x00);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0b0000_0000);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: true
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_applies_x_y_flipping() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x02);
+        ppu.write_vram(0x8020, 0b0000_0001);
+        ppu.write_vram(0x8021, 0b0000_0000);
+
+        assert_eq!(
+            ppu.sprite_pixel(7, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_X_FLIP_BIT | SPRITE_ATTRIBUTE_Y_FLIP_BIT);
+        ppu.write_vram(0x802E, 0b1000_0000);
+        ppu.write_vram(0x802F, 0b0000_0000);
+        assert_eq!(
+            ppu.sprite_pixel(7, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_honors_priority_and_oam_ordering_rules() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x03);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY_BIT);
+        ppu.write_vram(0x8030, 0b1000_0000);
+        ppu.write_vram(0x8031, 0b0000_0000);
+
+        ppu.write_oam(0xFE04, 16);
+        ppu.write_oam(0xFE05, 8);
+        ppu.write_oam(0xFE06, 0x04);
+        ppu.write_oam(0xFE07, 0x00);
+        ppu.write_vram(0x8040, 0b1000_0000);
+        ppu.write_vram(0x8041, 0b0000_0000);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 2),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_returns_none_when_obj_size_mode_is_8x16() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_SPRITE_SIZE_BIT);
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x01);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0);
+
+        assert_eq!(ppu.sprite_pixel(0, 0, 0), None);
     }
 }
