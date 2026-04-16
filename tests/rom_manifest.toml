@@ -12,7 +12,7 @@ required = true
 cycle_limit = 20_000_000
 frame_limit = 300
 wall_time_limit_ms = 8_000
-pass_condition = "blargg_mem"
+pass_condition = "blargg_registers"
 
 [[roms]]
 id = "blargg-instr-timing"
@@ -23,7 +23,7 @@ required = true
 cycle_limit = 20_000_000
 frame_limit = 300
 wall_time_limit_ms = 8_000
-pass_condition = "blargg_mem"
+pass_condition = "blargg_registers"
 
 [[roms]]
 id = "mooneye-acceptance-add-sp-e-timing"

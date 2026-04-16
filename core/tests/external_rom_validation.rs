@@ -38,6 +38,7 @@ enum PassCondition {
     #[default]
     None,
     BlarggMem,
+    BlarggRegisters,
     MooneyeRegisters,
 }
 
@@ -180,9 +181,10 @@ fn parse_pass_condition(value: &str) -> PassCondition {
     match parse_string(value).as_str() {
         "none" => PassCondition::None,
         "blargg_mem" => PassCondition::BlarggMem,
+        "blargg_registers" => PassCondition::BlarggRegisters,
         "mooneye_registers" => PassCondition::MooneyeRegisters,
         other => panic!(
-            "unknown pass_condition '{other}', expected one of: none, blargg_mem, mooneye_registers"
+            "unknown pass_condition '{other}', expected one of: none, blargg_mem, blargg_registers, mooneye_registers"
         ),
     }
 }
@@ -219,6 +221,21 @@ fn check_pass_condition(emulator: &Emulator, rom: &RomEntry) -> PassCheck {
             match status {
                 0x00 => PassCheck::Passed,
                 0x80 => PassCheck::Pending,
+                _ => PassCheck::Failed,
+            }
+        }
+        PassCondition::BlarggRegisters => {
+            let signature = [
+                emulator.bus().read8(emulator.cpu().pc()),
+                emulator.bus().read8(emulator.cpu().pc() + 1),
+            ];
+
+            if signature != [0x18, 0xFE] {
+                return PassCheck::Pending;
+            }
+
+            match emulator.cpu().registers().a {
+                0x00 => PassCheck::Passed,
                 _ => PassCheck::Failed,
             }
         }
