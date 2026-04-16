@@ -180,7 +180,13 @@ impl Bus {
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
                 ) {
                     self.timer.write(address, value);
-                } else if !self.ppu.write_register(address, value) {
+                } else if self.ppu.write_register(address, value) {
+                    if self.ppu.take_stat_irq_pending() {
+                        let interrupt_flag_index =
+                            (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+                        self.io_registers[interrupt_flag_index] |= 0x02;
+                    }
+                } else {
                     self.io_registers[(address - IO_REGISTERS_START) as usize] = value;
                 }
             }
@@ -193,6 +199,7 @@ impl Bus {
         for _ in 0..cycles {
             let interrupt_flag_index =
                 (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.ppu.step(&mut self.io_registers[interrupt_flag_index]);
             self.timer
                 .step(&mut self.io_registers[interrupt_flag_index]);
         }
@@ -200,6 +207,10 @@ impl Bus {
 
     pub const fn timer_may_generate_interrupt(&self) -> bool {
         self.timer.timer_may_generate_interrupt()
+    }
+
+    pub fn ppu_may_generate_interrupt(&self) -> bool {
+        self.ppu.may_request_interrupt(self.interrupt_enable)
     }
 }
 
@@ -335,5 +346,42 @@ mod tests {
         bus.write8(0xA000, 0x77);
 
         assert_eq!(bus.read8(0xA000), 0x77);
+    }
+
+    #[test]
+    fn tick_advances_ppu_and_sets_vblank_interrupt_flag() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+
+        let cycles_to_vblank = 456 * 144;
+        bus.tick(cycles_to_vblank);
+
+        assert_eq!(bus.read8(crate::ppu::LY_REGISTER), 144);
+        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x01, 0);
+    }
+
+    #[test]
+    fn ppu_interrupt_generation_hint_respects_ie_state() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+
+        assert!(!bus.ppu_may_generate_interrupt());
+
+        bus.write8(0xFFFF, 0x01);
+        assert!(bus.ppu_may_generate_interrupt());
+    }
+
+    #[test]
+    fn enabling_active_stat_source_sets_stat_interrupt_flag_immediately() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+        bus.tick(1);
+        assert_eq!(bus.read8(crate::ppu::STAT_REGISTER) & 0x03, 0x02);
+        bus.write8(crate::ppu::STAT_REGISTER, 0x20);
+
+        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x02, 0);
     }
 }

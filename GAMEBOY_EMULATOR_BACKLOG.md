@@ -184,8 +184,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Implement FF40–FF4B behavior.
   - [x] Enforce mode-based access restrictions where needed.
 - [ ] **PPU modes and scanline timing**
-  - [ ] Mode 2 (OAM search), Mode 3 (drawing), Mode 0 (HBlank), Mode 1 (VBlank).
-  - [ ] LY/LYC compare and STAT interrupt triggers.
+  - [x] Mode 2 (OAM search), Mode 3 (drawing), Mode 0 (HBlank), Mode 1 (VBlank).
+  - [x] LY/LYC compare and STAT interrupt triggers.
 - [ ] **Background/window rendering**
   - [ ] Tile fetching and map addressing.
   - [ ] Scroll/window positioning rules.
