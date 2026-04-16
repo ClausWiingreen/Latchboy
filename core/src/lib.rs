@@ -99,7 +99,9 @@ impl Emulator {
                     & self.bus.read8(interrupt_regs::ENABLE_REGISTER)
                     & interrupt_regs::MASK;
 
-                if pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable() {
+                if (pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable())
+                    && !self.bus.timer_may_generate_interrupt()
+                {
                     let remaining = target - available;
                     let halted_advance = remaining.div_ceil(4) * 4;
                     observer.on_event(EmulatorEvent::HaltedFastForward(
@@ -136,6 +138,7 @@ impl Emulator {
             };
 
             let cycles_taken = self.cpu.step(&mut self.bus);
+            self.bus.tick(cycles_taken);
             available += cycles_taken as u64;
 
             observer.on_event(EmulatorEvent::CpuStep(CpuStepObservation {
