@@ -180,7 +180,13 @@ impl Bus {
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
                 ) {
                     self.timer.write(address, value);
-                } else if !self.ppu.write_register(address, value) {
+                } else if self.ppu.write_register(address, value) {
+                    if self.ppu.take_stat_irq_pending() {
+                        let interrupt_flag_index =
+                            (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+                        self.io_registers[interrupt_flag_index] |= 0x02;
+                    }
+                } else {
                     self.io_registers[(address - IO_REGISTERS_START) as usize] = value;
                 }
             }
@@ -365,5 +371,17 @@ mod tests {
 
         bus.write8(0xFFFF, 0x01);
         assert!(bus.ppu_may_generate_interrupt());
+    }
+
+    #[test]
+    fn enabling_active_stat_source_sets_stat_interrupt_flag_immediately() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+        bus.tick(1);
+        assert_eq!(bus.read8(crate::ppu::STAT_REGISTER) & 0x03, 0x02);
+        bus.write8(crate::ppu::STAT_REGISTER, 0x20);
+
+        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x02, 0);
     }
 }

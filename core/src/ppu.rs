@@ -53,6 +53,8 @@ pub struct Ppu {
     wy: u8,
     wx: u8,
     scanline_dot: u16,
+    stat_irq_line_high: bool,
+    stat_irq_pending: bool,
 }
 
 impl Default for Ppu {
@@ -73,6 +75,8 @@ impl Default for Ppu {
             wy: 0,
             wx: 0,
             scanline_dot: 0,
+            stat_irq_line_high: false,
+            stat_irq_pending: false,
         }
     }
 }
@@ -86,44 +90,44 @@ impl Ppu {
         self.stat = (self.stat & !STAT_MODE_MASK) | (mode & STAT_MODE_MASK);
     }
 
-    fn update_lyc_coincidence_and_request_interrupt(
-        &mut self,
-        interrupt_flag: &mut u8,
-        previous_coincidence: bool,
-    ) {
-        let now_coincident = self.ly == self.lyc;
-        if now_coincident {
+    fn update_lyc_coincidence_flag(&mut self) {
+        if self.ly == self.lyc {
             self.stat |= STAT_LYC_EQUAL_BIT;
         } else {
             self.stat &= !STAT_LYC_EQUAL_BIT;
         }
-
-        if !previous_coincidence
-            && now_coincident
-            && (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
-        {
-            *interrupt_flag |= INTERRUPT_STAT_BIT;
-        }
     }
 
-    fn request_mode_interrupt_if_enabled(&self, mode: u8, interrupt_flag: &mut u8) {
-        let interrupt_enabled = match mode {
-            0 => (self.stat & STAT_MODE_0_INTERRUPT_BIT) != 0,
-            1 => (self.stat & STAT_MODE_1_INTERRUPT_BIT) != 0,
-            2 => (self.stat & STAT_MODE_2_INTERRUPT_BIT) != 0,
-            _ => false,
-        };
-
-        if interrupt_enabled {
-            *interrupt_flag |= INTERRUPT_STAT_BIT;
+    fn stat_irq_condition_active(&self) -> bool {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return false;
         }
+
+        let mode = self.current_mode();
+        let mode_enabled = (mode == 0 && (self.stat & STAT_MODE_0_INTERRUPT_BIT) != 0)
+            || (mode == 1 && (self.stat & STAT_MODE_1_INTERRUPT_BIT) != 0)
+            || (mode == 2 && (self.stat & STAT_MODE_2_INTERRUPT_BIT) != 0);
+        let coincidence_enabled_and_true = (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
+            && (self.stat & STAT_LYC_EQUAL_BIT) != 0;
+
+        mode_enabled || coincidence_enabled_and_true
     }
 
-    fn set_mode_with_interrupts(&mut self, mode: u8, previous_mode: u8, interrupt_flag: &mut u8) {
+    fn update_stat_irq_line(&mut self, interrupt_flag: Option<&mut u8>) {
+        let next_line_high = self.stat_irq_condition_active();
+        if !self.stat_irq_line_high && next_line_high {
+            if let Some(flag) = interrupt_flag {
+                *flag |= INTERRUPT_STAT_BIT;
+            } else {
+                self.stat_irq_pending = true;
+            }
+        }
+        self.stat_irq_line_high = next_line_high;
+    }
+
+    fn set_mode_with_interrupt_tracking(&mut self, mode: u8, interrupt_flag: &mut u8) {
         self.set_mode(mode);
-        if mode != previous_mode {
-            self.request_mode_interrupt_if_enabled(mode, interrupt_flag);
-        }
+        self.update_stat_irq_line(Some(interrupt_flag));
     }
 
     fn vram_accessible(&self) -> bool {
@@ -211,15 +215,27 @@ impl Ppu {
 
     pub fn write_register(&mut self, address: u16, value: u8) -> bool {
         match address {
-            LCDC_REGISTER => self.lcdc = value,
+            LCDC_REGISTER => {
+                self.lcdc = value;
+                self.update_stat_irq_line(None);
+            }
             STAT_REGISTER => {
                 let readonly_bits = self.stat & 0x07;
                 self.stat = 0x80 | readonly_bits | (value & 0x78);
+                self.update_stat_irq_line(None);
             }
             SCY_REGISTER => self.scy = value,
             SCX_REGISTER => self.scx = value,
-            LY_REGISTER => self.ly = 0,
-            LYC_REGISTER => self.lyc = value,
+            LY_REGISTER => {
+                self.ly = 0;
+                self.update_lyc_coincidence_flag();
+                self.update_stat_irq_line(None);
+            }
+            LYC_REGISTER => {
+                self.lyc = value;
+                self.update_lyc_coincidence_flag();
+                self.update_stat_irq_line(None);
+            }
             DMA_REGISTER => self.dma = value,
             BGP_REGISTER => self.bgp = value,
             OBP0_REGISTER => self.obp0 = value,
@@ -232,17 +248,23 @@ impl Ppu {
         true
     }
 
+    pub fn take_stat_irq_pending(&mut self) -> bool {
+        let pending = self.stat_irq_pending;
+        self.stat_irq_pending = false;
+        pending
+    }
+
     pub fn step(&mut self, interrupt_flag: &mut u8) {
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
             self.scanline_dot = 0;
             self.ly = 0;
             self.set_mode(0);
-            self.stat &= !STAT_LYC_EQUAL_BIT;
+            self.update_lyc_coincidence_flag();
+            self.update_stat_irq_line(Some(interrupt_flag));
             return;
         }
 
         let previous_mode = self.current_mode();
-        let previous_coincidence = (self.stat & STAT_LYC_EQUAL_BIT) != 0;
 
         self.scanline_dot = self.scanline_dot.wrapping_add(1);
         if self.scanline_dot >= CYCLES_PER_SCANLINE {
@@ -264,8 +286,9 @@ impl Ppu {
             *interrupt_flag |= INTERRUPT_VBLANK_BIT;
         }
 
-        self.set_mode_with_interrupts(next_mode, previous_mode, interrupt_flag);
-        self.update_lyc_coincidence_and_request_interrupt(interrupt_flag, previous_coincidence);
+        self.set_mode_with_interrupt_tracking(next_mode, interrupt_flag);
+        self.update_lyc_coincidence_flag();
+        self.update_stat_irq_line(Some(interrupt_flag));
     }
 }
 
@@ -419,5 +442,39 @@ mod tests {
 
         ppu.write_register(LCDC_REGISTER, 0x00);
         assert!(!ppu.may_request_interrupt(INTERRUPT_ENABLE_VBLANK_BIT));
+    }
+
+    #[test]
+    fn enabling_mode_source_while_mode_is_active_queues_stat_interrupt() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.step(&mut interrupt_flag);
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
+        assert!(!ppu.take_stat_irq_pending());
+
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        assert!(ppu.take_stat_irq_pending());
+    }
+
+    #[test]
+    fn enabling_or_matching_coincidence_condition_queues_stat_interrupt() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.write_register(LYC_REGISTER, 0x00);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
+
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        assert!(ppu.take_stat_irq_pending());
+
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        assert!(!ppu.take_stat_irq_pending());
+        ppu.write_register(LYC_REGISTER, 0x00);
+        assert!(ppu.take_stat_irq_pending());
     }
 }
