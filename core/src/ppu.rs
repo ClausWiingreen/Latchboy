@@ -216,7 +216,22 @@ impl Ppu {
     pub fn write_register(&mut self, address: u16, value: u8) -> bool {
         match address {
             LCDC_REGISTER => {
+                let was_enabled = (self.lcdc & LCDC_ENABLED_BIT) != 0;
                 self.lcdc = value;
+                let now_enabled = (self.lcdc & LCDC_ENABLED_BIT) != 0;
+
+                if !was_enabled && now_enabled {
+                    self.scanline_dot = 0;
+                    self.ly = 0;
+                    self.set_mode(0x02);
+                    self.update_lyc_coincidence_flag();
+                } else if was_enabled && !now_enabled {
+                    self.scanline_dot = 0;
+                    self.ly = 0;
+                    self.set_mode(0x00);
+                    self.update_lyc_coincidence_flag();
+                }
+
                 self.update_stat_irq_line(None);
             }
             STAT_REGISTER => {
@@ -302,12 +317,14 @@ mod tests {
 
         ppu.write_vram(0x8000, 0x12);
         ppu.write_oam(0xFE00, 0x34);
+
+        assert_eq!(ppu.read_vram(0x8000), 0x12);
+        assert_eq!(ppu.read_oam(0xFE00), 0x34);
+
         ppu.write_register(LCDC_REGISTER, 0x91);
         ppu.write_register(SCY_REGISTER, 0x56);
         ppu.write_register(BGP_REGISTER, 0xFC);
 
-        assert_eq!(ppu.read_vram(0x8000), 0x12);
-        assert_eq!(ppu.read_oam(0xFE00), 0x34);
         assert_eq!(ppu.read_register(LCDC_REGISTER), Some(0x91));
         assert_eq!(ppu.read_register(SCY_REGISTER), Some(0x56));
         assert_eq!(ppu.read_register(BGP_REGISTER), Some(0xFC));
@@ -472,9 +489,34 @@ mod tests {
 
         let mut ppu = Ppu::default();
         ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.write_register(LYC_REGISTER, 0x01);
         ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
         assert!(!ppu.take_stat_irq_pending());
         ppu.write_register(LYC_REGISTER, 0x00);
+        assert!(ppu.take_stat_irq_pending());
+    }
+
+    #[test]
+    fn lcd_enable_enters_mode_2_before_stat_eval() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(STAT_REGISTER, STAT_MODE_0_INTERRUPT_BIT);
+        assert!(!ppu.take_stat_irq_pending());
+
+        ppu.write_register(LCDC_REGISTER, 0x80);
+
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
+        assert!(!ppu.take_stat_irq_pending());
+    }
+
+    #[test]
+    fn lcd_enable_can_immediately_raise_mode_2_stat_when_enabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        assert!(!ppu.take_stat_irq_pending());
+
+        ppu.write_register(LCDC_REGISTER, 0x80);
+
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert!(ppu.take_stat_irq_pending());
     }
 }
