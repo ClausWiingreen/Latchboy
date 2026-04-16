@@ -30,7 +30,7 @@ LATCHBOY_ROM_ROOT=/path/to/roms cargo test -p latchboy-core --test external_rom_
 Each `[[roms]]` entry defines deterministic execution budgets:
 
 - `id`: stable ROM case identifier.
-- `suite`: suite grouping (`blargg_cpu_instrs`, `blargg_instr_timing`, `mooneye_acceptance_cpu`).
+- `suite`: suite grouping (`blargg_cpu_instrs`, `blargg_instr_timing`, `mooneye_acceptance_cpu`, `mooneye_acceptance_timer`).
 - `path`: ROM path relative to `$LATCHBOY_ROM_ROOT`.
 - `milestone`: backlog milestone gating (Milestone 2 entries are CI-required in external validation flow).
 - `required`: whether the case must pass for milestone gate checks.
@@ -42,7 +42,9 @@ Each `[[roms]]` entry defines deterministic execution budgets:
 The runner treats unset **or empty** `LATCHBOY_ROM_ROOT` as disabled and skips external ROM execution in that environment.
 When enabled, it executes each required Milestone 2 entry with deterministic cycle stepping, fails on unimplemented opcode dispatch, and fails when a required case does not positively report pass before exceeding its time/cycle/frame budget.
 
-## Required local fixture layout for Milestone 2 ROM validation
+Milestone 3 expands the manifest with required timer-focused entries, while keeping explicit deferred cases (`required = false`) when dependencies are still in progress.
+
+## Required local fixture layout for Milestone 2/3 ROM validation
 
 Local ROM fixtures must be mounted under a directory referenced by `LATCHBOY_ROM_ROOT`.
 The layout below is required for the current checked-in `tests/rom_manifest.toml` entries:
@@ -55,11 +57,17 @@ $LATCHBOY_ROM_ROOT/
 │   │       └── 01-special.gb
 │   └── instr_timing/
 │       └── instr_timing.gb
+└── mooneye/
+    └── acceptance/
+        └── timer/
+            ├── div_write.gb
+            └── rapid_toggle.gb
 ```
 
 If any required ROM is missing from these paths, `external_rom_validation` fails when ROM validation is enabled.
 
-Mooneye entries currently remain in `tests/rom_manifest.toml` as deferred, non-required cases (`required = false`) until LCD/PPU-dependent behavior is in scope.
+Milestone 3 uses `mooneye/acceptance/timer/div_write.gb` as a required timer edge-case gate.
+`mooneye/acceptance/timer/rapid_toggle.gb` is intentionally deferred (`required = false`) until tighter edge-case behavior is in scope.
 
 ### Manifest examples
 
@@ -103,10 +111,10 @@ pass_condition = "mooneye_registers"
 LATCHBOY_ROM_ROOT=/absolute/path/to/rom-fixtures cargo test -p latchboy-core --test external_rom_validation
 ```
 
-Optional: run only required Milestone 2 manifest checks by selecting the manifest gate test:
+Optional: run only required Milestone 2/3 manifest checks by selecting the manifest gate test:
 
 ```bash
-cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_suites
+cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_and_3_suites
 ```
 
 ## CI gate for Milestone 2 completion
