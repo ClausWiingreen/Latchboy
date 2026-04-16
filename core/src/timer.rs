@@ -61,7 +61,7 @@ impl Timer {
     }
 
     pub const fn timer_may_generate_interrupt(&self) -> bool {
-        (self.tac & TAC_ENABLE_MASK) != 0
+        (self.tac & TAC_ENABLE_MASK) != 0 || self.overflow_reload_delay.is_some()
     }
 
     fn selected_divider_bit(&self) -> u16 {
@@ -191,5 +191,27 @@ mod tests {
 
         assert_eq!(timer.read(TIMA_REGISTER), 0x77);
         assert_eq!(interrupt_flag & TIMER_INTERRUPT_MASK, 0);
+    }
+
+    #[test]
+    fn pending_reload_is_interrupt_capable_even_if_tac_is_disabled() {
+        let mut timer = Timer::default();
+        let mut interrupt_flag = 0;
+        timer.write(TAC_REGISTER, 0b101);
+        timer.write(TIMA_REGISTER, 0xFF);
+
+        for _ in 0..16 {
+            timer.step(&mut interrupt_flag);
+        }
+
+        timer.write(TAC_REGISTER, 0x00);
+        assert!(timer.timer_may_generate_interrupt());
+
+        for _ in 0..4 {
+            timer.step(&mut interrupt_flag);
+        }
+
+        assert_ne!(interrupt_flag & TIMER_INTERRUPT_MASK, 0);
+        assert!(!timer.timer_may_generate_interrupt());
     }
 }

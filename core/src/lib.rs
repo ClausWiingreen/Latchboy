@@ -117,6 +117,7 @@ impl Emulator {
                             interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
                         },
                     ));
+                    self.bus.tick(halted_advance as u32);
                     available += halted_advance;
                     break;
                 }
@@ -302,6 +303,18 @@ mod tests {
         assert!(emulator.cpu().halted());
         assert_eq!(emulator.cpu().pc(), halted_pc);
         assert_eq!(emulator.total_cycles(), 1_000_004);
+    }
+
+    #[test]
+    fn halted_fast_forward_keeps_divider_running() {
+        let mut emulator = Emulator::new();
+        emulator.step_cycles(4);
+        assert!(emulator.cpu().halted());
+        let div_before = emulator.bus.read8(0xFF04);
+
+        emulator.step_cycles(256);
+
+        assert_eq!(emulator.bus.read8(0xFF04), div_before.wrapping_add(1));
     }
 
     #[test]
