@@ -53,9 +53,12 @@ impl Emulator {
 
     /// Creates a new emulator from a cartridge image.
     pub fn from_cartridge(cartridge: Cartridge) -> Self {
+        let mut bus = Bus::new(cartridge);
+        bus.apply_dmg_no_boot_defaults();
+
         Self {
-            cpu: Cpu::new(),
-            bus: Bus::new(cartridge),
+            cpu: Cpu::new_dmg_no_boot(),
+            bus,
             total_cycles: 0,
             cycle_carry: 0,
         }
@@ -63,8 +66,9 @@ impl Emulator {
 
     /// Resets CPU and bus state while preserving the loaded cartridge.
     pub fn reset(&mut self) {
-        self.cpu = Cpu::new();
+        self.cpu = Cpu::new_dmg_no_boot();
         self.bus.reset();
+        self.bus.apply_dmg_no_boot_defaults();
         self.total_cycles = 0;
         self.cycle_carry = 0;
     }
@@ -174,7 +178,7 @@ impl Emulator {
 
 fn default_rom_only_cartridge() -> Cartridge {
     let mut rom = vec![0u8; 2 * 16 * 1024];
-    rom[0x0000] = 0x76; // HALT
+    rom[0x0100] = 0x76; // HALT
     rom[0x0134..0x0138].copy_from_slice(b"EMUT");
     rom[0x0147] = CartridgeType::RomOnly.code();
     rom[0x0148] = RomSize::Banks2.code();
@@ -191,21 +195,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn no_boot_startup_uses_dmg_post_boot_defaults() {
+        let emulator = Emulator::new();
+
+        let registers = emulator.cpu().registers();
+        assert_eq!(registers.a, 0x01);
+        assert_eq!(registers.f, 0xB0);
+        assert_eq!(registers.b, 0x00);
+        assert_eq!(registers.c, 0x13);
+        assert_eq!(registers.d, 0x00);
+        assert_eq!(registers.e, 0xD8);
+        assert_eq!(registers.h, 0x01);
+        assert_eq!(registers.l, 0x4D);
+        assert_eq!(emulator.cpu().pc(), 0x0100);
+        assert_eq!(emulator.cpu().sp(), 0xFFFE);
+
+        assert_eq!(emulator.bus().read8(0xFF40), 0x91);
+        assert_eq!(emulator.bus().read8(0xFF47), 0xFC);
+        assert_eq!(emulator.bus().read8(0xFF50), 0x01);
+        assert_eq!(emulator.bus().read8(0xFFFF), 0x00);
+    }
+
+    #[test]
     fn rom_boot_smoke_executes_instruction_stream() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
-        rom[0x0000] = 0x31; // LD SP, d16
-        rom[0x0001] = 0x00;
-        rom[0x0002] = 0xC0;
-        rom[0x0003] = 0x3E; // LD A, d8
-        rom[0x0004] = 0x42;
-        rom[0x0005] = 0xEA; // LD (a16), A
-        rom[0x0006] = 0x00;
-        rom[0x0007] = 0xC0;
-        rom[0x0008] = 0x3C; // INC A
-        rom[0x0009] = 0xEA; // LD (a16), A
-        rom[0x000A] = 0x01;
-        rom[0x000B] = 0xC0;
-        rom[0x000C] = 0x76; // HALT
+        rom[0x0100] = 0x31; // LD SP, d16
+        rom[0x0101] = 0x00;
+        rom[0x0102] = 0xC0;
+        rom[0x0103] = 0x3E; // LD A, d8
+        rom[0x0104] = 0x42;
+        rom[0x0105] = 0xEA; // LD (a16), A
+        rom[0x0106] = 0x00;
+        rom[0x0107] = 0xC0;
+        rom[0x0108] = 0x3C; // INC A
+        rom[0x0109] = 0xEA; // LD (a16), A
+        rom[0x010A] = 0x01;
+        rom[0x010B] = 0xC0;
+        rom[0x010C] = 0x76; // HALT
 
         rom[0x0134..0x0138].copy_from_slice(b"SMOK");
         rom[0x0147] = CartridgeType::RomOnly.code();
@@ -221,7 +247,7 @@ mod tests {
         emulator.step_cycles(64);
 
         assert!(emulator.cpu().halted());
-        assert_eq!(emulator.cpu().pc(), 0x000D);
+        assert_eq!(emulator.cpu().pc(), 0x010D);
         assert_eq!(emulator.cpu().sp(), 0xC000);
         assert_eq!(emulator.cpu().registers().a, 0x43);
         assert_eq!(emulator.bus().read8(0xC000), 0x42);
@@ -231,10 +257,10 @@ mod tests {
     #[test]
     fn step_cycle_batching_is_deterministic_with_carry() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
-        rom[0x0000] = 0x31; // LD SP, d16 (12 cycles)
-        rom[0x0001] = 0x34;
-        rom[0x0002] = 0x12;
-        rom[0x0003] = 0x76; // HALT (4 cycles)
+        rom[0x0100] = 0x31; // LD SP, d16 (12 cycles)
+        rom[0x0101] = 0x34;
+        rom[0x0102] = 0x12;
+        rom[0x0103] = 0x76; // HALT (4 cycles)
 
         rom[0x0134..0x0138].copy_from_slice(b"CARR");
         rom[0x0147] = CartridgeType::RomOnly.code();
@@ -280,22 +306,22 @@ mod tests {
         let mut emulator = Emulator::new();
         emulator.step_cycles(4);
         assert!(emulator.cpu().halted());
-        assert_eq!(emulator.cpu().pc(), 0x0001);
+        assert_eq!(emulator.cpu().pc(), 0x0101);
 
         emulator.bus.write8(0xFF0F, 0x01);
         emulator.bus.write8(0xFFFF, 0x01);
         emulator.step_cycles(4);
 
         assert!(!emulator.cpu().halted());
-        assert_eq!(emulator.cpu().pc(), 0x0002);
+        assert_eq!(emulator.cpu().pc(), 0x0102);
     }
 
     #[test]
     fn halted_cpu_services_interrupt_when_ime_is_enabled() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
-        rom[0x0000] = 0xFB; // EI
-        rom[0x0001] = 0x76; // HALT
-        rom[0x0002] = 0x00; // NOP (must not execute when interrupt services first)
+        rom[0x0100] = 0xFB; // EI
+        rom[0x0101] = 0x76; // HALT
+        rom[0x0102] = 0x00; // NOP (must not execute when interrupt services first)
         rom[0x0134..0x0138].copy_from_slice(b"INTS");
         rom[0x0147] = CartridgeType::RomOnly.code();
         rom[0x0148] = RomSize::Banks2.code();
@@ -309,7 +335,7 @@ mod tests {
 
         emulator.step_cycles(8);
         assert!(emulator.cpu().halted());
-        assert_eq!(emulator.cpu().pc(), 0x0002);
+        assert_eq!(emulator.cpu().pc(), 0x0102);
         assert!(emulator.cpu().ime());
 
         emulator.bus.write8(0xFF0F, 0x01);
@@ -320,7 +346,7 @@ mod tests {
         assert!(!emulator.cpu().ime());
         assert_eq!(emulator.bus.read8(0xFF0F), 0x00);
         assert_eq!(emulator.bus.read8(0xFFFC), 0x02);
-        assert_eq!(emulator.bus.read8(0xFFFD), 0x00);
+        assert_eq!(emulator.bus.read8(0xFFFD), 0x01);
     }
 
     #[test]
@@ -328,7 +354,7 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
 
         let mut rom_a = vec![0u8; 2 * 16 * 1024];
-        rom_a[0x0000] = 0x76;
+        rom_a[0x0100] = 0x76;
         rom_a[0x0134..0x0138].copy_from_slice(b"HSHA");
         rom_a[0x0147] = CartridgeType::RomOnly.code();
         rom_a[0x0148] = RomSize::Banks2.code();
@@ -338,7 +364,7 @@ mod tests {
             compute_header_checksum(&rom_a).expect("test rom header checksum should compute");
 
         let mut rom_b = rom_a.clone();
-        rom_b[0x0001] = 0xAA;
+        rom_b[0x0101] = 0xAA;
 
         let emu_a =
             Emulator::from_cartridge(Cartridge::from_rom(rom_a).expect("test rom should parse"));
@@ -357,9 +383,9 @@ mod tests {
     #[test]
     fn reset_preserves_loaded_cartridge_program() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
-        rom[0x0000] = 0x3E; // LD A, d8
-        rom[0x0001] = 0x99;
-        rom[0x0002] = 0x76; // HALT
+        rom[0x0100] = 0x3E; // LD A, d8
+        rom[0x0101] = 0x99;
+        rom[0x0102] = 0x76; // HALT
 
         rom[0x0134..0x0138].copy_from_slice(b"RSET");
         rom[0x0147] = CartridgeType::RomOnly.code();
@@ -379,7 +405,7 @@ mod tests {
         emulator.step_cycles(16);
 
         assert_eq!(emulator.cpu().registers().a, 0x99);
-        assert_eq!(emulator.cpu().pc(), 0x0003);
+        assert_eq!(emulator.cpu().pc(), 0x0103);
     }
 
     #[test]
@@ -387,9 +413,9 @@ mod tests {
         use crate::observability::{EmulatorEvent, TraceBuffer};
 
         let mut rom = vec![0u8; 2 * 16 * 1024];
-        rom[0x0000] = 0x00; // NOP
-        rom[0x0001] = 0x00; // NOP
-        rom[0x0002] = 0x76; // HALT
+        rom[0x0100] = 0x00; // NOP
+        rom[0x0101] = 0x00; // NOP
+        rom[0x0102] = 0x76; // HALT
 
         rom[0x0134..0x0138].copy_from_slice(b"OBSV");
         rom[0x0147] = CartridgeType::RomOnly.code();
@@ -420,8 +446,8 @@ mod tests {
         use crate::observability::{EmulatorEvent, TraceBuffer};
 
         let mut rom = vec![0u8; 2 * 16 * 1024];
-        rom[0x0000] = 0xFB; // EI
-        rom[0x0001] = 0x76; // HALT
+        rom[0x0100] = 0xFB; // EI
+        rom[0x0101] = 0x76; // HALT
 
         rom[0x0134..0x0138].copy_from_slice(b"INTT");
         rom[0x0147] = CartridgeType::RomOnly.code();

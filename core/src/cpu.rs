@@ -132,6 +132,29 @@ impl Cpu {
         }
     }
 
+    pub const fn new_dmg_no_boot() -> Self {
+        Self {
+            registers: Registers {
+                a: 0x01,
+                f: 0xB0,
+                b: 0x00,
+                c: 0x13,
+                d: 0x00,
+                e: 0xD8,
+                h: 0x01,
+                l: 0x4D,
+            },
+            pc: 0x0100,
+            sp: 0xFFFE,
+            halted: false,
+            halted_by_unimplemented_opcode: false,
+            ime: false,
+            ime_enable_pending: false,
+            halt_bug_active: false,
+            last_unimplemented_opcode: None,
+        }
+    }
+
     pub const fn registers(&self) -> &Registers {
         &self.registers
     }

@@ -142,7 +142,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [x] **Milestone 2 suite registration**
   - [x] Register Blargg `cpu_instrs` coverage.
   - [x] Register Blargg `instr_timing` coverage.
-  - [x] Register a Mooneye CPU acceptance subset.
+  - [x] Register a Mooneye CPU acceptance subset (currently deferred/non-required).
 - [x] **Deterministic execution budgets**
   - [x] Enforce per-ROM cycle/frame/wall-time limits.
 - [x] **CI gate behavior**

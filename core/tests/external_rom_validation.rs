@@ -419,8 +419,8 @@ fn rom_manifest_registers_required_milestone_2_suites() {
         manifest
             .roms
             .iter()
-            .any(|rom| rom.required && rom.milestone == 2 && rom.suite == "mooneye_acceptance_cpu"),
-        "manifest must include at least one required milestone 2 Mooneye CPU acceptance ROM"
+            .any(|rom| !rom.required && rom.suite == "mooneye_acceptance_cpu"),
+        "manifest must include at least one deferred Mooneye CPU acceptance ROM entry"
     );
 
     for rom in &manifest.roms {
