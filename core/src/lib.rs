@@ -72,6 +72,12 @@ impl Emulator {
     }
 
     /// Creates a new emulator from a cartridge image.
+    ///
+    /// Startup assumptions for this path:
+    /// - The DMG boot ROM is skipped.
+    /// - CPU registers are initialized to post-boot DMG defaults (`PC=0x0100`, `SP=0xFFFE`).
+    /// - Selected I/O registers are initialized with DMG post-boot values via
+    ///   [`Bus::apply_dmg_no_boot_defaults`], including `FF50=0x01` (boot ROM unmapped).
     pub fn from_cartridge(cartridge: Cartridge) -> Self {
         let mut bus = Bus::new(cartridge);
         bus.apply_dmg_no_boot_defaults();
@@ -87,8 +93,11 @@ impl Emulator {
 
     /// Creates a new emulator from a cartridge image with an explicit DMG boot ROM.
     ///
-    /// This startup path executes from address `0x0000` and expects the boot ROM to disable
-    /// itself by writing a non-zero value to `FF50` before transferring control to cartridge ROM.
+    /// Startup assumptions for this path:
+    /// - Execution begins at `PC=0x0000` with boot ROM mapping enabled.
+    /// - The boot ROM is expected to disable itself by writing a non-zero value to `FF50`.
+    /// - Once disabled, cartridge ROM is visible at `0x0000..=0x00FF` and cannot be remapped
+    ///   until a full emulator reset.
     pub fn from_cartridge_with_boot_rom(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
         Self {
             cpu: Cpu::new(),
@@ -516,6 +525,41 @@ mod tests {
 
         assert_eq!(emulator.cpu().registers().a, 0x99);
         assert_eq!(emulator.cpu().pc(), 0x0103);
+    }
+
+    #[test]
+    fn reset_restores_startup_state_for_each_startup_mode() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x00; // NOP
+        rom[0x0134..0x0138].copy_from_slice(b"STRT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+
+        let mut no_boot = Emulator::from_cartridge(cartridge.clone());
+        no_boot.step_cycles(4);
+        no_boot.reset();
+        assert_eq!(no_boot.cpu().pc(), 0x0100);
+        assert_eq!(no_boot.bus().read8(0xFF50), 0x01);
+        assert!(!no_boot.bus().boot_rom_enabled());
+
+        let mut boot_rom = vec![0u8; 0x100];
+        boot_rom[0x0000] = 0x3E; // LD A, d8
+        boot_rom[0x0001] = 0x01;
+        boot_rom[0x0002] = 0xE0; // LDH (a8), A
+        boot_rom[0x0003] = 0x50; // -> FF50
+        let mut with_boot = Emulator::from_cartridge_with_boot_rom(cartridge, boot_rom);
+        with_boot.step_cycles(16);
+        assert!(!with_boot.bus().boot_rom_enabled());
+
+        with_boot.reset();
+        assert_eq!(with_boot.cpu().pc(), 0x0000);
+        assert_eq!(with_boot.bus().read8(0xFF50), 0x00);
+        assert!(with_boot.bus().boot_rom_enabled());
     }
 
     #[test]

@@ -130,10 +130,15 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - HALT wake-up behavior is covered for both IME-enabled service and IME-disabled wake-without-service paths, including HALT-bug sequencing when interrupts are pending while IME is clear.
 - Current coverage is anchored by focused CPU tests (`interrupt_service_uses_hardware_priority_order`, `halted_cpu_wakes_on_pending_interrupt_even_when_ime_is_disabled`, and `halt_bug_repeats_next_opcode_fetch_when_ime_is_disabled_with_pending_interrupt`).
 
-- [ ] **Boot ROM handling**
-  - [ ] Optional boot ROM execution path.
-  - [ ] Post-boot register defaults for no-boot mode.
-  - [ ] Document exact startup assumptions in code comments/tests.
+- [x] **Boot ROM handling**
+  - [x] Optional boot ROM execution path.
+  - [x] Post-boot register defaults for no-boot mode.
+  - [x] Document exact startup assumptions in code comments/tests.
+
+**Implementation review notes (2026-04-16)**
+- Emulator startup now has two explicit, tested paths: DMG post-boot initialization (`from_cartridge`) and mapped boot-ROM execution (`from_cartridge_with_boot_rom`), with comments describing each path’s assumptions.
+- No-boot startup defaults are covered by assertions on CPU register state and key I/O defaults, including `PC=0x0100`, `SP=0xFFFE`, and `FF50=0x01`.
+- Boot-ROM startup execution and unmapping behavior are validated end-to-end through `FF50`, and reset behavior now re-establishes the correct initial state for both startup modes.
 
 **Acceptance criteria**
 - Timer test ROMs pass.
