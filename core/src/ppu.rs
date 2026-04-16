@@ -16,6 +16,23 @@ const OAM_START: u16 = 0xFE00;
 
 const VRAM_SIZE: usize = 0x2000;
 const OAM_SIZE: usize = 0xA0;
+const CYCLES_PER_SCANLINE: u16 = 456;
+const VISIBLE_SCANLINES: u8 = 144;
+const TOTAL_SCANLINES: u8 = 154;
+const MODE2_CYCLES: u16 = 80;
+const MODE3_CYCLES: u16 = 172;
+const MODE0_CYCLES_END: u16 = MODE2_CYCLES + MODE3_CYCLES;
+
+const STAT_COINCIDENCE_INTERRUPT_BIT: u8 = 0x40;
+const STAT_MODE_2_INTERRUPT_BIT: u8 = 0x20;
+const STAT_MODE_1_INTERRUPT_BIT: u8 = 0x10;
+const STAT_MODE_0_INTERRUPT_BIT: u8 = 0x08;
+const STAT_LYC_EQUAL_BIT: u8 = 0x04;
+
+const STAT_MODE_MASK: u8 = 0x03;
+const LCDC_ENABLED_BIT: u8 = 0x80;
+const INTERRUPT_VBLANK_BIT: u8 = 0x01;
+const INTERRUPT_STAT_BIT: u8 = 0x02;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ppu {
@@ -33,6 +50,7 @@ pub struct Ppu {
     obp1: u8,
     wy: u8,
     wx: u8,
+    scanline_dot: u16,
 }
 
 impl Default for Ppu {
@@ -52,13 +70,58 @@ impl Default for Ppu {
             obp1: 0,
             wy: 0,
             wx: 0,
+            scanline_dot: 0,
         }
     }
 }
 
 impl Ppu {
     fn current_mode(&self) -> u8 {
-        self.stat & 0x03
+        self.stat & STAT_MODE_MASK
+    }
+
+    fn set_mode(&mut self, mode: u8) {
+        self.stat = (self.stat & !STAT_MODE_MASK) | (mode & STAT_MODE_MASK);
+    }
+
+    fn update_lyc_coincidence_and_request_interrupt(
+        &mut self,
+        interrupt_flag: &mut u8,
+        previous_coincidence: bool,
+    ) {
+        let now_coincident = self.ly == self.lyc;
+        if now_coincident {
+            self.stat |= STAT_LYC_EQUAL_BIT;
+        } else {
+            self.stat &= !STAT_LYC_EQUAL_BIT;
+        }
+
+        if !previous_coincidence
+            && now_coincident
+            && (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
+        {
+            *interrupt_flag |= INTERRUPT_STAT_BIT;
+        }
+    }
+
+    fn request_mode_interrupt_if_enabled(&self, mode: u8, interrupt_flag: &mut u8) {
+        let interrupt_enabled = match mode {
+            0 => (self.stat & STAT_MODE_0_INTERRUPT_BIT) != 0,
+            1 => (self.stat & STAT_MODE_1_INTERRUPT_BIT) != 0,
+            2 => (self.stat & STAT_MODE_2_INTERRUPT_BIT) != 0,
+            _ => false,
+        };
+
+        if interrupt_enabled {
+            *interrupt_flag |= INTERRUPT_STAT_BIT;
+        }
+    }
+
+    fn set_mode_with_interrupts(&mut self, mode: u8, previous_mode: u8, interrupt_flag: &mut u8) {
+        self.set_mode(mode);
+        if mode != previous_mode {
+            self.request_mode_interrupt_if_enabled(mode, interrupt_flag);
+        }
     }
 
     fn vram_accessible(&self) -> bool {
@@ -143,6 +206,42 @@ impl Ppu {
 
         true
     }
+
+    pub fn step(&mut self, interrupt_flag: &mut u8) {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            self.scanline_dot = 0;
+            self.ly = 0;
+            self.set_mode(0);
+            self.stat &= !STAT_LYC_EQUAL_BIT;
+            return;
+        }
+
+        let previous_mode = self.current_mode();
+        let previous_coincidence = (self.stat & STAT_LYC_EQUAL_BIT) != 0;
+
+        self.scanline_dot = self.scanline_dot.wrapping_add(1);
+        if self.scanline_dot >= CYCLES_PER_SCANLINE {
+            self.scanline_dot = 0;
+            self.ly = (self.ly + 1) % TOTAL_SCANLINES;
+        }
+
+        let next_mode = if self.ly >= VISIBLE_SCANLINES {
+            1
+        } else if self.scanline_dot < MODE2_CYCLES {
+            2
+        } else if self.scanline_dot < MODE0_CYCLES_END {
+            3
+        } else {
+            0
+        };
+
+        if previous_mode != 1 && next_mode == 1 {
+            *interrupt_flag |= INTERRUPT_VBLANK_BIT;
+        }
+
+        self.set_mode_with_interrupts(next_mode, previous_mode, interrupt_flag);
+        self.update_lyc_coincidence_and_request_interrupt(interrupt_flag, previous_coincidence);
+    }
 }
 
 #[cfg(test)]
@@ -208,5 +307,70 @@ mod tests {
 
         ppu.stat &= !0x03;
         assert_eq!(ppu.read_oam(0xFE00), 0x56);
+    }
+
+    #[test]
+    fn step_transitions_through_scanline_modes() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, 0x80);
+
+        ppu.step(&mut interrupt_flag);
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
+
+        for _ in 1..MODE2_CYCLES {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x03);
+
+        for _ in MODE2_CYCLES..MODE0_CYCLES_END {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x00);
+
+        for _ in MODE0_CYCLES_END..CYCLES_PER_SCANLINE {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(0x01));
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
+    }
+
+    #[test]
+    fn step_enters_vblank_and_requests_vblank_and_stat_interrupts() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_1_INTERRUPT_BIT);
+
+        let cycles_to_vblank = (CYCLES_PER_SCANLINE as u32) * (VISIBLE_SCANLINES as u32);
+        for _ in 0..cycles_to_vblank {
+            ppu.step(&mut interrupt_flag);
+        }
+
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(VISIBLE_SCANLINES));
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x01);
+        assert_eq!(interrupt_flag & INTERRUPT_VBLANK_BIT, INTERRUPT_VBLANK_BIT);
+        assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
+    }
+
+    #[test]
+    fn lyc_match_sets_stat_coincidence_and_requests_stat_interrupt() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.write_register(LYC_REGISTER, 0x01);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+
+        for _ in 0..CYCLES_PER_SCANLINE {
+            ppu.step(&mut interrupt_flag);
+        }
+
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(0x01));
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
+        assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
     }
 }

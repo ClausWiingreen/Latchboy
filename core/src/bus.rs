@@ -193,6 +193,7 @@ impl Bus {
         for _ in 0..cycles {
             let interrupt_flag_index =
                 (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.ppu.step(&mut self.io_registers[interrupt_flag_index]);
             self.timer
                 .step(&mut self.io_registers[interrupt_flag_index]);
         }
@@ -335,5 +336,18 @@ mod tests {
         bus.write8(0xA000, 0x77);
 
         assert_eq!(bus.read8(0xA000), 0x77);
+    }
+
+    #[test]
+    fn tick_advances_ppu_and_sets_vblank_interrupt_flag() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+
+        let cycles_to_vblank = 456 * 144;
+        bus.tick(cycles_to_vblank);
+
+        assert_eq!(bus.read8(crate::ppu::LY_REGISTER), 144);
+        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x01, 0);
     }
 }
