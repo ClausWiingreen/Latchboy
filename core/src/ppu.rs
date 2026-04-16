@@ -363,16 +363,17 @@ impl Ppu {
     /// - Supports per-sprite X/Y flip and OBP0/OBP1 palette selection.
     /// - Honors sprite priority bit: when set, non-zero background pixels win.
     /// - Resolves overlapping sprites by DMG priority (lowest X, then lowest OAM index).
-    ///
-    /// Sprite size in this step is 8x8. 8x16 mode support is deferred.
+    /// - Supports both 8x8 and 8x16 object modes (LCDC bit 2).
     pub fn sprite_pixel(&self, screen_x: u8, screen_y: u8, bg_color_id: u8) -> Option<SpritePixel> {
         if (self.lcdc & LCDC_SPRITE_ENABLE_BIT) == 0 {
             return None;
         }
 
-        if (self.lcdc & LCDC_SPRITE_SIZE_BIT) != 0 {
-            return None;
-        }
+        let sprite_height = if (self.lcdc & LCDC_SPRITE_SIZE_BIT) != 0 {
+            16
+        } else {
+            8
+        };
 
         let mut scanline_sprites = [0usize; MAX_SPRITES_PER_SCANLINE];
         let mut scanline_sprite_count = 0usize;
@@ -382,7 +383,7 @@ impl Ppu {
             let base = sprite_index * OAM_ENTRY_SIZE;
             let sprite_y = self.oam[base];
             let sprite_top = i16::from(sprite_y) - 16;
-            if py >= sprite_top && py < sprite_top + 8 {
+            if py >= sprite_top && py < sprite_top + sprite_height {
                 scanline_sprites[scanline_sprite_count] = sprite_index;
                 scanline_sprite_count += 1;
                 if scanline_sprite_count == MAX_SPRITES_PER_SCANLINE {
@@ -403,7 +404,10 @@ impl Ppu {
             let sprite_left = i16::from(sprite_x) - 8;
             let px = i16::from(screen_x);
 
-            if px < sprite_left || px >= sprite_left + 8 || py < sprite_top || py >= sprite_top + 8
+            if px < sprite_left
+                || px >= sprite_left + 8
+                || py < sprite_top
+                || py >= sprite_top + sprite_height
             {
                 continue;
             }
@@ -411,14 +415,22 @@ impl Ppu {
             let mut row = (py - sprite_top) as u8;
             let mut col = (px - sprite_left) as u8;
             if (attributes & SPRITE_ATTRIBUTE_Y_FLIP_BIT) != 0 {
-                row = 7 - row;
+                row = (sprite_height - 1) as u8 - row;
             }
             if (attributes & SPRITE_ATTRIBUTE_X_FLIP_BIT) != 0 {
                 col = 7 - col;
             }
 
+            let tile_id = if sprite_height == 16 {
+                let top_tile = tile_index & 0xFE;
+                top_tile.wrapping_add(row / 8)
+            } else {
+                tile_index
+            };
+            let row_in_tile = row & 0x07;
+
             let tile_row_offset =
-                TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + usize::from(row) * 2;
+                TILE_BLOCK_0_OFFSET + usize::from(tile_id) * 16 + usize::from(row_in_tile) * 2;
             let low = self.vram[tile_row_offset];
             let high = self.vram[tile_row_offset + 1];
             let bit = 7 - col;
@@ -915,16 +927,55 @@ mod tests {
     }
 
     #[test]
-    fn sprite_pixel_returns_none_when_obj_size_mode_is_8x16() {
+    fn sprite_pixel_supports_8x16_mode_and_ignores_lsb_of_tile_index() {
         let mut ppu = Ppu::default();
         ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_SPRITE_SIZE_BIT);
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
-        ppu.write_oam(0xFE02, 0x01);
-        ppu.write_vram(0x8010, 0b1000_0000);
-        ppu.write_vram(0x8011, 0);
+        ppu.write_oam(0xFE02, 0x03);
+        // Top tile comes from index 0x02 (LSB ignored in 8x16 mode).
+        ppu.write_vram(0x8020, 0b1000_0000);
+        ppu.write_vram(0x8021, 0x00);
+        // Bottom tile comes from index 0x03.
+        ppu.write_vram(0x8030, 0x00);
+        ppu.write_vram(0x8031, 0b1000_0000);
 
-        assert_eq!(ppu.sprite_pixel(0, 0, 0), None);
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+        assert_eq!(
+            ppu.sprite_pixel(0, 8, 0),
+            Some(SpritePixel {
+                color_id: 2,
+                use_obp1: false
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_applies_y_flip_across_full_8x16_height() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_SPRITE_SIZE_BIT);
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x02);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_Y_FLIP_BIT);
+
+        // Unflipped row 0 should sample from bottom tile row 7.
+        ppu.write_vram(0x803E, 0b1000_0000);
+        ppu.write_vram(0x803F, 0x00);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
     }
 
     #[test]
