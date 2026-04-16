@@ -125,6 +125,30 @@ Milestone 2 is considered CI-complete when the GitHub Actions check run named:
 
 is green on the target commit/PR. This maps to workflow `.github/workflows/ci.yml`, job key `rust-checks`, including the `Run tests` step (`cargo test --workspace --all-targets`) that executes `external_rom_validation` when `LATCHBOY_ROM_ROOT` is configured in CI.
 
+## CI fixture provisioning for `LATCHBOY_ROM_ROOT` (contributors)
+
+To avoid false-green runs where `external_rom_validation` is skipped, CI must provide a non-empty
+`LATCHBOY_ROM_ROOT` that resolves every required manifest `path`.
+
+The current workflow reads this value from a GitHub Actions repository variable:
+
+- Workflow location: `.github/workflows/ci.yml`
+- Job: `rust-checks`
+- Environment mapping: `LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}`
+
+Recommended provisioning pattern for maintainers:
+
+1. Build or mount a fixture directory in CI that matches `tests/rom_manifest.toml`.
+2. Set repository variable **`LATCHBOY_ROM_ROOT`** to that absolute CI path (for example, `/opt/latchboy-roms`).
+3. Ensure the configured path exists on the runner before the `Run tests` step.
+4. Keep fixture contents synchronized with required manifest entries whenever required ROM cases are added or paths change.
+
+Practical verification in CI logs:
+
+- Confirm `cargo test --workspace --all-targets` runs `external_rom_validation`.
+- Confirm there is no skip message indicating `LATCHBOY_ROM_ROOT` is unset/empty.
+- Confirm required Milestone 2/3 cases execute and report pass within configured budgets.
+
 ## Milestone 2 acceptance checklist → jobs/artifacts
 
 - [ ] **Backlog bullet: “Passes CPU instruction correctness test ROMs.”**  
