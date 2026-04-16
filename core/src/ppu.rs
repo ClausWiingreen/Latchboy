@@ -33,6 +33,8 @@ const STAT_MODE_MASK: u8 = 0x03;
 const LCDC_ENABLED_BIT: u8 = 0x80;
 const INTERRUPT_VBLANK_BIT: u8 = 0x01;
 const INTERRUPT_STAT_BIT: u8 = 0x02;
+const INTERRUPT_ENABLE_VBLANK_BIT: u8 = 0x01;
+const INTERRUPT_ENABLE_STAT_BIT: u8 = 0x02;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ppu {
@@ -130,6 +132,29 @@ impl Ppu {
 
     fn oam_accessible(&self) -> bool {
         !matches!(self.current_mode(), 0x02 | 0x03)
+    }
+
+    pub fn may_request_interrupt(&self, interrupt_enable: u8) -> bool {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return false;
+        }
+
+        if (interrupt_enable & INTERRUPT_ENABLE_VBLANK_BIT) != 0 {
+            return true;
+        }
+
+        if (interrupt_enable & INTERRUPT_ENABLE_STAT_BIT) == 0 {
+            return false;
+        }
+
+        if (self.stat
+            & (STAT_MODE_0_INTERRUPT_BIT | STAT_MODE_1_INTERRUPT_BIT | STAT_MODE_2_INTERRUPT_BIT))
+            != 0
+        {
+            return true;
+        }
+
+        (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0 && self.lyc < TOTAL_SCANLINES
     }
 
     pub fn read_vram(&self, address: u16) -> u8 {
@@ -372,5 +397,27 @@ mod tests {
             STAT_LYC_EQUAL_BIT
         );
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
+    }
+
+    #[test]
+    fn may_request_interrupt_reflects_lcdc_ie_and_stat_sources() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, 0x80);
+
+        assert!(ppu.may_request_interrupt(INTERRUPT_ENABLE_VBLANK_BIT));
+        assert!(!ppu.may_request_interrupt(0x00));
+
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        assert!(ppu.may_request_interrupt(INTERRUPT_ENABLE_STAT_BIT));
+
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(LYC_REGISTER, 153);
+        assert!(ppu.may_request_interrupt(INTERRUPT_ENABLE_STAT_BIT));
+
+        ppu.write_register(LYC_REGISTER, 200);
+        assert!(!ppu.may_request_interrupt(INTERRUPT_ENABLE_STAT_BIT));
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+        assert!(!ppu.may_request_interrupt(INTERRUPT_ENABLE_VBLANK_BIT));
     }
 }

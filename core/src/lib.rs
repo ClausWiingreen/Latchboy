@@ -150,6 +150,7 @@ impl Emulator {
 
                 if (pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable())
                     && !self.bus.timer_may_generate_interrupt()
+                    && !self.bus.ppu_may_generate_interrupt()
                 {
                     let remaining = target - available;
                     let halted_advance = remaining.div_ceil(4) * 4;
@@ -407,6 +408,37 @@ mod tests {
         emulator.step_cycles(256);
 
         assert_eq!(emulator.bus.read8(0xFF04), div_before.wrapping_add(1));
+    }
+
+    #[test]
+    fn halted_step_does_not_fast_forward_past_ppu_interrupt_sources() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x3E; // LD A, d8
+        rom[0x0101] = 0x01; // enable VBlank in IE
+        rom[0x0102] = 0xEA; // LD (a16), A
+        rom[0x0103] = 0xFF;
+        rom[0x0104] = 0xFF;
+        rom[0x0105] = 0x76; // HALT
+        rom[0x0134..0x0138].copy_from_slice(b"VBLK");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+
+        emulator.step_cycles(64);
+        assert!(emulator.cpu().halted());
+        assert_eq!(emulator.cpu().pc(), 0x0106);
+
+        emulator.step_cycles((456 * 144) + 64);
+
+        assert!(!emulator.cpu().halted());
+        assert_ne!(emulator.cpu().pc(), 0x0106);
+        assert_ne!(emulator.bus.read8(0xFF0F) & 0x01, 0x00);
     }
 
     #[test]

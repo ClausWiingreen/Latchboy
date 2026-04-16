@@ -202,6 +202,10 @@ impl Bus {
     pub const fn timer_may_generate_interrupt(&self) -> bool {
         self.timer.timer_may_generate_interrupt()
     }
+
+    pub fn ppu_may_generate_interrupt(&self) -> bool {
+        self.ppu.may_request_interrupt(self.interrupt_enable)
+    }
 }
 
 #[cfg(test)]
@@ -349,5 +353,17 @@ mod tests {
 
         assert_eq!(bus.read8(crate::ppu::LY_REGISTER), 144);
         assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x01, 0);
+    }
+
+    #[test]
+    fn ppu_interrupt_generation_hint_respects_ie_state() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+
+        assert!(!bus.ppu_may_generate_interrupt());
+
+        bus.write8(0xFFFF, 0x01);
+        assert!(bus.ppu_may_generate_interrupt());
     }
 }
