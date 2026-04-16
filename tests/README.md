@@ -111,10 +111,10 @@ pass_condition = "mooneye_registers"
 LATCHBOY_ROM_ROOT=/absolute/path/to/rom-fixtures cargo test -p latchboy-core --test external_rom_validation
 ```
 
-Optional: run only required Milestone 2 manifest checks by selecting the manifest gate test:
+Optional: run only required Milestone 2/3 manifest checks by selecting the manifest gate test:
 
 ```bash
-cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_suites
+cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_and_3_suites
 ```
 
 ## CI gate for Milestone 2 completion
