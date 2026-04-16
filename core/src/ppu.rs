@@ -605,8 +605,8 @@ mod tests {
     fn background_pixel_fetch_uses_unsigned_tile_data_region() {
         let mut ppu = Ppu::default();
         ppu.write_register(
-            LCDC_REGISTER, 
-            LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
         );
 
         ppu.write_vram(0x9800, 0x02);
