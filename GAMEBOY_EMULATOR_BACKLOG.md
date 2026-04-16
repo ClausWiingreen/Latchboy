@@ -181,7 +181,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 ## Milestone 4 — PPU (Graphics Pipeline)
 
 - [ ] **VRAM/OAM and LCD registers**
-  - [ ] Implement FF40–FF4B behavior.
+  - [x] Implement FF40–FF4B behavior.
   - [ ] Enforce mode-based access restrictions where needed.
 - [ ] **PPU modes and scanline timing**
   - [ ] Mode 2 (OAM search), Mode 3 (drawing), Mode 0 (HBlank), Mode 1 (VBlank).

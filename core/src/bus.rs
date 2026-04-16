@@ -1,4 +1,5 @@
 use crate::cartridge::Cartridge;
+use crate::ppu::Ppu;
 use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
 
 const VRAM_START: u16 = 0x8000;
@@ -18,9 +19,7 @@ const HRAM_START: u16 = 0xFF80;
 const HRAM_END: u16 = 0xFFFE;
 const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
 
-const VRAM_SIZE: usize = 0x2000;
 const WRAM_SIZE: usize = 0x2000;
-const OAM_SIZE: usize = 0xA0;
 const IO_REGISTERS_SIZE: usize = 0x80;
 const HRAM_SIZE: usize = 0x7F;
 const BOOT_ROM_SIZE: usize = 0x100;
@@ -66,9 +65,8 @@ pub struct Bus {
     boot_rom: Option<Vec<u8>>,
     boot_rom_enabled: bool,
     boot_rom_disable_value: u8,
-    vram: [u8; VRAM_SIZE],
+    ppu: Ppu,
     wram: [u8; WRAM_SIZE],
-    oam: [u8; OAM_SIZE],
     io_registers: [u8; IO_REGISTERS_SIZE],
     timer: Timer,
     hram: [u8; HRAM_SIZE],
@@ -82,9 +80,8 @@ impl Bus {
             boot_rom: None,
             boot_rom_enabled: false,
             boot_rom_disable_value: 0,
-            vram: [0; VRAM_SIZE],
+            ppu: Ppu::default(),
             wram: [0; WRAM_SIZE],
-            oam: [0; OAM_SIZE],
             io_registers: [0; IO_REGISTERS_SIZE],
             timer: Timer::default(),
             hram: [0; HRAM_SIZE],
@@ -117,11 +114,11 @@ impl Bus {
 
                 self.cartridge.read(address)
             }
-            VRAM_START..=0x9FFF => self.vram[(address - VRAM_START) as usize],
+            VRAM_START..=0x9FFF => self.ppu.read_vram(address),
             EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
             WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
             WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
-            OAM_START..=OAM_END => self.oam[(address - OAM_START) as usize],
+            OAM_START..=OAM_END => self.ppu.read_oam(address),
             UNUSABLE_START..=UNUSABLE_END => 0xFF,
             IO_REGISTERS_START..=IO_REGISTERS_END => {
                 if address == BOOT_ROM_DISABLE_REGISTER {
@@ -131,6 +128,8 @@ impl Bus {
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
                 ) {
                     self.timer.read(address)
+                } else if let Some(value) = self.ppu.read_register(address) {
+                    value
                 } else {
                     self.io_registers[(address - IO_REGISTERS_START) as usize]
                 }
@@ -145,9 +144,8 @@ impl Bus {
 
         self.boot_rom_enabled = self.boot_rom.is_some();
         self.boot_rom_disable_value = 0;
-        self.vram = [0; VRAM_SIZE];
+        self.ppu = Ppu::default();
         self.wram = [0; WRAM_SIZE];
-        self.oam = [0; OAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
         self.timer = Timer::default();
         self.hram = [0; HRAM_SIZE];
@@ -163,13 +161,13 @@ impl Bus {
     pub fn write8(&mut self, address: u16, value: u8) {
         match address {
             0x0000..=0x7FFF => self.cartridge.write(address, value),
-            VRAM_START..=0x9FFF => self.vram[(address - VRAM_START) as usize] = value,
+            VRAM_START..=0x9FFF => self.ppu.write_vram(address, value),
             EXTERNAL_RAM_START..=0xBFFF => self.cartridge.write(address, value),
             WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize] = value,
             WRAM_ECHO_START..=WRAM_ECHO_END => {
                 self.wram[(address - WRAM_ECHO_START) as usize] = value
             }
-            OAM_START..=OAM_END => self.oam[(address - OAM_START) as usize] = value,
+            OAM_START..=OAM_END => self.ppu.write_oam(address, value),
             UNUSABLE_START..=UNUSABLE_END => {}
             IO_REGISTERS_START..=IO_REGISTERS_END => {
                 if address == BOOT_ROM_DISABLE_REGISTER {
@@ -182,7 +180,7 @@ impl Bus {
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
                 ) {
                     self.timer.write(address, value);
-                } else {
+                } else if !self.ppu.write_register(address, value) {
                     self.io_registers[(address - IO_REGISTERS_START) as usize] = value;
                 }
             }
