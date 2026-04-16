@@ -46,6 +46,18 @@ impl Default for Emulator {
 }
 
 impl Emulator {
+    fn next_tick_chunk_size(cycles: u64) -> u32 {
+        cycles.min(u64::from(u32::MAX)) as u32
+    }
+
+    fn tick_bus_cycles(&mut self, mut cycles: u64) {
+        while cycles != 0 {
+            let chunk = Self::next_tick_chunk_size(cycles);
+            self.bus.tick(chunk);
+            cycles -= u64::from(chunk);
+        }
+    }
+
     /// Creates a new emulator with a minimal ROM-only cartridge.
     pub fn new() -> Self {
         Self::from_cartridge(default_rom_only_cartridge())
@@ -99,7 +111,9 @@ impl Emulator {
                     & self.bus.read8(interrupt_regs::ENABLE_REGISTER)
                     & interrupt_regs::MASK;
 
-                if pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable() {
+                if (pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable())
+                    && !self.bus.timer_may_generate_interrupt()
+                {
                     let remaining = target - available;
                     let halted_advance = remaining.div_ceil(4) * 4;
                     observer.on_event(EmulatorEvent::HaltedFastForward(
@@ -115,6 +129,7 @@ impl Emulator {
                             interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
                         },
                     ));
+                    self.tick_bus_cycles(halted_advance);
                     available += halted_advance;
                     break;
                 }
@@ -136,6 +151,7 @@ impl Emulator {
             };
 
             let cycles_taken = self.cpu.step(&mut self.bus);
+            self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
 
             observer.on_event(EmulatorEvent::CpuStep(CpuStepObservation {
@@ -299,6 +315,29 @@ mod tests {
         assert!(emulator.cpu().halted());
         assert_eq!(emulator.cpu().pc(), halted_pc);
         assert_eq!(emulator.total_cycles(), 1_000_004);
+    }
+
+    #[test]
+    fn halted_fast_forward_keeps_divider_running() {
+        let mut emulator = Emulator::new();
+        emulator.step_cycles(4);
+        assert!(emulator.cpu().halted());
+        let div_before = emulator.bus.read8(0xFF04);
+
+        emulator.step_cycles(256);
+
+        assert_eq!(emulator.bus.read8(0xFF04), div_before.wrapping_add(1));
+    }
+
+    #[test]
+    fn tick_bus_cycles_chunks_values_above_u32_max() {
+        let mut remaining = u64::from(u32::MAX) + 1;
+        let first = Emulator::next_tick_chunk_size(remaining);
+        remaining -= u64::from(first);
+        let second = Emulator::next_tick_chunk_size(remaining);
+
+        assert_eq!(first, u32::MAX);
+        assert_eq!(second, 1);
     }
 
     #[test]

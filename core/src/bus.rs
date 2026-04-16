@@ -1,4 +1,5 @@
 use crate::cartridge::Cartridge;
+use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
 
 const VRAM_START: u16 = 0x8000;
 const EXTERNAL_RAM_START: u16 = 0xA000;
@@ -69,6 +70,7 @@ pub struct Bus {
     wram: [u8; WRAM_SIZE],
     oam: [u8; OAM_SIZE],
     io_registers: [u8; IO_REGISTERS_SIZE],
+    timer: Timer,
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
 }
@@ -84,6 +86,7 @@ impl Bus {
             wram: [0; WRAM_SIZE],
             oam: [0; OAM_SIZE],
             io_registers: [0; IO_REGISTERS_SIZE],
+            timer: Timer::default(),
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
         }
@@ -123,6 +126,11 @@ impl Bus {
             IO_REGISTERS_START..=IO_REGISTERS_END => {
                 if address == BOOT_ROM_DISABLE_REGISTER {
                     self.boot_rom_disable_value
+                } else if matches!(
+                    address,
+                    DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
+                ) {
+                    self.timer.read(address)
                 } else {
                     self.io_registers[(address - IO_REGISTERS_START) as usize]
                 }
@@ -141,6 +149,7 @@ impl Bus {
         self.wram = [0; WRAM_SIZE];
         self.oam = [0; OAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
+        self.timer = Timer::default();
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
     }
@@ -168,6 +177,11 @@ impl Bus {
                     if self.boot_rom_enabled && value != 0 {
                         self.boot_rom_enabled = false;
                     }
+                } else if matches!(
+                    address,
+                    DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
+                ) {
+                    self.timer.write(address, value);
                 } else {
                     self.io_registers[(address - IO_REGISTERS_START) as usize] = value;
                 }
@@ -175,6 +189,19 @@ impl Bus {
             HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize] = value,
             INTERRUPT_ENABLE_REGISTER => self.interrupt_enable = value,
         }
+    }
+
+    pub fn tick(&mut self, cycles: u32) {
+        for _ in 0..cycles {
+            let interrupt_flag_index =
+                (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.timer
+                .step(&mut self.io_registers[interrupt_flag_index]);
+        }
+    }
+
+    pub const fn timer_may_generate_interrupt(&self) -> bool {
+        self.timer.timer_may_generate_interrupt()
     }
 }
 

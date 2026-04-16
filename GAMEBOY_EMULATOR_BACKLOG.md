@@ -117,9 +117,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Milestone 3 — Timers, Interrupts, and Boot Sequence
 
-- [ ] **DIV/TIMA/TMA/TAC**
-  - [ ] Falling-edge timer behavior.
-  - [ ] Overflow/reload edge cases and interrupt requests.
+- [x] **DIV/TIMA/TMA/TAC**
+  - [x] Falling-edge timer behavior.
+  - [x] Overflow/reload edge cases and interrupt requests.
 - [ ] **Interrupt controller integration**
   - [ ] Priority ordering.
   - [ ] HALT behavior and wake-up behavior.
