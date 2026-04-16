@@ -104,7 +104,7 @@ impl Ppu {
             TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + row_base
         } else {
             let signed_index = i8::from_ne_bytes([tile_index]);
-            let tile_offset = (isize::from(signed_index) * 16) as isize;
+            let tile_offset = isize::from(signed_index) * 16;
             (TILE_BLOCK_2_OFFSET as isize + tile_offset + row_base as isize) as usize
         }
     }
