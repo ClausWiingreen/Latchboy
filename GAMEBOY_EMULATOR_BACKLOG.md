@@ -102,10 +102,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 **Acceptance status review (2026-04-16)**
 - ✅ Milestone 2 implementation scope is present in-tree: register/flag model, broad base + CB instruction families, control-flow/stack ops, interrupt dispatch, HALT/HALT-bug behavior, and non-panicking invalid-opcode diagnostics.
-- ✅ No-boot startup defaults are now wired for DMG mode (post-boot register defaults and entry at `PC=0x0100`) to align CPU test ROM startup expectations when no boot ROM is provided.
 - ✅ Workspace tests currently pass for CPU correctness and interrupt-focused behavior via `cargo test --workspace --all-targets`.
 - ⚠️ External ROM acceptance remains fixture-dependent: `external_rom_validation` skips required ROM runs when `LATCHBOY_ROM_ROOT` is unset/empty, so acceptance is only fully proven when fixtures are mounted in CI/local runs.
-- 🔧 Clarification: treat these acceptance bullets as satisfied by the required Milestone 2 `tests/rom_manifest.toml` entries plus CPU interrupt-focused unit/integration tests. Mooneye acceptance entries are retained as deferred non-required cases until LCD/PPU dependencies are in scope.
+- 🔧 Clarification: treat these acceptance bullets as satisfied by the required Milestone 2 `tests/rom_manifest.toml` entries plus CPU interrupt-focused unit/integration tests.
 
 **Milestone 2 completion gate (linked validation docs)**
 - Validation runbook + fixture/manifest contract: `tests/README.md`.
