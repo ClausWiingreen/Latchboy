@@ -414,7 +414,7 @@ fn format_timeout_state(emulator: &Emulator, executed_cycles: u64) -> String {
 }
 
 #[test]
-fn rom_manifest_registers_required_milestone_2_suites() {
+fn rom_manifest_registers_required_milestone_2_and_3_suites() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
@@ -439,6 +439,27 @@ fn rom_manifest_registers_required_milestone_2_suites() {
             .any(|rom| !rom.required && rom.suite == "mooneye_acceptance_cpu"),
         "manifest must include at least one deferred Mooneye CPU acceptance ROM entry"
     );
+    assert!(
+        manifest
+            .roms
+            .iter()
+            .any(|rom| rom.required && rom.milestone == 3 && rom.suite == "blargg_instr_timing"),
+        "manifest must include at least one required milestone 3 timer-adjacent ROM entry"
+    );
+    assert!(
+        manifest
+            .roms
+            .iter()
+            .any(|rom| rom.required && rom.milestone == 3 && rom.suite == "mooneye_acceptance_timer"),
+        "manifest must include at least one required milestone 3 Mooneye timer ROM entry"
+    );
+    assert!(
+        manifest
+            .roms
+            .iter()
+            .any(|rom| !rom.required && rom.milestone == 3 && rom.suite == "mooneye_acceptance_timer"),
+        "manifest must include at least one deferred milestone 3 timer ROM entry with an explicit dependency"
+    );
 
     for rom in &manifest.roms {
         assert!(
@@ -457,11 +478,12 @@ fn rom_manifest_registers_required_milestone_2_suites() {
             rom.id
         );
 
-        if rom.required && rom.milestone == 2 {
+        if rom.required && (rom.milestone == 2 || rom.milestone == 3) {
             assert!(
                 !is_noop_pass_condition(rom.pass_condition),
-                "{} is required for milestone 2 and must not use pass_condition = \"none\"",
-                rom.id
+                "{} is required for milestone {} and must not use pass_condition = \"none\"",
+                rom.id,
+                rom.milestone
             );
         }
     }
