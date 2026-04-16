@@ -176,7 +176,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 **Refinements for upcoming milestones**
 - [x] Expand the required ROM manifest set as Milestones 3–5 land (timers, interrupt edge-cases, boot behavior, and early PPU/input interactions), while preserving deterministic execution budgets.
-- [ ] Document CI fixture provisioning for `LATCHBOY_ROM_ROOT` in contributor docs to avoid false-green local runs that skip external ROM execution.
+- [x] Document CI fixture provisioning for `LATCHBOY_ROM_ROOT` in contributor docs to avoid false-green local runs that skip external ROM execution.
 
 ## Milestone 4 — PPU (Graphics Pipeline)
 
