@@ -26,14 +26,22 @@ use std::hash::{Hash, Hasher};
 pub struct Emulator {
     cpu: Cpu,
     bus: Bus,
+    startup_mode: StartupMode,
     total_cycles: u64,
     cycle_carry: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum StartupMode {
+    DmgNoBoot,
+    BootRom,
 }
 
 impl Hash for Emulator {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.cpu.hash(state);
         self.bus.hash(state);
+        self.startup_mode.hash(state);
         self.total_cycles.hash(state);
         self.cycle_carry.hash(state);
     }
@@ -71,6 +79,21 @@ impl Emulator {
         Self {
             cpu: Cpu::new_dmg_no_boot(),
             bus,
+            startup_mode: StartupMode::DmgNoBoot,
+            total_cycles: 0,
+            cycle_carry: 0,
+        }
+    }
+
+    /// Creates a new emulator from a cartridge image with an explicit DMG boot ROM.
+    ///
+    /// This startup path executes from address `0x0000` and expects the boot ROM to disable
+    /// itself by writing a non-zero value to `FF50` before transferring control to cartridge ROM.
+    pub fn from_cartridge_with_boot_rom(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
+        Self {
+            cpu: Cpu::new(),
+            bus: Bus::with_boot_rom(cartridge, boot_rom),
+            startup_mode: StartupMode::BootRom,
             total_cycles: 0,
             cycle_carry: 0,
         }
@@ -78,9 +101,14 @@ impl Emulator {
 
     /// Resets CPU and bus state while preserving the loaded cartridge.
     pub fn reset(&mut self) {
-        self.cpu = Cpu::new_dmg_no_boot();
         self.bus.reset();
-        self.bus.apply_dmg_no_boot_defaults();
+        self.cpu = match self.startup_mode {
+            StartupMode::DmgNoBoot => {
+                self.bus.apply_dmg_no_boot_defaults();
+                Cpu::new_dmg_no_boot()
+            }
+            StartupMode::BootRom => Cpu::new(),
+        };
         self.total_cycles = 0;
         self.cycle_carry = 0;
     }
@@ -268,6 +296,49 @@ mod tests {
         assert_eq!(emulator.cpu().registers().a, 0x43);
         assert_eq!(emulator.bus().read8(0xC000), 0x42);
         assert_eq!(emulator.bus().read8(0xC001), 0x43);
+    }
+
+    #[test]
+    fn boot_rom_startup_path_executes_from_zero_until_ff50_unmaps_boot_rom() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0xD3; // Invalid opcode trap after boot ROM jumps into cartridge space.
+        rom[0x0134..0x0138].copy_from_slice(b"BOOT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let mut boot_rom = vec![0u8; 0x100];
+        boot_rom[0x00FC] = 0x3E; // LD A, d8
+        boot_rom[0x00FD] = 0x01;
+        boot_rom[0x00FE] = 0xE0; // LDH (a8), A
+        boot_rom[0x00FF] = 0x50; // -> FF50 (disable boot ROM mapping)
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge_with_boot_rom(cartridge, boot_rom);
+
+        assert_eq!(emulator.cpu().pc(), 0x0000);
+        assert!(emulator.bus().boot_rom_enabled());
+        assert_eq!(emulator.bus().read8(0xFF50), 0x00);
+
+        emulator.step_cycles(1008);
+        assert_eq!(emulator.cpu().pc(), 0x00FC);
+        assert!(emulator.bus().boot_rom_enabled());
+
+        emulator.step_cycles(8);
+        assert_eq!(emulator.cpu().pc(), 0x00FE);
+        assert_eq!(emulator.cpu().registers().a, 0x01);
+
+        emulator.step_cycles(12);
+        assert_eq!(emulator.cpu().pc(), 0x0100);
+        assert!(!emulator.bus().boot_rom_enabled());
+        assert_eq!(emulator.bus().read8(0xFF50), 0x01);
+
+        emulator.step_cycles(4);
+        assert_eq!(emulator.cpu().pc(), 0x0101);
+        assert_eq!(emulator.cpu().registers().a, 0x01);
     }
 
     #[test]
