@@ -100,6 +100,12 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Passes CPU instruction correctness test ROMs.
 - Passes interrupt behavior test subset.
 
+**Acceptance status review (2026-04-16)**
+- ✅ Milestone 2 implementation scope is present in-tree: register/flag model, broad base + CB instruction families, control-flow/stack ops, interrupt dispatch, HALT/HALT-bug behavior, and non-panicking invalid-opcode diagnostics.
+- ✅ Workspace tests currently pass for CPU correctness and interrupt-focused behavior via `cargo test --workspace --all-targets`.
+- ⚠️ External ROM acceptance remains fixture-dependent: `external_rom_validation` skips required ROM runs when `LATCHBOY_ROM_ROOT` is unset/empty, so acceptance is only fully proven when fixtures are mounted in CI/local runs.
+- 🔧 Clarification: treat these acceptance bullets as satisfied by the required Milestone 2 `tests/rom_manifest.toml` entries plus CPU interrupt-focused unit/integration tests.
+
 **Milestone 2 completion gate (linked validation docs)**
 - Validation runbook + fixture/manifest contract: `tests/README.md`.
 - Required CI check run name: `CI / rust-checks` (workflow `.github/workflows/ci.yml`, job `rust-checks`).
@@ -141,6 +147,10 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Enforce per-ROM cycle/frame/wall-time limits.
 - [x] **CI gate behavior**
   - [x] Fail CI (external validation flow) when any required Milestone 2 ROM case fails.
+
+**Refinements for upcoming milestones**
+- [ ] Expand the required ROM manifest set as Milestones 3–5 land (timers, interrupt edge-cases, boot behavior, and early PPU/input interactions), while preserving deterministic execution budgets.
+- [ ] Document CI fixture provisioning for `LATCHBOY_ROM_ROOT` in contributor docs to avoid false-green local runs that skip external ROM execution.
 
 ## Milestone 4 — PPU (Graphics Pipeline)
 
@@ -295,13 +305,14 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 1. Cartridge + Bus + save-data plumbing baseline
 2. CPU core (full opcode coverage + deterministic timing scaffolding)
-3. Timers + Interrupt controller integration + boot/no-boot startup defaults
-4. PPU timing + DMA + input integration (first visual/playability milestone)
-5. Serial test-output support (to unlock Blargg/Mooneye automation feedback loops)
-6. Frontend minimum playable loop hardening (controls UX, `.sav` lifecycle checkpoints, reset/hot-reload behavior)
-7. APU
-8. Compatibility hardening and CI automation of ROM suites
-9. Optional CGB/link/platform enhancements
+3. External validation harness + CI gate hardening (Milestone 3.5, already landed; continue extending with each milestone)
+4. Timers + interrupt controller integration + boot/no-boot startup defaults
+5. PPU timing + DMA + input integration (first visual/playability milestone; implement DMA alongside early PPU work even though listed under Milestone 5)
+6. Serial test-output support (to unlock Blargg/Mooneye automation feedback loops)
+7. Frontend minimum playable loop hardening (controls UX, `.sav` lifecycle checkpoints, reset/hot-reload behavior)
+8. APU
+9. Compatibility hardening and CI automation of ROM suites
+10. Optional CGB/link/platform enhancements
 
 ---
 
