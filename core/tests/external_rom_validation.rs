@@ -447,10 +447,9 @@ fn rom_manifest_registers_required_milestone_2_and_3_suites() {
         "manifest must include at least one required milestone 3 timer-adjacent ROM entry"
     );
     assert!(
-        manifest
-            .roms
-            .iter()
-            .any(|rom| rom.required && rom.milestone == 3 && rom.suite == "mooneye_acceptance_timer"),
+        manifest.roms.iter().any(|rom| rom.required
+            && rom.milestone == 3
+            && rom.suite == "mooneye_acceptance_timer"),
         "manifest must include at least one required milestone 3 Mooneye timer ROM entry"
     );
     assert!(
