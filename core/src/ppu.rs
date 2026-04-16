@@ -57,19 +57,47 @@ impl Default for Ppu {
 }
 
 impl Ppu {
+    fn current_mode(&self) -> u8 {
+        self.stat & 0x03
+    }
+
+    fn vram_accessible(&self) -> bool {
+        self.current_mode() != 0x03
+    }
+
+    fn oam_accessible(&self) -> bool {
+        !matches!(self.current_mode(), 0x02 | 0x03)
+    }
+
     pub fn read_vram(&self, address: u16) -> u8 {
+        if !self.vram_accessible() {
+            return 0xFF;
+        }
+
         self.vram[(address - VRAM_START) as usize]
     }
 
     pub fn write_vram(&mut self, address: u16, value: u8) {
+        if !self.vram_accessible() {
+            return;
+        }
+
         self.vram[(address - VRAM_START) as usize] = value;
     }
 
     pub fn read_oam(&self, address: u16) -> u8 {
+        if !self.oam_accessible() {
+            return 0xFF;
+        }
+
         self.oam[(address - OAM_START) as usize]
     }
 
     pub fn write_oam(&mut self, address: u16, value: u8) {
+        if !self.oam_accessible() {
+            return;
+        }
+
         self.oam[(address - OAM_START) as usize] = value;
     }
 
@@ -147,5 +175,38 @@ mod tests {
 
         ppu.write_register(LY_REGISTER, 0x99);
         assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
+    }
+
+    #[test]
+    fn vram_access_is_blocked_during_mode_3() {
+        let mut ppu = Ppu::default();
+
+        ppu.write_vram(0x8000, 0x12);
+        assert_eq!(ppu.read_vram(0x8000), 0x12);
+
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        assert_eq!(ppu.read_vram(0x8000), 0xFF);
+
+        ppu.write_vram(0x8000, 0x34);
+        ppu.stat &= !0x03;
+        assert_eq!(ppu.read_vram(0x8000), 0x12);
+    }
+
+    #[test]
+    fn oam_access_is_blocked_during_modes_2_and_3() {
+        let mut ppu = Ppu::default();
+
+        ppu.write_oam(0xFE00, 0x56);
+        assert_eq!(ppu.read_oam(0xFE00), 0x56);
+
+        ppu.stat = (ppu.stat & !0x03) | 0x02;
+        assert_eq!(ppu.read_oam(0xFE00), 0xFF);
+        ppu.write_oam(0xFE00, 0x78);
+
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        assert_eq!(ppu.read_oam(0xFE00), 0xFF);
+
+        ppu.stat &= !0x03;
+        assert_eq!(ppu.read_oam(0xFE00), 0x56);
     }
 }
