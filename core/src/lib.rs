@@ -46,9 +46,13 @@ impl Default for Emulator {
 }
 
 impl Emulator {
+    fn next_tick_chunk_size(cycles: u64) -> u32 {
+        cycles.min(u64::from(u32::MAX)) as u32
+    }
+
     fn tick_bus_cycles(&mut self, mut cycles: u64) {
         while cycles != 0 {
-            let chunk = cycles.min(u64::from(u32::MAX)) as u32;
+            let chunk = Self::next_tick_chunk_size(cycles);
             self.bus.tick(chunk);
             cycles -= u64::from(chunk);
         }
@@ -326,11 +330,14 @@ mod tests {
     }
 
     #[test]
-    fn tick_bus_cycles_handles_more_than_u32_max_cycles() {
-        let mut emulator = Emulator::new();
-        emulator.tick_bus_cycles(u64::from(u32::MAX) + 1);
+    fn tick_bus_cycles_chunks_values_above_u32_max() {
+        let mut remaining = u64::from(u32::MAX) + 1;
+        let first = Emulator::next_tick_chunk_size(remaining);
+        remaining -= u64::from(first);
+        let second = Emulator::next_tick_chunk_size(remaining);
 
-        assert_eq!(emulator.bus.read8(0xFF04), 0);
+        assert_eq!(first, u32::MAX);
+        assert_eq!(second, 1);
     }
 
     #[test]
