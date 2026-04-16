@@ -144,6 +144,20 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Timer test ROMs pass.
 - Boot/no-boot paths both produce stable startup.
 
+**Acceptance status review (2026-04-16)**
+- ⚠️ `Timer test ROMs pass` is **not yet fully evidenced** by the current repo wiring. Timer edge/overflow/reload behavior is covered by unit tests in `core/src/timer.rs`, but `tests/rom_manifest.toml` currently only requires Milestone 2 ROM suites and does not yet include required timer-focused ROM entries.
+- ✅ `Boot/no-boot paths both produce stable startup` is satisfied by in-tree tests covering DMG post-boot defaults, explicit boot ROM execution/unmapping via `FF50`, and reset behavior across startup modes.
+- 🔧 To fully close Milestone 3 acceptance, add required Milestone 3 external ROM entries (timer + interrupt edge cases) to `tests/rom_manifest.toml` and run them under `external_rom_validation` with `LATCHBOY_ROM_ROOT` fixtures.
+
+**Milestone 3 completion gate (proposed)**
+- Required ROM classes in `tests/rom_manifest.toml`:
+  - Blargg `instr_timing` timer-adjacent coverage (required, milestone = 3).
+  - Mooneye timer/interrupt edge-case subset (required, milestone = 3; no-PPU dependency set).
+  - Boot path smoke cases (required, milestone = 3; pass signal documented in manifest comments).
+- Required CI evidence:
+  - `cargo test --workspace --all-targets` with `LATCHBOY_ROM_ROOT` set in the CI environment that runs external ROM validation.
+  - Green check for `CI / rust-checks` on the target commit.
+
 ---
 
 ## Milestone 3.5 — External Validation Harness
@@ -178,6 +192,10 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Sprite rendering**
   - [ ] OAM priority, X/Y offsets, flipping, palette selection.
   - [ ] 8x8 and 8x16 object modes.
+- [ ] **OAM DMA dependency (moved earlier from Milestone 5)**
+  - [ ] Implement DMA transfer register `FF46`.
+  - [ ] Model CPU bus contention/timing impact during DMA.
+  - [ ] Add targeted tests for sprite fetch correctness under DMA activity.
 - [ ] **Framebuffer output**
   - [ ] DMG 4-shade palette mapping.
   - [ ] VBlank frame-ready signal to frontend.
@@ -193,12 +211,23 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Joypad input (FF00)**
   - [ ] Button matrix selection and polling.
   - [ ] Joypad interrupt generation.
-- [ ] **DMA transfer (FF46)**
-  - [ ] OAM DMA timing and CPU bus impact.
 
 **Acceptance criteria**
 - Input works consistently in at least 3 games.
-- DMA-sensitive sprite behavior is correct in test ROMs.
+- Joypad interrupt behavior passes targeted ROM/unit tests and works consistently in at least 3 games.
+
+---
+
+## Backlog sequencing refinements (2026-04-16)
+
+- [ ] **Tighten milestone-to-validation mapping**
+  - [ ] For each milestone from 3 onward, define at least one required external ROM suite entry (`tests/rom_manifest.toml`) before marking the milestone complete.
+  - [ ] Keep deferred/non-required entries explicit, with a note describing the dependency (e.g., PPU mode timing not yet in scope).
+- [ ] **Normalize acceptance criteria wording**
+  - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
+- [ ] **Document blocking dependencies directly inside milestones**
+  - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
+  - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
 
 ---
 
