@@ -227,7 +227,7 @@ fn check_pass_condition(emulator: &Emulator, rom: &RomEntry) -> PassCheck {
         PassCondition::BlarggRegisters => {
             let signature = [
                 emulator.bus().read8(emulator.cpu().pc()),
-                emulator.bus().read8(emulator.cpu().pc() + 1),
+                emulator.bus().read8(emulator.cpu().pc().wrapping_add(1)),
             ];
 
             if signature != [0x18, 0xFE] {
