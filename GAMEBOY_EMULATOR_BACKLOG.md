@@ -188,7 +188,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] LY/LYC compare and STAT interrupt triggers.
 - [ ] **Background/window rendering**
   - [x] Tile fetching and map addressing.
-  - [ ] Scroll/window positioning rules.
+  - [x] Scroll/window positioning rules.
 - [ ] **Sprite rendering**
   - [ ] OAM priority, X/Y offsets, flipping, palette selection.
   - [ ] 8x8 and 8x16 object modes.

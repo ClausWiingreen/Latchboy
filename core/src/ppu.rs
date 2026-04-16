@@ -32,6 +32,8 @@ const STAT_LYC_EQUAL_BIT: u8 = 0x04;
 const STAT_MODE_MASK: u8 = 0x03;
 const LCDC_ENABLED_BIT: u8 = 0x80;
 const LCDC_BG_ENABLE_BIT: u8 = 0x01;
+const LCDC_WINDOW_ENABLE_BIT: u8 = 0x20;
+const LCDC_WINDOW_TILE_MAP_SELECT_BIT: u8 = 0x40;
 const LCDC_BG_TILE_MAP_SELECT_BIT: u8 = 0x08;
 const LCDC_BG_TILE_DATA_SELECT_BIT: u8 = 0x10;
 const INTERRUPT_VBLANK_BIT: u8 = 0x01;
@@ -90,6 +92,14 @@ impl Default for Ppu {
 }
 
 impl Ppu {
+    fn window_map_base_offset(&self) -> usize {
+        if (self.lcdc & LCDC_WINDOW_TILE_MAP_SELECT_BIT) != 0 {
+            BG_MAP_1_OFFSET
+        } else {
+            BG_MAP_0_OFFSET
+        }
+    }
+
     fn bg_map_base_offset(&self) -> usize {
         if (self.lcdc & LCDC_BG_TILE_MAP_SELECT_BIT) != 0 {
             BG_MAP_1_OFFSET
@@ -292,20 +302,36 @@ impl Ppu {
     /// - Selects tile data addressing mode from LCDC bit 4 (unsigned `0x8000` region or
     ///   signed indexing around `0x9000`).
     /// - Applies scroll offsets using `SCX/SCY`.
+    /// - Applies window positioning using `WX/WY` with the DMG `WX-7` rule when enabled.
     pub fn background_pixel_color_id(&self, screen_x: u8, screen_y: u8) -> u8 {
         if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
             return 0;
         }
 
-        let bg_x = screen_x.wrapping_add(self.scx);
-        let bg_y = screen_y.wrapping_add(self.scy);
-        let tile_col = (bg_x / 8) as usize;
-        let tile_row = (bg_y / 8) as usize;
-        let row_in_tile = bg_y % 8;
-        let pixel_in_tile = 7 - (bg_x % 8);
+        let window_visible = (self.lcdc & LCDC_WINDOW_ENABLE_BIT) != 0
+            && u16::from(screen_y) >= u16::from(self.wy)
+            && u16::from(self.wx) <= 166
+            && (u16::from(screen_x) + 7) >= u16::from(self.wx);
+
+        let (map_base, fetch_x, fetch_y) = if window_visible {
+            let window_x = (u16::from(screen_x) + 7 - u16::from(self.wx)) as u8;
+            let window_y = screen_y.wrapping_sub(self.wy);
+            (self.window_map_base_offset(), window_x, window_y)
+        } else {
+            (
+                self.bg_map_base_offset(),
+                screen_x.wrapping_add(self.scx),
+                screen_y.wrapping_add(self.scy),
+            )
+        };
+
+        let tile_col = (fetch_x / 8) as usize;
+        let tile_row = (fetch_y / 8) as usize;
+        let row_in_tile = fetch_y % 8;
+        let pixel_in_tile = 7 - (fetch_x % 8);
 
         let map_index = tile_row * 32 + tile_col;
-        let tile_index = self.vram[self.bg_map_base_offset() + map_index];
+        let tile_index = self.vram[map_base + map_index];
         let tile_row_offset = self.tile_data_row_offset(tile_index, row_in_tile);
         let low = self.vram[tile_row_offset];
         let high = self.vram[tile_row_offset + 1];
@@ -643,5 +669,45 @@ mod tests {
         ppu.write_vram(0x8031, 0b1000_0000);
 
         assert_eq!(ppu.background_pixel_color_id(0, 0), 2);
+    }
+
+    #[test]
+    fn background_pixel_fetch_uses_window_when_positioned_on_screen() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT
+                | LCDC_WINDOW_ENABLE_BIT
+                | LCDC_WINDOW_TILE_MAP_SELECT_BIT
+                | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(WX_REGISTER, 7);
+        ppu.write_register(WY_REGISTER, 0);
+
+        ppu.write_vram(0x9C00, 0x04);
+        ppu.write_vram(0x8040, 0b1000_0000);
+        ppu.write_vram(0x8041, 0b1000_0000);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 3);
+    }
+
+    #[test]
+    fn background_pixel_fetch_ignores_window_when_hidden_by_position() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_WINDOW_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(WX_REGISTER, 167);
+        ppu.write_register(WY_REGISTER, 0);
+
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x9C00, 0x02);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0b0000_0000);
+        ppu.write_vram(0x8020, 0b0000_0000);
+        ppu.write_vram(0x8021, 0b1000_0000);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 1);
     }
 }
