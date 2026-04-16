@@ -187,7 +187,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Mode 2 (OAM search), Mode 3 (drawing), Mode 0 (HBlank), Mode 1 (VBlank).
   - [x] LY/LYC compare and STAT interrupt triggers.
 - [ ] **Background/window rendering**
-  - [ ] Tile fetching and map addressing.
+  - [x] Tile fetching and map addressing.
   - [ ] Scroll/window positioning rules.
 - [ ] **Sprite rendering**
   - [ ] OAM priority, X/Y offsets, flipping, palette selection.
