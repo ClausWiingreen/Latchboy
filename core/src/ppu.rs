@@ -125,11 +125,6 @@ impl Ppu {
         self.stat_irq_line_high = next_line_high;
     }
 
-    fn set_mode_with_interrupt_tracking(&mut self, mode: u8, interrupt_flag: &mut u8) {
-        self.set_mode(mode);
-        self.update_stat_irq_line(Some(interrupt_flag));
-    }
-
     fn vram_accessible(&self) -> bool {
         self.current_mode() != 0x03
     }
@@ -301,7 +296,7 @@ impl Ppu {
             *interrupt_flag |= INTERRUPT_VBLANK_BIT;
         }
 
-        self.set_mode_with_interrupt_tracking(next_mode, interrupt_flag);
+        self.set_mode(next_mode);
         self.update_lyc_coincidence_flag();
         self.update_stat_irq_line(Some(interrupt_flag));
     }
@@ -518,5 +513,34 @@ mod tests {
 
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert!(ppu.take_stat_irq_pending());
+    }
+
+    #[test]
+    fn stat_line_handoff_between_sources_does_not_create_spurious_edge() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, 0x80);
+        ppu.write_register(LYC_REGISTER, 0x01);
+        ppu.write_register(
+            STAT_REGISTER,
+            STAT_MODE_0_INTERRUPT_BIT | STAT_COINCIDENCE_INTERRUPT_BIT,
+        );
+
+        for _ in 0..(CYCLES_PER_SCANLINE - 1) {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x00);
+
+        interrupt_flag = 0;
+        ppu.step(&mut interrupt_flag);
+
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(0x01));
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
+        assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, 0);
     }
 }
