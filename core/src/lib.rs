@@ -46,6 +46,14 @@ impl Default for Emulator {
 }
 
 impl Emulator {
+    fn tick_bus_cycles(&mut self, mut cycles: u64) {
+        while cycles != 0 {
+            let chunk = cycles.min(u64::from(u32::MAX)) as u32;
+            self.bus.tick(chunk);
+            cycles -= u64::from(chunk);
+        }
+    }
+
     /// Creates a new emulator with a minimal ROM-only cartridge.
     pub fn new() -> Self {
         Self::from_cartridge(default_rom_only_cartridge())
@@ -117,7 +125,7 @@ impl Emulator {
                             interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
                         },
                     ));
-                    self.bus.tick(halted_advance as u32);
+                    self.tick_bus_cycles(halted_advance);
                     available += halted_advance;
                     break;
                 }
@@ -139,7 +147,7 @@ impl Emulator {
             };
 
             let cycles_taken = self.cpu.step(&mut self.bus);
-            self.bus.tick(cycles_taken);
+            self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
 
             observer.on_event(EmulatorEvent::CpuStep(CpuStepObservation {
@@ -315,6 +323,14 @@ mod tests {
         emulator.step_cycles(256);
 
         assert_eq!(emulator.bus.read8(0xFF04), div_before.wrapping_add(1));
+    }
+
+    #[test]
+    fn tick_bus_cycles_handles_more_than_u32_max_cycles() {
+        let mut emulator = Emulator::new();
+        emulator.tick_bus_cycles(u64::from(u32::MAX) + 1);
+
+        assert_eq!(emulator.bus.read8(0xFF04), 0);
     }
 
     #[test]
