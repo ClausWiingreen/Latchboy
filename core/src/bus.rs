@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::ppu::Ppu;
+use crate::ppu::{Ppu, DMA_REGISTER};
 use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
 
 const VRAM_START: u16 = 0x8000;
@@ -74,6 +74,8 @@ pub struct Bus {
 }
 
 impl Bus {
+    const OAM_DMA_BYTES: u16 = 0xA0;
+
     pub fn new(cartridge: Cartridge) -> Self {
         Self {
             cartridge,
@@ -175,6 +177,9 @@ impl Bus {
                     if self.boot_rom_enabled && value != 0 {
                         self.boot_rom_enabled = false;
                     }
+                } else if address == DMA_REGISTER {
+                    self.ppu.write_register(address, value);
+                    self.start_oam_dma(value);
                 } else if matches!(
                     address,
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
@@ -192,6 +197,54 @@ impl Bus {
             }
             HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize] = value,
             INTERRUPT_ENABLE_REGISTER => self.interrupt_enable = value,
+        }
+    }
+
+    fn read8_for_dma_source(&self, address: u16) -> u8 {
+        match address {
+            0x0000..=0x7FFF => {
+                if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
+                    return self
+                        .boot_rom
+                        .as_ref()
+                        .and_then(|rom| rom.get(address as usize))
+                        .copied()
+                        .unwrap_or(0xFF);
+                }
+
+                self.cartridge.read(address)
+            }
+            VRAM_START..=0x9FFF => self.ppu.read_vram(address),
+            EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
+            WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
+            WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
+            OAM_START..=OAM_END => self.ppu.read_oam(address),
+            UNUSABLE_START..=UNUSABLE_END => 0xFF,
+            IO_REGISTERS_START..=IO_REGISTERS_END => {
+                if address == BOOT_ROM_DISABLE_REGISTER {
+                    self.boot_rom_disable_value
+                } else if matches!(
+                    address,
+                    DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
+                ) {
+                    self.timer.read(address)
+                } else if let Some(value) = self.ppu.read_register(address) {
+                    value
+                } else {
+                    self.io_registers[(address - IO_REGISTERS_START) as usize]
+                }
+            }
+            HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize],
+            INTERRUPT_ENABLE_REGISTER => self.interrupt_enable,
+        }
+    }
+
+    fn start_oam_dma(&mut self, source_high: u8) {
+        let source_base = u16::from(source_high) << 8;
+        for offset in 0..Self::OAM_DMA_BYTES {
+            let source_address = source_base.wrapping_add(offset);
+            let value = self.read8_for_dma_source(source_address);
+            self.ppu.dma_write_oam(offset as u8, value);
         }
     }
 
@@ -383,5 +436,39 @@ mod tests {
         bus.write8(crate::ppu::STAT_REGISTER, 0x20);
 
         assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x02, 0);
+    }
+
+    #[test]
+    fn write_to_ff46_transfers_a0_bytes_into_oam() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        for offset in 0..0xA0u16 {
+            bus.write8(0xC000 + offset, offset as u8);
+        }
+
+        bus.write8(DMA_REGISTER, 0xC0);
+
+        for offset in 0..0xA0u16 {
+            assert_eq!(bus.read8(0xFE00 + offset), offset as u8);
+        }
+    }
+
+    #[test]
+    fn dma_transfer_bypasses_oam_cpu_access_restrictions() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+
+        while (bus.read8(crate::ppu::STAT_REGISTER) & 0x03) != 0x03 {
+            bus.tick(1);
+        }
+
+        bus.write8(0xC000, 0xDE);
+        bus.write8(DMA_REGISTER, 0xC0);
+
+        bus.tick(200);
+
+        assert_eq!(bus.read8(0xFE00), 0xDE);
     }
 }

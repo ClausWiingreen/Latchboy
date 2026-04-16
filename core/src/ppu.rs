@@ -240,6 +240,10 @@ impl Ppu {
         self.oam[(address - OAM_START) as usize] = value;
     }
 
+    pub fn dma_write_oam(&mut self, offset: u8, value: u8) {
+        self.oam[offset as usize] = value;
+    }
+
     pub fn read_register(&self, address: u16) -> Option<u8> {
         let value = match address {
             LCDC_REGISTER => self.lcdc,
@@ -573,6 +577,17 @@ mod tests {
 
         ppu.stat &= !0x03;
         assert_eq!(ppu.read_oam(0xFE00), 0x56);
+    }
+
+    #[test]
+    fn dma_write_oam_bypasses_mode_restrictions() {
+        let mut ppu = Ppu::default();
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+
+        ppu.dma_write_oam(0, 0xAB);
+
+        ppu.stat &= !0x03;
+        assert_eq!(ppu.read_oam(0xFE00), 0xAB);
     }
 
     #[test]
