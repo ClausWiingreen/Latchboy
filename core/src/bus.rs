@@ -23,6 +23,39 @@ const OAM_SIZE: usize = 0xA0;
 const IO_REGISTERS_SIZE: usize = 0x80;
 const HRAM_SIZE: usize = 0x7F;
 const BOOT_ROM_SIZE: usize = 0x100;
+const NO_BOOT_DEFAULTS: &[(u16, u8)] = &[
+    (0xFF05, 0x00),
+    (0xFF06, 0x00),
+    (0xFF07, 0x00),
+    (0xFF10, 0x80),
+    (0xFF11, 0xBF),
+    (0xFF12, 0xF3),
+    (0xFF14, 0xBF),
+    (0xFF16, 0x3F),
+    (0xFF17, 0x00),
+    (0xFF19, 0xBF),
+    (0xFF1A, 0x7F),
+    (0xFF1B, 0xFF),
+    (0xFF1C, 0x9F),
+    (0xFF1E, 0xBF),
+    (0xFF20, 0xFF),
+    (0xFF21, 0x00),
+    (0xFF22, 0x00),
+    (0xFF23, 0xBF),
+    (0xFF24, 0x77),
+    (0xFF25, 0xF3),
+    (0xFF26, 0xF1),
+    (0xFF40, 0x91),
+    (0xFF42, 0x00),
+    (0xFF43, 0x00),
+    (0xFF45, 0x00),
+    (0xFF47, 0xFC),
+    (0xFF48, 0xFF),
+    (0xFF49, 0xFF),
+    (0xFF4A, 0x00),
+    (0xFF4B, 0x00),
+    (0xFFFF, 0x00),
+];
 
 /// DMG address bus with full address-range mapping and WRAM echo behavior.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -109,6 +142,12 @@ impl Bus {
         self.io_registers = [0; IO_REGISTERS_SIZE];
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
+    }
+
+    pub fn apply_dmg_no_boot_defaults(&mut self) {
+        for (address, value) in NO_BOOT_DEFAULTS {
+            self.write8(*address, *value);
+        }
     }
 
     pub fn write8(&mut self, address: u16, value: u8) {

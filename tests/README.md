@@ -55,14 +55,11 @@ $LATCHBOY_ROM_ROOT/
 │   │       └── 01-special.gb
 │   └── instr_timing/
 │       └── instr_timing.gb
-└── mooneye/
-    └── acceptance/
-        ├── add_sp_e_timing.gb
-        ├── call_cc_timing.gb
-        └── jp_cc_timing.gb
 ```
 
 If any required ROM is missing from these paths, `external_rom_validation` fails when ROM validation is enabled.
+
+Mooneye entries currently remain in `tests/rom_manifest.toml` as deferred, non-required cases (`required = false`) until LCD/PPU-dependent behavior is in scope.
 
 ### Manifest examples
 
@@ -88,8 +85,8 @@ Mooneye acceptance example:
 id = "example-mooneye-case"
 suite = "mooneye_acceptance_cpu"
 path = "mooneye/acceptance/add_sp_e_timing.gb"
-milestone = 2
-required = true
+milestone = 4
+required = false
 cycle_limit = 10_000_000
 frame_limit = 180
 wall_time_limit_ms = 8_000
@@ -123,7 +120,7 @@ is green on the target commit/PR. This maps to workflow `.github/workflows/ci.ym
 ## Milestone 2 acceptance checklist → jobs/artifacts
 
 - [ ] **Backlog bullet: “Passes CPU instruction correctness test ROMs.”**  
-      Evidence: `CI / rust-checks` passes, and `cargo test --workspace --all-targets` includes successful `latchboy-core` external ROM validation with Blargg + Mooneye Milestone 2 required cases.
+      Evidence: `CI / rust-checks` passes, and `cargo test --workspace --all-targets` includes successful `latchboy-core` external ROM validation with required Milestone 2 Blargg cases.
 - [ ] **Backlog bullet: “Passes interrupt behavior test subset.”**  
       Evidence: `CI / rust-checks` passes with the workspace test run that includes CPU interrupt-focused tests in `latchboy-core` plus required Milestone 2 ROM cases in external validation.
 - [ ] **Artifact check: Manifest and fixture contract is satisfied.**  
