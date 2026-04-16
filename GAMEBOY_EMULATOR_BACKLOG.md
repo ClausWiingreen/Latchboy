@@ -100,6 +100,13 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Passes CPU instruction correctness test ROMs.
 - Passes interrupt behavior test subset.
 
+**Milestone 2 completion gate (linked validation docs)**
+- Validation runbook + fixture/manifest contract: `tests/README.md`.
+- Required CI check run name: `CI / rust-checks` (workflow `.github/workflows/ci.yml`, job `rust-checks`).
+- Acceptance bullet mapping:
+  - CPU instruction correctness ROM coverage → required Milestone 2 entries in `tests/rom_manifest.toml` exercised by `cargo test --workspace --all-targets` under `CI / rust-checks`.
+  - Interrupt behavior subset → CPU interrupt-focused tests in `latchboy-core` within the same workspace test invocation, plus required Milestone 2 external ROM validation entries.
+
 ---
 
 ## Milestone 3 — Timers, Interrupts, and Boot Sequence
