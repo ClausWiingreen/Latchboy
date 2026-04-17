@@ -198,7 +198,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Add targeted tests for sprite fetch correctness under DMA activity.
 - [ ] **Framebuffer output**
   - [x] DMG 4-shade palette mapping.
-  - [ ] VBlank frame-ready signal to frontend.
+  - [x] VBlank frame-ready signal to frontend.
 
 **Acceptance criteria**
 - PPU timing + rendering test ROMs mostly pass.

@@ -307,6 +307,10 @@ impl Bus {
     pub fn ppu_may_generate_interrupt(&self) -> bool {
         self.ppu.may_request_interrupt(self.interrupt_enable)
     }
+
+    pub fn take_frame_ready(&mut self) -> bool {
+        self.ppu.take_frame_ready()
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +458,8 @@ mod tests {
 
         assert_eq!(bus.read8(crate::ppu::LY_REGISTER), 144);
         assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & 0x01, 0);
+        assert!(bus.take_frame_ready());
+        assert!(!bus.take_frame_ready());
     }
 
     #[test]

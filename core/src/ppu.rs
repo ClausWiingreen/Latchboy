@@ -92,6 +92,7 @@ pub struct Ppu {
     scanline_dot: u16,
     stat_irq_line_high: bool,
     stat_irq_pending: bool,
+    frame_ready_pending: bool,
 }
 
 impl Default for Ppu {
@@ -114,6 +115,7 @@ impl Default for Ppu {
             scanline_dot: 0,
             stat_irq_line_high: false,
             stat_irq_pending: false,
+            frame_ready_pending: false,
         }
     }
 }
@@ -531,6 +533,12 @@ impl Ppu {
         pending
     }
 
+    pub fn take_frame_ready(&mut self) -> bool {
+        let pending = self.frame_ready_pending;
+        self.frame_ready_pending = false;
+        pending
+    }
+
     pub fn step(&mut self, interrupt_flag: &mut u8) {
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
             self.scanline_dot = 0;
@@ -561,6 +569,7 @@ impl Ppu {
 
         if previous_mode != 1 && next_mode == 1 {
             *interrupt_flag |= INTERRUPT_VBLANK_BIT;
+            self.frame_ready_pending = true;
         }
 
         self.set_mode(next_mode);
@@ -729,6 +738,8 @@ mod tests {
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x01);
         assert_eq!(interrupt_flag & INTERRUPT_VBLANK_BIT, INTERRUPT_VBLANK_BIT);
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
+        assert!(ppu.take_frame_ready());
+        assert!(!ppu.take_frame_ready());
     }
 
     #[test]

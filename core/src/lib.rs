@@ -224,6 +224,13 @@ impl Emulator {
         &self.bus
     }
 
+    /// Returns `true` once per rendered frame after the PPU enters VBlank.
+    ///
+    /// Frontends can poll this to know when a complete frame is ready for presentation.
+    pub fn take_frame_ready(&mut self) -> bool {
+        self.bus.take_frame_ready()
+    }
+
     /// Returns total cycles executed by this emulator instance.
     pub const fn total_cycles(&self) -> u64 {
         self.total_cycles
@@ -306,6 +313,17 @@ mod tests {
         assert_eq!(emulator.cpu().registers().a, 0x43);
         assert_eq!(emulator.bus().read8(0xC000), 0x42);
         assert_eq!(emulator.bus().read8(0xC001), 0x43);
+    }
+
+    #[test]
+    fn step_cycles_sets_single_frame_ready_signal_on_vblank_transition() {
+        let mut emulator = Emulator::new();
+        emulator.bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+
+        emulator.step_cycles(456 * 144);
+
+        assert!(emulator.take_frame_ready());
+        assert!(!emulator.take_frame_ready());
     }
 
     #[test]
