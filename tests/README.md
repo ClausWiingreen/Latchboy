@@ -199,6 +199,10 @@ For each curated title entry in a committed smoke summary artifact:
 - Failure semantics are required:
   - `pass_fail_reason` describing timeout, crash, incorrect visual state, or explicit pass signal match.
 
+Summary-level coverage requirement:
+
+- `titles` must include at least **2** entries (matching the curated 2–3 title baseline for Milestone 4 smoke coverage).
+
 Copyright and artifact policy for committed evidence:
 
 - ✅ Allowed: metadata JSON/TOML/Markdown summaries and deterministic hash values.
