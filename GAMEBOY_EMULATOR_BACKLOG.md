@@ -195,7 +195,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **OAM DMA dependency (moved earlier from Milestone 5)**
   - [x] Implement DMA transfer register `FF46`.
   - [x] Model CPU bus contention/timing impact during DMA.
-  - [ ] Add targeted tests for sprite fetch correctness under DMA activity.
+  - [x] Add targeted tests for sprite fetch correctness under DMA activity.
 - [ ] **Framebuffer output**
   - [ ] DMG 4-shade palette mapping.
   - [ ] VBlank frame-ready signal to frontend.
