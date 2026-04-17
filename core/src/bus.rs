@@ -75,6 +75,7 @@ pub struct Bus {
 
 impl Bus {
     const OAM_DMA_BYTES: u16 = 0xA0;
+    const MAX_DMA_SOURCE_HIGH: u8 = 0xF1;
 
     pub fn new(cartridge: Cartridge) -> Self {
         Self {
@@ -240,7 +241,7 @@ impl Bus {
     }
 
     fn start_oam_dma(&mut self, source_high: u8) {
-        let source_base = u16::from(source_high) << 8;
+        let source_base = u16::from(source_high.min(Self::MAX_DMA_SOURCE_HIGH)) << 8;
         for offset in 0..Self::OAM_DMA_BYTES {
             let source_address = source_base.wrapping_add(offset);
             let value = self.read8_for_dma_source(source_address);
@@ -495,6 +496,25 @@ mod tests {
             assert_eq!(
                 bus.read8(0xFE00 + offset),
                 0x80u8.wrapping_add(offset as u8)
+            );
+        }
+    }
+
+    #[test]
+    fn dma_transfer_clamps_out_of_range_ff46_source_pages() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        for offset in 0..0xA0u16 {
+            bus.write8(0xF100 + offset, 0x40u8.wrapping_add(offset as u8));
+        }
+
+        bus.write8(DMA_REGISTER, 0xFE);
+
+        for offset in 0..0xA0u16 {
+            assert_eq!(
+                bus.read8(0xFE00 + offset),
+                0x40u8.wrapping_add(offset as u8)
             );
         }
     }
