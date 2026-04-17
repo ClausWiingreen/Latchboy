@@ -225,6 +225,19 @@ impl Emulator {
         &self.bus
     }
 
+    /// Returns the loaded cartridge.
+    ///
+    /// Frontends can read battery-backed save RAM via [`Cartridge::save_data`] to persist
+    /// post-emulation cartridge state.
+    pub const fn cartridge(&self) -> &Cartridge {
+        self.bus.cartridge()
+    }
+
+    /// Returns mutable access to the loaded cartridge.
+    pub fn cartridge_mut(&mut self) -> &mut Cartridge {
+        self.bus.cartridge_mut()
+    }
+
     /// Returns `true` once per rendered frame after the PPU enters VBlank.
     ///
     /// Frontends can poll this to know when a complete frame is ready for presentation.
