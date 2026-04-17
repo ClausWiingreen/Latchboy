@@ -20,6 +20,8 @@ Runtime expectations/limitations for the desktop executable:
 - Launch with `cargo run -p latchboy-desktop -- /path/to/rom.gb`.
 - The frontend runs a cycle-stepping loop and presents frames into an internal
   `WindowSurface` abstraction when `take_frame_ready()` fires.
+- Enter `q` or `quit` on stdin to request a clean shutdown path so the frontend
+  returns from `main` and save persistence can run.
 - The current implementation does not open a host OS window yet; it is intended as
   a stable presentation scaffold that can be wired to a platform-specific window backend later.
 - Save-file load/persist semantics from `platform/desktop/src/savefile.rs` remain in place;

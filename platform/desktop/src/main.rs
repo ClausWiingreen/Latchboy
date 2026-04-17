@@ -1,7 +1,10 @@
 use std::env;
 use std::fs;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 
 use latchboy_core::cartridge::Cartridge;
 use latchboy_core::{Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_WIDTH};
@@ -70,9 +73,13 @@ fn main() -> ExitCode {
         save_path,
         persist_enabled,
     };
+    let quit_rx = spawn_quit_listener();
 
     let mut surface = WindowSurface::new(FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT);
     loop {
+        if quit_rx.try_recv().is_ok() {
+            break;
+        }
         runtime.emulator.step_cycles(STEP_CYCLES);
         if runtime.emulator.take_frame_ready() {
             if let Err(error) =
@@ -83,4 +90,27 @@ fn main() -> ExitCode {
             }
         }
     }
+
+    ExitCode::SUCCESS
+}
+
+fn spawn_quit_listener() -> Receiver<()> {
+    let (quit_tx, quit_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(command)
+                    if command.eq_ignore_ascii_case("q")
+                        || command.eq_ignore_ascii_case("quit") =>
+                {
+                    let _ = quit_tx.send(());
+                    return;
+                }
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+    });
+    quit_rx
 }
