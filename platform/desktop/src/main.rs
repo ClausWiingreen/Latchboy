@@ -12,7 +12,6 @@ use latchboy_desktop::savefile::{
 use latchboy_desktop::{present_latest_frame, WindowSurface, DMG_PALETTE_ARGB8888};
 
 const STEP_CYCLES: u32 = 4;
-const FRAME_BUDGET: usize = 300;
 
 struct SaveOnDrop {
     emulator: Emulator,
@@ -73,9 +72,7 @@ fn main() -> ExitCode {
     };
 
     let mut surface = WindowSurface::new(FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT);
-    let mut presented_frames = 0usize;
-
-    while presented_frames < FRAME_BUDGET {
+    loop {
         runtime.emulator.step_cycles(STEP_CYCLES);
         if runtime.emulator.take_frame_ready() {
             if let Err(error) =
@@ -84,15 +81,6 @@ fn main() -> ExitCode {
                 eprintln!("error: failed to present frame: {error}");
                 return ExitCode::FAILURE;
             }
-            presented_frames += 1;
         }
     }
-
-    println!(
-        "Rendered {presented_frames} frame(s) into a {}x{} surface.",
-        surface.width(),
-        surface.height()
-    );
-
-    ExitCode::SUCCESS
 }
