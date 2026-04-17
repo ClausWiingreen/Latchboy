@@ -6,7 +6,11 @@ use std::fmt;
 use latchboy_core::{Emulator, FRAMEBUFFER_LEN};
 
 const DMG_FRAME_CYCLES: u32 = 70_224;
-const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - 4;
+// `Emulator::step_cycles` advances by at least the requested cycles and can overshoot by
+// up to one CPU instruction. The longest currently implemented instruction is 24 cycles,
+// so leave that much headroom to avoid skipping past multiple frame-ready pulses in one step.
+const MAX_CPU_INSTRUCTION_CYCLES: u32 = 24;
+const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTION_CYCLES;
 
 /// Stable DMG palette in RGB888 (0x00RRGGBB), darkest shade last.
 pub const DMG_PALETTE_RGB: [u32; 4] = [0x00E0F8D0, 0x0088C070, 0x00346856, 0x00081820];
