@@ -21,6 +21,10 @@ use observability::{
 };
 use std::hash::{Hash, Hasher};
 
+pub const FRAMEBUFFER_WIDTH: usize = 160;
+pub const FRAMEBUFFER_HEIGHT: usize = 144;
+pub const FRAMEBUFFER_PIXELS: usize = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT;
+
 /// Top-level emulator state container for subsystem wiring.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Emulator {
@@ -229,6 +233,18 @@ impl Emulator {
     /// Frontends can poll this to know when a complete frame is ready for presentation.
     pub fn take_frame_ready(&mut self) -> bool {
         self.bus.take_frame_ready()
+    }
+
+    /// Captures the latest DMG shade framebuffer into a fixed-size array.
+    pub fn framebuffer_shades(&self) -> [u8; FRAMEBUFFER_PIXELS] {
+        let mut frame = [0; FRAMEBUFFER_PIXELS];
+        self.bus.framebuffer_shades(&mut frame);
+        frame
+    }
+
+    /// Returns battery-backed save data for the loaded cartridge, when available.
+    pub fn save_data(&self) -> Option<Vec<u8>> {
+        self.bus.cartridge_save_data()
     }
 
     /// Returns total cycles executed by this emulator instance.
