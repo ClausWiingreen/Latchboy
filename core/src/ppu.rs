@@ -319,6 +319,7 @@ impl Ppu {
                     self.ly = 0;
                     self.set_mode(0x00);
                     self.clear_framebuffer();
+                    self.frame_ready_pending = false;
                     self.update_lyc_coincidence_flag();
                 }
 
@@ -888,6 +889,32 @@ mod tests {
         ppu.write_register(LCDC_REGISTER, 0x00);
 
         assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0));
+    }
+
+    #[test]
+    fn disabling_lcd_discards_pending_frame_ready_pulse() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(BGP_REGISTER, 0xE4);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0xFF);
+        ppu.write_vram(0x8011, 0x00);
+
+        let cycles_to_vblank = usize::from(CYCLES_PER_SCANLINE) * usize::from(VISIBLE_SCANLINES);
+        for _ in 0..cycles_to_vblank {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert!(ppu.framebuffer()[0] != 0);
+        assert!(ppu.frame_ready_pending);
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0));
+        assert!(!ppu.take_frame_ready());
     }
 
     #[test]

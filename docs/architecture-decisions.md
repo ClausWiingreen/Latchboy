@@ -110,6 +110,8 @@ Expose a deterministic, PPU-owned framebuffer from the core API:
   boundary after all visible scanlines have been composited into the framebuffer.
 - Disabling LCD (`LCDC.7 = 0`) clears the framebuffer to shade `0` (blank/white), matching
   per-pixel APIs that return blank while LCD is off.
+- Disabling LCD also clears any unconsumed `frame_ready` pulse so the signal cannot reference a
+  frame that is no longer present in the framebuffer.
 
 ### API/ownership contract
 
