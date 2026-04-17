@@ -270,13 +270,21 @@ impl Bus {
     }
 
     fn is_cpu_bus_access_blocked_by_oam_dma(&self, address: u16) -> bool {
-        let is_interrupt_register = matches!(
-            address,
-            crate::interrupts::FLAG_REGISTER | crate::interrupts::ENABLE_REGISTER
-        );
-        self.is_oam_dma_active()
-            && !(HRAM_START..=HRAM_END).contains(&address)
-            && !is_interrupt_register
+        self.is_oam_dma_active() && !(HRAM_START..=HRAM_END).contains(&address)
+    }
+
+    pub(crate) fn interrupt_flag(&self) -> u8 {
+        let interrupt_flag_index = (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+        self.io_registers[interrupt_flag_index]
+    }
+
+    pub(crate) const fn interrupt_enable(&self) -> u8 {
+        self.interrupt_enable
+    }
+
+    pub(crate) fn clear_interrupt_flag_bits(&mut self, mask: u8) {
+        let interrupt_flag_index = (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+        self.io_registers[interrupt_flag_index] &= !mask;
     }
 
     pub fn tick(&mut self, cycles: u32) {
@@ -599,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn oam_dma_does_not_block_cpu_access_to_if_and_ie_registers() {
+    fn oam_dma_blocks_cpu_access_to_if_and_ie_registers() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);
 
@@ -607,13 +615,14 @@ mod tests {
         bus.write8(crate::interrupts::ENABLE_REGISTER, 0x1F);
         bus.write8(DMA_REGISTER, 0xC0);
 
-        assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0x12);
-        assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0x1F);
+        assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0xFF);
+        assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0xFF);
 
         bus.write8(crate::interrupts::FLAG_REGISTER, 0x00);
         bus.write8(crate::interrupts::ENABLE_REGISTER, 0x00);
 
-        assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0x00);
-        assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0x00);
+        bus.tick(640);
+        assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0x12);
+        assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0x1F);
     }
 }

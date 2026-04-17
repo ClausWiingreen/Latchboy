@@ -596,9 +596,7 @@ impl Cpu {
     }
 
     fn pending_interrupts(&self, bus: &Bus) -> u8 {
-        bus.read8(interrupts::FLAG_REGISTER)
-            & bus.read8(interrupts::ENABLE_REGISTER)
-            & interrupts::MASK
+        bus.interrupt_flag() & bus.interrupt_enable() & interrupts::MASK
     }
 
     fn service_interrupt(&mut self, bus: &mut Bus, pending_interrupts: u8) -> u32 {
@@ -606,8 +604,7 @@ impl Cpu {
         let interrupt_mask = 1 << interrupt_index;
         let vector = interrupts::VECTORS[interrupt_index as usize];
 
-        let interrupt_flags = bus.read8(interrupts::FLAG_REGISTER);
-        bus.write8(interrupts::FLAG_REGISTER, interrupt_flags & !interrupt_mask);
+        bus.clear_interrupt_flag_bits(interrupt_mask as u8);
 
         self.ime = false;
         self.ime_enable_pending = false;
@@ -1668,6 +1665,25 @@ mod tests {
         assert!(cpu.halted());
         assert_eq!(cpu.pc(), 0x0001);
         assert_eq!(cpu.last_unimplemented_opcode(), Some(0xD3));
+    }
+
+    #[test]
+    fn interrupt_service_clears_if_even_while_oam_dma_blocks_cpu_bus_access() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[0x00]); // NOP (must not execute)
+
+        cpu.pc = 0x1234;
+        cpu.ime = true;
+        bus.write8(interrupts::ENABLE_REGISTER, 0x01);
+        bus.write8(interrupts::FLAG_REGISTER, 0x01);
+        bus.write8(crate::ppu::DMA_REGISTER, 0xC0);
+
+        let cycles = cpu.step(&mut bus);
+
+        assert_eq!(cycles, 20);
+        assert_eq!(cpu.pc(), 0x0040);
+        assert_eq!(cpu.sp(), 0xFFFC);
+        assert_eq!(bus.interrupt_flag() & 0x01, 0x00);
     }
 
     #[test]
