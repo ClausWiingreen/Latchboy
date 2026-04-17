@@ -184,6 +184,8 @@ at:
 
 For each curated title entry in a committed smoke summary artifact:
 
+- `title_id` is required:
+  - Stable, non-empty identifier for the title record (for example, `tetris-world`).
 - `run.json` object is required:
   - `commit_sha`, `rom_id`, `runner_command`, `frame_limit`, `wall_time_limit_ms`.
 - `summary.json` object is required:
