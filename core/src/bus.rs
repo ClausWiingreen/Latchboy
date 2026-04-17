@@ -315,6 +315,14 @@ impl Bus {
     pub fn composited_pixel_shade(&self, x: u8, y: u8) -> u8 {
         self.ppu.composited_pixel_shade(x, y)
     }
+  
+    /// Returns the latest completed/partially-rendered PPU framebuffer snapshot view.
+    ///
+    /// The underlying storage is owned by the PPU and remains valid for the lifetime of
+    /// this bus borrow.
+    pub fn framebuffer_pixels(&self) -> &[u8] {
+        self.ppu.framebuffer_pixels()
+    }
 }
 
 #[cfg(test)]

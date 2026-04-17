@@ -58,6 +58,76 @@ frame_limit = 240
 wall_time_limit_ms = 8_000
 pass_condition = "mooneye_registers"
 
+# Required for Milestone 4 completion (PPU-targeted external ROM validation).
+
+[[roms]]
+id = "mooneye-acceptance-ppu-intr-2-mode0-timing"
+suite = "mooneye_acceptance_ppu"
+path = "mooneye/acceptance/ppu/intr_2_mode0_timing.gb"
+milestone = 4
+required = true
+cycle_limit = 14_000_000
+frame_limit = 240
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+[[roms]]
+id = "mooneye-acceptance-ppu-intr-2-oam-ok-timing"
+suite = "mooneye_acceptance_ppu"
+path = "mooneye/acceptance/ppu/intr_2_oam_ok_timing.gb"
+milestone = 4
+required = true
+cycle_limit = 14_000_000
+frame_limit = 240
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+[[roms]]
+id = "mooneye-acceptance-ppu-stat-irq-blocking"
+suite = "mooneye_acceptance_ppu"
+path = "mooneye/acceptance/ppu/stat_irq_blocking.gb"
+milestone = 4
+required = true
+cycle_limit = 14_000_000
+frame_limit = 240
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+[[roms]]
+id = "mooneye-acceptance-ppu-lyc-onoff"
+suite = "mooneye_acceptance_ppu"
+path = "mooneye/acceptance/ppu/lyc_onoff.gb"
+milestone = 4
+required = true
+cycle_limit = 14_000_000
+frame_limit = 240
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+# Optional/deferred Milestone 4 coverage (kept non-blocking until dependencies land).
+
+[[roms]]
+id = "mooneye-acceptance-ppu-intr-1-2-timing"
+suite = "mooneye_acceptance_ppu"
+path = "mooneye/acceptance/ppu/intr_1_2_timing.gb"
+milestone = 4
+required = false # Deferred: depends on exact VBlank transition sequencing around mode-1 entry.
+cycle_limit = 14_000_000
+frame_limit = 240
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
+[[roms]]
+id = "mooneye-acceptance-oam-sprite-priority"
+suite = "mooneye_acceptance_oam_dma"
+path = "mooneye/acceptance/oam_dma/sources-GS.gb"
+milestone = 4
+required = false # Deferred: sprite/background priority plus OAM contention interactions are still being tuned.
+cycle_limit = 16_000_000
+frame_limit = 260
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
 [[roms]]
 id = "mooneye-acceptance-add-sp-e-timing"
 suite = "mooneye_acceptance_cpu"

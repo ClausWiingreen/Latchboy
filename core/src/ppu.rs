@@ -25,6 +25,9 @@ const TOTAL_SCANLINES: u8 = 154;
 const MODE2_CYCLES: u16 = 80;
 const MODE3_CYCLES: u16 = 172;
 const MODE0_CYCLES_END: u16 = MODE2_CYCLES + MODE3_CYCLES;
+pub const FRAMEBUFFER_WIDTH: usize = 160;
+pub const FRAMEBUFFER_HEIGHT: usize = 144;
+pub const FRAMEBUFFER_LEN: usize = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT;
 
 const STAT_COINCIDENCE_INTERRUPT_BIT: u8 = 0x40;
 const STAT_MODE_2_INTERRUPT_BIT: u8 = 0x20;
@@ -92,6 +95,18 @@ pub struct Ppu {
     scanline_dot: u16,
     stat_irq_line_high: bool,
     stat_irq_pending: bool,
+    /// Most recently rendered DMG frame in row-major order (`y * 160 + x`).
+    ///
+    /// Pixel format is a DMG shade index per byte:
+    /// - `0` = white
+    /// - `1` = light gray
+    /// - `2` = dark gray
+    /// - `3` = black
+    ///
+    /// The PPU owns this storage for the lifetime of the `Ppu`. Consumers can borrow
+    /// read-only views through [`Self::framebuffer`] / [`Self::framebuffer_pixels`] and
+    /// should snapshot/copy if they need to retain frame data beyond a mutable emulator tick.
+    framebuffer: [u8; FRAMEBUFFER_LEN],
     frame_ready_pending: bool,
 }
 
@@ -115,6 +130,7 @@ impl Default for Ppu {
             scanline_dot: 0,
             stat_irq_line_high: false,
             stat_irq_pending: false,
+            framebuffer: [0; FRAMEBUFFER_LEN],
             frame_ready_pending: false,
         }
     }
@@ -302,6 +318,8 @@ impl Ppu {
                     self.scanline_dot = 0;
                     self.ly = 0;
                     self.set_mode(0x00);
+                    self.clear_framebuffer();
+                    self.frame_ready_pending = false;
                     self.update_lyc_coincidence_flag();
                 }
 
@@ -539,6 +557,33 @@ impl Ppu {
         pending
     }
 
+    /// Returns the owned framebuffer as a fixed-size row-major array.
+    ///
+    /// Layout contract: `index = y * 160 + x`, where `x ∈ 0..160`, `y ∈ 0..144`.
+    /// Each byte is a DMG shade index `0..=3`.
+    pub const fn framebuffer(&self) -> &[u8; FRAMEBUFFER_LEN] {
+        &self.framebuffer
+    }
+
+    /// Returns the owned framebuffer as a flat pixel slice.
+    ///
+    /// This is equivalent to [`Self::framebuffer`] but convenient for generic APIs
+    /// that consume `&[u8]`.
+    pub fn framebuffer_pixels(&self) -> &[u8] {
+        &self.framebuffer
+    }
+
+    fn render_visible_scanline(&mut self, scanline: u8) {
+        let row_base = usize::from(scanline) * FRAMEBUFFER_WIDTH;
+        for x in 0..FRAMEBUFFER_WIDTH {
+            self.framebuffer[row_base + x] = self.composited_pixel_shade(x as u8, scanline);
+        }
+    }
+
+    fn clear_framebuffer(&mut self) {
+        self.framebuffer = [0; FRAMEBUFFER_LEN];
+    }
+
     pub fn step(&mut self, interrupt_flag: &mut u8) {
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
             self.scanline_dot = 0;
@@ -566,6 +611,10 @@ impl Ppu {
         } else {
             0
         };
+
+        if previous_mode == 3 && next_mode == 0 && self.ly < VISIBLE_SCANLINES {
+            self.render_visible_scanline(self.ly);
+        }
 
         if previous_mode != 1 && next_mode == 1 {
             *interrupt_flag |= INTERRUPT_VBLANK_BIT;
@@ -739,6 +788,132 @@ mod tests {
         assert_eq!(interrupt_flag & INTERRUPT_VBLANK_BIT, INTERRUPT_VBLANK_BIT);
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
         assert!(ppu.take_frame_ready());
+        assert!(!ppu.take_frame_ready());
+    }
+
+    #[test]
+    fn framebuffer_has_expected_size_and_row_major_layout() {
+        let ppu = Ppu::default();
+
+        assert_eq!(ppu.framebuffer().len(), FRAMEBUFFER_LEN);
+        assert_eq!(ppu.framebuffer_pixels().len(), FRAMEBUFFER_LEN);
+        assert_eq!(FRAMEBUFFER_WIDTH, 160);
+        assert_eq!(FRAMEBUFFER_HEIGHT, 144);
+        assert_eq!(FRAMEBUFFER_LEN, 160 * 144);
+        assert_eq!(
+            FRAMEBUFFER_WIDTH * (FRAMEBUFFER_HEIGHT - 1) + (FRAMEBUFFER_WIDTH - 1),
+            FRAMEBUFFER_LEN - 1
+        );
+    }
+
+    #[test]
+    fn framebuffer_updates_as_scanlines_complete() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(BGP_REGISTER, 0xE4);
+
+        ppu.write_vram(0x9800, 0x01);
+        for row in 0..8u16 {
+            ppu.write_vram(0x8010 + row * 2, 0xFF);
+            ppu.write_vram(0x8011 + row * 2, 0x00);
+            ppu.write_vram(0x8020 + row * 2, 0x00);
+            ppu.write_vram(0x8021 + row * 2, 0xFF);
+        }
+
+        for _ in 0..MODE0_CYCLES_END {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.framebuffer()[0], 1);
+        assert_eq!(ppu.framebuffer()[FRAMEBUFFER_WIDTH], 0);
+
+        ppu.write_vram(0x9800, 0x02);
+        for _ in 0..CYCLES_PER_SCANLINE {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.framebuffer()[FRAMEBUFFER_WIDTH], 2);
+    }
+
+    #[test]
+    fn frame_ready_is_single_pulse_per_frame_with_coherent_framebuffer() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(BGP_REGISTER, 0xE4);
+
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x9A20, 0x02);
+        ppu.write_vram(0x8010, 0xFF);
+        ppu.write_vram(0x8011, 0x00);
+        ppu.write_vram(0x802e, 0x00);
+        ppu.write_vram(0x802f, 0xFF);
+
+        let cycles_to_vblank = usize::from(CYCLES_PER_SCANLINE) * usize::from(VISIBLE_SCANLINES);
+        for _ in 0..cycles_to_vblank {
+            ppu.step(&mut interrupt_flag);
+        }
+
+        assert!(ppu.take_frame_ready());
+        assert!(!ppu.take_frame_ready());
+        assert_eq!(ppu.framebuffer()[0], 1);
+        assert_eq!(
+            ppu.framebuffer()[FRAMEBUFFER_WIDTH * (FRAMEBUFFER_HEIGHT - 1)],
+            2
+        );
+    }
+
+    #[test]
+    fn disabling_lcd_clears_framebuffer_to_blank() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(BGP_REGISTER, 0xE4);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0xFF);
+        ppu.write_vram(0x8011, 0x00);
+
+        for _ in 0..MODE0_CYCLES_END {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.framebuffer()[0], 1);
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0));
+    }
+
+    #[test]
+    fn disabling_lcd_discards_pending_frame_ready_pulse() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(BGP_REGISTER, 0xE4);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0xFF);
+        ppu.write_vram(0x8011, 0x00);
+
+        let cycles_to_vblank = usize::from(CYCLES_PER_SCANLINE) * usize::from(VISIBLE_SCANLINES);
+        for _ in 0..cycles_to_vblank {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert!(ppu.framebuffer()[0] != 0);
+        assert!(ppu.frame_ready_pending);
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0));
         assert!(!ppu.take_frame_ready());
     }
 
