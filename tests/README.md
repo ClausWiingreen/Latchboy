@@ -174,6 +174,33 @@ readiness, not full gameplay coverage.
 > Commercial ROM binaries must remain local-only and must not be committed to this repository.
 > See `docs/rom-usage-policy.md` for licensing and distribution rules.
 
+### Committed smoke evidence schema (metadata + hashes only)
+
+Milestone 4 closure requires a committed, machine-readable smoke summary that contains **only**
+metadata and deterministic hash evidence (no frame/image/video assets). The canonical schema lives
+at:
+
+- `tests/artifacts/milestone4-smoke-summary.schema.json`
+
+For each curated title entry in a committed smoke summary artifact:
+
+- `run.json` object is required (or equivalently named run metadata object with identical fields):
+  - `commit_sha`, `rom_id`, `runner_command`, `frame_limit`, `wall_time_limit_ms`.
+- `summary.json` object is required (or equivalently named summary metadata object with identical fields):
+  - `status` (`PASS`/`FAIL`), `checkpoint_frame_index`, `pass_fail_reason`.
+- Hash evidence is required:
+  - `hash_window` with `algorithm`, `start_frame`, `end_frame`, `sample_stride`, and `hashes`.
+- Checkpoint evidence is required:
+  - `checkpoint_frame_index` integer for the observed pass/fail checkpoint frame.
+- Failure semantics are required:
+  - `pass_fail_reason` describing timeout, crash, incorrect visual state, or explicit pass signal match.
+
+Copyright and artifact policy for committed evidence:
+
+- ✅ Allowed: metadata JSON/TOML/Markdown summaries and deterministic hash values.
+- ❌ Forbidden: copyrighted commercial frame captures (`final_frame.png`, `frames/`, raw video, GIFs)
+  in git history, PR attachments, issues, or public CI artifacts.
+
 ### Curated title checkpoints (2–3 title baseline)
 
 Use this baseline matrix unless a release branch explicitly documents overrides:

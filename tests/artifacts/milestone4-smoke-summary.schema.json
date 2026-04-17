@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tests/artifacts/milestone4-smoke-summary.schema.json",
+  "title": "Milestone 4 Smoke Summary (Metadata + Hashes Only)",
+  "description": "Committed smoke evidence for Milestone 4 closure. This schema allows deterministic metadata and hash evidence only and explicitly excludes copyrighted frame/image/video assets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "milestone",
+    "generated_at_utc",
+    "schema_version",
+    "titles"
+  ],
+  "properties": {
+    "milestone": {
+      "type": "integer",
+      "const": 4
+    },
+    "generated_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "notes": {
+      "type": "string"
+    },
+    "titles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/titleEvidence"
+      }
+    }
+  },
+  "$defs": {
+    "titleEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "title_id",
+        "run.json",
+        "summary.json",
+        "hash_window"
+      ],
+      "properties": {
+        "title_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "run.json": {
+          "$ref": "#/$defs/runMetadata"
+        },
+        "summary.json": {
+          "$ref": "#/$defs/summaryMetadata"
+        },
+        "hash_window": {
+          "$ref": "#/$defs/hashWindow"
+        },
+        "pass_window": {
+          "$ref": "#/$defs/passWindow"
+        },
+        "copyrighted_assets_committed": {
+          "type": "boolean",
+          "const": false,
+          "description": "Must always be false. Committed smoke evidence may not include commercial frame/image/video captures."
+        }
+      }
+    },
+    "runMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit_sha",
+        "rom_id",
+        "runner_command",
+        "frame_limit",
+        "wall_time_limit_ms"
+      ],
+      "properties": {
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "rom_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runner_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "frame_limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "wall_time_limit_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "summaryMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "checkpoint_frame_index",
+        "pass_fail_reason"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        },
+        "checkpoint_frame_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pass_fail_reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "hashWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "start_frame",
+        "end_frame",
+        "sample_stride",
+        "hashes"
+      ],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "minLength": 1
+        },
+        "start_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sample_stride": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hashes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "frame_index",
+              "hash"
+            ],
+            "properties": {
+              "frame_index": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "hash": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "passWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start_frame",
+        "end_frame"
+      ],
+      "properties": {
+        "start_frame": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_frame": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
