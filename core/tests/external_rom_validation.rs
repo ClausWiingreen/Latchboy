@@ -424,6 +424,14 @@ fn required_roms_through_milestone<'a>(
         .collect()
 }
 
+fn required_roms_for_milestone(manifest: &RomManifest, milestone: u8) -> Vec<&RomEntry> {
+    manifest
+        .roms
+        .iter()
+        .filter(|rom| rom.required && rom.milestone == milestone)
+        .collect()
+}
+
 #[test]
 fn rom_manifest_registers_required_milestone_2_3_and_4_suites() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
@@ -451,8 +459,11 @@ fn rom_manifest_registers_required_milestone_2_3_and_4_suites() {
         "manifest must include at least one deferred Mooneye CPU acceptance ROM entry"
     );
     assert!(
-        manifest.roms.iter().any(|rom| rom.milestone == 4),
-        "manifest must include at least one milestone 4 ROM entry"
+        manifest
+            .roms
+            .iter()
+            .any(|rom| rom.required && rom.milestone == 4),
+        "manifest must include at least one required milestone 4 ROM entry"
     );
     assert!(
         manifest
@@ -556,10 +567,15 @@ fn required_milestone_2_3_and_4_roms_pass_under_external_validation_flow() {
     );
 
     let required_m2_m3_m4_roms = required_roms_through_milestone(&manifest, 4);
+    let required_m4_roms = required_roms_for_milestone(&manifest, 4);
 
     assert!(
         !required_m2_m3_m4_roms.is_empty(),
         "manifest must define required milestone 2/3/4 ROM cases"
+    );
+    assert!(
+        !required_m4_roms.is_empty(),
+        "manifest must define at least one required milestone 4 ROM case"
     );
 
     for rom in &required_m2_m3_m4_roms {
@@ -596,10 +612,15 @@ fn required_milestone_2_3_and_4_rom_runs_are_deterministic() {
     };
 
     let required_m2_m3_m4_roms = required_roms_through_milestone(&manifest, 4);
+    let required_m4_roms = required_roms_for_milestone(&manifest, 4);
 
     assert!(
         !required_m2_m3_m4_roms.is_empty(),
         "manifest must define required milestone 2/3/4 ROM cases"
+    );
+    assert!(
+        !required_m4_roms.is_empty(),
+        "manifest must define at least one required milestone 4 ROM case"
     );
 
     for rom in required_m2_m3_m4_roms {

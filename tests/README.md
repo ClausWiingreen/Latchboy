@@ -73,7 +73,7 @@ If any **required** ROM is missing from these paths, `external_rom_validation` f
 Milestone 3 uses `mooneye/acceptance/timer/div_write.gb` as a required timer edge-case gate.
 `mooneye/acceptance/timer/rapid_toggle.gb` is intentionally deferred (`required = false`) until tighter edge-case behavior is in scope.
 
-Milestone 4 currently tracks deferred CPU-adjacent Mooneye timing fixtures (`add_sp_e_timing.gb`, `call_cc_timing.gb`, `jp_cc_timing.gb`) in the manifest.
+Milestone 4 also tracks deferred CPU-adjacent Mooneye timing fixtures (`add_sp_e_timing.gb`, `call_cc_timing.gb`, `jp_cc_timing.gb`) in the manifest.
 
 ## Required Milestone 4 fixture paths (source of truth)
 
@@ -86,6 +86,9 @@ Do **not** infer required Milestone 4 fixtures from the full tree above. The sou
 At the time of writing, the required Milestone 4 gate is the Mooneye PPU acceptance subset
 (`mooneye/acceptance/ppu/*.gb`). Keep your mounted fixture directory aligned with those required
 manifest paths; deferred Milestone 4 entries must not be treated as required CI blockers.
+
+`core/tests/external_rom_validation.rs` enforces this contract by asserting at least one required
+Milestone 4 manifest entry exists before running required-suite pass/fail and determinism gates.
 
 To list required Milestone 4 paths directly from the manifest:
 
