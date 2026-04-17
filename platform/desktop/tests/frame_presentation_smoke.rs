@@ -82,3 +82,13 @@ fn blit_maps_all_shades_into_expected_palette_entries() {
     assert_eq!(dst[2], DMG_PALETTE_RGB[2]);
     assert_eq!(dst[3], DMG_PALETTE_RGB[3]);
 }
+
+#[test]
+fn emulation_loop_rejects_zero_cycle_step() {
+    let mut emulator = Emulator::new();
+    let mut presenter = HeadlessPresenter::new(1);
+
+    let error = run_emulation_loop(&mut emulator, &mut presenter, 0, Some(1), Some(8))
+        .expect_err("zero cycle step should be rejected");
+    assert_eq!(error.to_string(), "cycle_step must be greater than zero");
+}

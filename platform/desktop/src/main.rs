@@ -133,20 +133,23 @@ fn main() -> ExitCode {
     let iteration_budget = iteration_budget_for_frames(frame_budget, 1_024);
     let mut surface = WindowSurface::new(frame_budget);
 
-    if let Err(error) = run_emulation_loop(
+    let frames_presented = match run_emulation_loop(
         &mut runtime.emulator,
         &mut surface,
         1_024,
         Some(frame_budget),
         Some(iteration_budget),
     ) {
-        eprintln!("error: emulation loop aborted: {error}");
-        return ExitCode::FAILURE;
-    }
+        Ok(frames) => frames,
+        Err(error) => {
+            eprintln!("error: emulation loop aborted: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     println!(
         "Latchboy desktop frame loop completed: rendered {} frames into {}x{} surface",
-        frame_budget, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
+        frames_presented, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
     );
     ExitCode::SUCCESS
 }

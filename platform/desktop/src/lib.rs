@@ -71,6 +71,7 @@ pub trait FramePresenter {
 
 #[derive(Debug)]
 pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
+    InvalidCycleStep,
     FrameBlit(FrameBlitError),
     Present(E),
 }
@@ -78,6 +79,7 @@ pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
 impl<E: Error + Send + Sync + 'static> fmt::Display for EmulationRunError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidCycleStep => write!(f, "cycle_step must be greater than zero"),
             Self::FrameBlit(error) => write!(f, "{error}"),
             Self::Present(error) => write!(f, "frame presentation failed: {error}"),
         }
@@ -96,6 +98,10 @@ pub fn run_emulation_loop<P: FramePresenter>(
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
 ) -> Result<u64, EmulationRunError<P::Error>> {
+    if cycle_step == 0 {
+        return Err(EmulationRunError::InvalidCycleStep);
+    }
+
     let mut surface = vec![0u32; FRAMEBUFFER_LEN];
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
