@@ -29,7 +29,7 @@
     },
     "titles": {
       "type": "object",
-      "description": "Map of title_id -> title evidence. Object keys enforce distinct title entries.",
+      "description": "Map of title_id -> title evidence. Object keys are the canonical title identifiers and enforce distinct title entries.",
       "minProperties": 2,
       "propertyNames": {
         "type": "string",
@@ -45,17 +45,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "title_id",
         "run.json",
         "summary.json",
         "hash_window",
         "copyrighted_assets_committed"
       ],
       "properties": {
-        "title_id": {
-          "type": "string",
-          "minLength": 1
-        },
         "run.json": {
           "$ref": "#/$defs/runMetadata"
         },

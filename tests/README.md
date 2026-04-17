@@ -187,11 +187,10 @@ For a committed smoke summary artifact:
 - `titles` is required and must be an object map keyed by `title_id` (for example,
   `tetris-world`, `super-mario-land-world`).
 - Because `titles` is key-addressed, each title entry is distinct by key (no duplicate title rows).
+- The map key is the canonical `title_id`; do not duplicate a separate `title_id` field inside the value object.
 
 For each `titles.<title_id>` entry:
 
-- `title_id` is required:
-  - Stable, non-empty identifier for the title record (for example, `tetris-world`).
 - `run.json` object is required:
   - `commit_sha`, `rom_id`, `runner_command`, `frame_limit`, `wall_time_limit_ms`.
 - `summary.json` object is required:
