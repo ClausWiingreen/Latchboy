@@ -203,21 +203,21 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 **Implementation review notes (2026-04-17)**
 - Core PPU implementation covers milestone building blocks in-tree: LCD register surface (`FF40–FF4B`), mode stepping (2/3/0/1), LY/LYC + STAT edge behavior, background/window tile fetch rules, sprite selection/priority/flip handling (including 8x16), and DMG palette shade mapping.
 - OAM DMA is integrated in the bus and already moved to this milestone scope: writing `FF46` performs a 160-byte transfer, models CPU bus blocking (except HRAM) for the DMA contention window, and has targeted unit-test coverage for bus blocking and sprite visibility under DMA writes.
-- The current rendering surface is still pixel-query based (`background_pixel_shade` / `composited_pixel_shade`) plus a frame-ready flag; there is not yet a committed scanline/framebuffer pipeline that writes a full 160x144 frame buffer each frame for frontend consumption.
-- Existing external ROM manifest entries tagged `milestone = 4` are currently CPU timing cases and are marked non-required; they do not validate PPU timing or rendering behavior.
+- A concrete framebuffer contract now exists in `core`: a row-major 160x144 DMG shade buffer owned by the PPU, with explicit frame-ready pulse semantics and desktop-side RGB blit integration in `platform/desktop`.
+- `tests/rom_manifest.toml` now includes required Milestone 4 Mooneye PPU entries (mode timing + STAT behavior), plus explicit deferred non-required cases for still-in-progress edge behavior.
+- In-tree desktop presentation is now a minimal frame loop (headless-friendly surface presenter) rather than a pure scaffold; this supports deterministic frame-ready consumption but does not yet provide interactive window/input UX.
 
 **Acceptance criteria**
 - PPU timing + rendering test ROMs mostly pass.
 - Several commercial titles render readable menus/UI.
 
-**Acceptance status review (2026-04-17)**
-- ⚠️ `PPU timing + rendering test ROMs mostly pass` is **not yet evidenced** by required ROM coverage. Current `tests/rom_manifest.toml` does not require any PPU-focused suites for Milestone 4, so this acceptance bullet cannot be treated as closed yet.
-- ⚠️ `Several commercial titles render readable menus/UI` is **not yet evidenced** in-repo. The desktop frontend remains a scaffold without a present loop that blits composited frames from the core, so this criterion remains open.
-- 🔧 Missing Milestone 4 closure items:
-  - Define a concrete framebuffer contract in `core` (dimensions, pixel format, ownership/lifetime, frame boundary semantics).
-  - Add required Milestone 4 ROM manifest entries for PPU mode timing, STAT behavior, and sprite/background priority interactions.
-  - Add at least a small curated title smoke list (e.g., 2–3 boot-to-menu checkpoints) with deterministic success signals documented in `tests/README.md`.
-  - Wire desktop/frontend presentation path to consume the frame output and verify readable UI rendering.
+**Acceptance status review (2026-04-17, updated)**
+- ⚠️ `PPU timing + rendering test ROMs mostly pass` is **partially evidenced**: required Milestone 4 PPU ROMs are now registered in the manifest, but the current external validation tests only assert required suites for Milestones 2/3. Milestone 4 required entries are therefore not yet enforced by a dedicated automated gate.
+- ⚠️ `Several commercial titles render readable menus/UI` is **still open**: the title smoke matrix is documented in `tests/README.md`, but no committed smoke-run result artifacts or CI/local gate currently prove all listed title checkpoints.
+- 🔧 Remaining Milestone 4 closure items:
+  - Extend `external_rom_validation` manifest gate assertions to include required Milestone 4 PPU suites and budgets.
+  - Add a repeatable smoke-run summary artifact format that can be checked in (metadata + hashes only, no copyrighted frames) and require it for Milestone 4 closure.
+  - Promote the minimal desktop frame loop to a real interactive presentation path (window + event/input plumbing) before using commercial title readability as a hard gate.
 
 ---
 
@@ -233,19 +233,27 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ---
 
-## Backlog sequencing refinements (2026-04-16)
+## Backlog sequencing refinements (2026-04-17)
 
 - [ ] **Tighten milestone-to-validation mapping**
   - [ ] For each milestone from 3 onward, define at least one required external ROM suite entry (`tests/rom_manifest.toml`) before marking the milestone complete.
   - [ ] Keep deferred/non-required entries explicit, with a note describing the dependency (e.g., PPU mode timing not yet in scope).
+- [ ] **Close the “registered vs enforced” validation gap**
+  - [ ] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
+  - [ ] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
 - [ ] **Normalize acceptance criteria wording**
   - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
+- [ ] **Clarify “evidence of completion” artifacts**
+  - [ ] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
+  - [ ] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them.
 - [ ] **Document blocking dependencies directly inside milestones**
   - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
   - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
-- [ ] **Milestone 4 closure contract (new)**
-  - [ ] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
-  - [ ] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
+- [ ] **Milestone 4 closure contract**
+  - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
+  - [ ] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
+  - [x] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
+  - [ ] Require a machine-readable smoke summary file (title → PASS/FAIL + frame checkpoint + hash window) for milestone sign-off.
   - [ ] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
 
 ---
