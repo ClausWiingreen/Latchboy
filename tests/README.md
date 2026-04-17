@@ -184,8 +184,10 @@ at:
 
 For a committed smoke summary artifact:
 
-- `titles` is required and must be an object map keyed by `title_id` (for example,
-  `tetris-world`, `super-mario-land-world`).
+- `titles` is required and must be an object map keyed by curated Milestone 4 `title_id` values:
+  - `tetris-world`
+  - `super-mario-land-world`
+  - `legend-of-zelda-links-awakening-world`
 - Because `titles` is key-addressed, each title entry is distinct by key (no duplicate title rows).
 - The map key is the canonical `title_id`; do not duplicate a separate `title_id` field inside the value object.
 
@@ -196,7 +198,7 @@ For each `titles.<title_id>` entry:
 - `summary.json` object is required:
   - `status` (`PASS`/`FAIL`), `checkpoint_frame_index`, `pass_fail_reason`.
 - Hash evidence is required:
-  - `hash_window` with `algorithm`, `start_frame`, `end_frame`, `sample_stride`, and `hashes`.
+  - `hash_window` with `algorithm`, `start_frame`, `frame_count`, `sample_stride`, and `hashes`.
 - Explicit non-asset attestation is required:
   - `copyrighted_assets_committed` must be present and set to `false` for each title entry.
 - Checkpoint evidence is required:
@@ -243,7 +245,7 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
    - Execution log (`runner.log`): stdout/stderr and timeout/pass status.
    - Local-only visual capture (`final_frame.png` + required `frames/` sequence for any consecutive-frame pass check).
    - `frame_hash.txt` containing either per-frame hashes or a deterministic rolling hash window for the exact frame range used in pass/fail assertions.
-   - `pass_window.json` describing the exact frame interval used for each assertion (for example, Tetris 120-frame window start/end).
+   - `pass_window.json` describing the exact frame interval used for each assertion using `start_frame` + `frame_count` (for example, Tetris 120-frame window).
 3. **Record outcome per title** in `summary.md` inside the same timestamped directory with:
    - `PASS`/`FAIL`.
    - Observed checkpoint frame number.

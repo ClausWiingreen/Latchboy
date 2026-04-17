@@ -216,7 +216,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - ⚠️ `Several commercial titles render readable menus/UI` is **still open**: the title smoke matrix is documented in `tests/README.md`, but no committed smoke-run result artifacts or CI/local gate currently prove all listed title checkpoints.
 - 🔧 Remaining Milestone 4 closure items:
   - Extend `external_rom_validation` manifest gate assertions to include required Milestone 4 PPU suites and budgets.
-  - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`end_frame`/`sample_stride`/`hashes`) for Milestone 4 closure.
+  - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
   - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
   - Promote the minimal desktop frame loop to a real interactive presentation path (window + event/input plumbing) before using commercial title readability as a hard gate.
 

@@ -29,11 +29,16 @@
     },
     "titles": {
       "type": "object",
-      "description": "Map of title_id -> title evidence. Object keys are the canonical title identifiers and enforce distinct title entries.",
+      "description": "Map of curated Milestone 4 title_id -> title evidence. Object keys are canonical identifiers and enforce distinct title entries.",
       "minProperties": 2,
+      "maxProperties": 3,
       "propertyNames": {
         "type": "string",
-        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+        "enum": [
+          "tetris-world",
+          "super-mario-land-world",
+          "legend-of-zelda-links-awakening-world"
+        ]
       },
       "additionalProperties": {
         "$ref": "#/$defs/titleEvidence"
@@ -135,7 +140,7 @@
       "required": [
         "algorithm",
         "start_frame",
-        "end_frame",
+        "frame_count",
         "sample_stride",
         "hashes"
       ],
@@ -148,9 +153,9 @@
           "type": "integer",
           "minimum": 0
         },
-        "end_frame": {
+        "frame_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1
         },
         "sample_stride": {
           "type": "integer",
@@ -185,16 +190,16 @@
       "additionalProperties": false,
       "required": [
         "start_frame",
-        "end_frame"
+        "frame_count"
       ],
       "properties": {
         "start_frame": {
           "type": "integer",
           "minimum": 0
         },
-        "end_frame": {
+        "frame_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 1
         }
       }
     }
