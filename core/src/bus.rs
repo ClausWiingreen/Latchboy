@@ -71,10 +71,12 @@ pub struct Bus {
     timer: Timer,
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
+    oam_dma_cycles_remaining: u16,
 }
 
 impl Bus {
     const OAM_DMA_BYTES: u16 = 0xA0;
+    const OAM_DMA_CPU_BLOCK_CYCLES: u16 = 0xA0;
 
     pub fn new(cartridge: Cartridge) -> Self {
         Self {
@@ -88,6 +90,7 @@ impl Bus {
             timer: Timer::default(),
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
+            oam_dma_cycles_remaining: 0,
         }
     }
 
@@ -103,6 +106,10 @@ impl Bus {
     }
 
     pub fn read8(&self, address: u16) -> u8 {
+        if self.is_cpu_bus_access_blocked_by_oam_dma(address) {
+            return 0xFF;
+        }
+
         match address {
             0x0000..=0x7FFF => {
                 if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
@@ -152,6 +159,7 @@ impl Bus {
         self.timer = Timer::default();
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
+        self.oam_dma_cycles_remaining = 0;
     }
 
     pub fn apply_dmg_no_boot_defaults(&mut self) {
@@ -161,6 +169,10 @@ impl Bus {
     }
 
     pub fn write8(&mut self, address: u16, value: u8) {
+        if self.is_cpu_bus_access_blocked_by_oam_dma(address) {
+            return;
+        }
+
         match address {
             0x0000..=0x7FFF => self.cartridge.write(address, value),
             VRAM_START..=0x9FFF => self.ppu.write_vram(address, value),
@@ -247,10 +259,22 @@ impl Bus {
             let value = self.read8_for_dma_source(source_address);
             self.ppu.dma_write_oam(offset as u8, value);
         }
+        self.oam_dma_cycles_remaining = Self::OAM_DMA_CPU_BLOCK_CYCLES;
+    }
+
+    fn is_oam_dma_active(&self) -> bool {
+        self.oam_dma_cycles_remaining != 0
+    }
+
+    fn is_cpu_bus_access_blocked_by_oam_dma(&self, address: u16) -> bool {
+        self.is_oam_dma_active() && !(HRAM_START..=HRAM_END).contains(&address)
     }
 
     pub fn tick(&mut self, cycles: u32) {
         for _ in 0..cycles {
+            if self.oam_dma_cycles_remaining != 0 {
+                self.oam_dma_cycles_remaining -= 1;
+            }
             let interrupt_flag_index =
                 (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
             self.ppu.step(&mut self.io_registers[interrupt_flag_index]);
@@ -449,6 +473,7 @@ mod tests {
         }
 
         bus.write8(DMA_REGISTER, 0xC0);
+        bus.tick(160);
 
         for offset in 0..0xA0u16 {
             assert_eq!(bus.read8(0xFE00 + offset), offset as u8);
@@ -510,6 +535,7 @@ mod tests {
         }
 
         bus.write8(DMA_REGISTER, 0xC0);
+        bus.tick(160);
 
         for offset in 0..0xA0u16 {
             assert_eq!(
@@ -529,6 +555,7 @@ mod tests {
         }
 
         bus.write8(DMA_REGISTER, 0xFE);
+        bus.tick(160);
 
         for offset in 0..0xA0u16 {
             assert_eq!(
@@ -536,5 +563,29 @@ mod tests {
                 0x60u8.wrapping_add(offset as u8)
             );
         }
+    }
+
+    #[test]
+    fn oam_dma_blocks_cpu_bus_access_outside_hram_for_its_transfer_window() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.write8(0xC123, 0x42);
+        bus.write8(DMA_REGISTER, 0xC0);
+
+        assert_eq!(bus.read8(0xC123), 0xFF);
+        bus.write8(0xC123, 0x99);
+        assert_eq!(bus.read8(0xC123), 0xFF);
+
+        bus.write8(0xFF80, 0x12);
+        assert_eq!(bus.read8(0xFF80), 0x12);
+
+        bus.tick(159);
+        assert_eq!(bus.read8(0xC123), 0xFF);
+
+        bus.tick(1);
+        assert_eq!(bus.read8(0xC123), 0x42);
+        bus.write8(0xC123, 0x99);
+        assert_eq!(bus.read8(0xC123), 0x99);
     }
 }
