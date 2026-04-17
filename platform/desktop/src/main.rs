@@ -15,7 +15,7 @@ use latchboy_desktop::savefile::{
 use latchboy_desktop::{run_emulation_loop, FramePresenter};
 
 struct SaveOnDrop {
-    cartridge: Cartridge,
+    emulator: Emulator,
     save_path: PathBuf,
     persist_enabled: bool,
 }
@@ -23,7 +23,7 @@ struct SaveOnDrop {
 impl Drop for SaveOnDrop {
     fn drop(&mut self) {
         if self.persist_enabled {
-            persist_save_data(&self.cartridge, &self.save_path);
+            persist_save_data(self.emulator.cartridge(), &self.save_path);
         }
     }
 }
@@ -117,17 +117,20 @@ fn main() -> ExitCode {
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
     let persist_enabled = should_persist_after_load(load_status);
 
-    let runtime = SaveOnDrop {
-        cartridge,
+    let mut runtime = SaveOnDrop {
+        emulator: Emulator::from_cartridge(cartridge),
         save_path,
         persist_enabled,
     };
-
-    let mut emulator = Emulator::from_cartridge(runtime.cartridge.clone());
     let frame_budget = frame_budget_from_env();
     let mut surface = WindowSurface::new(frame_budget);
 
-    if let Err(error) = run_emulation_loop(&mut emulator, &mut surface, 1_024, Some(frame_budget)) {
+    if let Err(error) = run_emulation_loop(
+        &mut runtime.emulator,
+        &mut surface,
+        1_024,
+        Some(frame_budget),
+    ) {
         eprintln!("error: emulation loop aborted: {error}");
         return ExitCode::FAILURE;
     }

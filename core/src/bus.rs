@@ -319,6 +319,16 @@ impl Bus {
     pub fn framebuffer_pixels(&self) -> &[u8] {
         self.ppu.framebuffer_pixels()
     }
+
+    /// Returns the loaded cartridge backing this bus.
+    pub const fn cartridge(&self) -> &Cartridge {
+        &self.cartridge
+    }
+
+    /// Returns mutable access to the loaded cartridge backing this bus.
+    pub fn cartridge_mut(&mut self) -> &mut Cartridge {
+        &mut self.cartridge
+    }
 }
 
 #[cfg(test)]
