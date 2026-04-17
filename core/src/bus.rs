@@ -76,7 +76,10 @@ pub struct Bus {
 
 impl Bus {
     const OAM_DMA_BYTES: u16 = 0xA0;
-    const OAM_DMA_CPU_BLOCK_CYCLES: u16 = 0xA0;
+    // OAM DMA copies 160 bytes and blocks CPU bus access for 160 machine cycles.
+    // The rest of the core tracks time in single clock (T-cycle) steps, so this
+    // window must span 160 * 4 = 640 ticks.
+    const OAM_DMA_CPU_BLOCK_CYCLES: u16 = Self::OAM_DMA_BYTES * 4;
 
     pub fn new(cartridge: Cartridge) -> Self {
         Self {
@@ -473,7 +476,7 @@ mod tests {
         }
 
         bus.write8(DMA_REGISTER, 0xC0);
-        bus.tick(160);
+        bus.tick(640);
 
         for offset in 0..0xA0u16 {
             assert_eq!(bus.read8(0xFE00 + offset), offset as u8);
@@ -493,7 +496,7 @@ mod tests {
         bus.write8(0xC000, 0xDE);
         bus.write8(DMA_REGISTER, 0xC0);
 
-        bus.tick(200);
+        bus.tick(700);
 
         assert_eq!(bus.read8(0xFE00), 0xDE);
     }
@@ -515,7 +518,7 @@ mod tests {
         assert_eq!(bus.read8(0x8000), 0xFF);
 
         bus.write8(DMA_REGISTER, 0x80);
-        bus.tick(200);
+        bus.tick(700);
 
         for offset in 0..0xA0u16 {
             assert_eq!(
@@ -535,7 +538,7 @@ mod tests {
         }
 
         bus.write8(DMA_REGISTER, 0xC0);
-        bus.tick(160);
+        bus.tick(640);
 
         for offset in 0..0xA0u16 {
             assert_eq!(
@@ -555,7 +558,7 @@ mod tests {
         }
 
         bus.write8(DMA_REGISTER, 0xFE);
-        bus.tick(160);
+        bus.tick(640);
 
         for offset in 0..0xA0u16 {
             assert_eq!(
@@ -580,7 +583,7 @@ mod tests {
         bus.write8(0xFF80, 0x12);
         assert_eq!(bus.read8(0xFF80), 0x12);
 
-        bus.tick(159);
+        bus.tick(639);
         assert_eq!(bus.read8(0xC123), 0xFF);
 
         bus.tick(1);
