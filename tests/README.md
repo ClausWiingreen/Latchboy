@@ -173,7 +173,7 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
 
 | Title (local-only ROM) | Expected milestone checkpoint | Deterministic budget | Explicit pass signal |
 | --- | --- | --- | --- |
-| **Tetris (World)** | Reaches playable title screen with the “1 PLAYER GAME / 2 PLAYER GAME” menu visible and stable. | `frame_limit = 420` (~7.0s @ 60fps), `wall_time_limit_ms = 10_000` | Pass when frame hash and OCR/manual review confirm the menu text is visible for at least 120 consecutive frames before timeout. |
+| **Tetris (World)** | Reaches playable title screen with the “1 PLAYER GAME / 2 PLAYER GAME” menu visible and stable. | `frame_limit = 420` (~7.0s @ 60fps), `wall_time_limit_ms = 10_000` | Pass when reviewer evidence confirms the menu text is visible for at least 120 consecutive captured frames before timeout. |
 | **Super Mario Land (World)** | Reaches attract/title state where “START” prompt is visible after intro sequence. | `frame_limit = 540` (~9.0s @ 60fps), `wall_time_limit_ms = 12_000` | Pass when the recorded run includes a stable title frame with the “START” prompt and no emulator panic/abort occurred. |
 | **The Legend of Zelda: Link's Awakening (World)** | Reaches title scene where “PRESS START” appears following logo/opening sequence. | `frame_limit = 720` (~12.0s @ 60fps), `wall_time_limit_ms = 15_000` | Pass when “PRESS START” is observed in captured evidence within budget and the emulator remains responsive through the final frame. |
 
@@ -193,8 +193,8 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
    frame budget listed above, and save:
    - Run metadata (`run.json`): commit SHA, ROM identifier, runner command, frame/time budget.
    - Execution log (`runner.log`): stdout/stderr and timeout/pass status.
-   - Visual evidence (`final_frame.png` + optional `frames/` sequence).
-   - Optional summary hash (`frame_hash.txt`) used to detect regressions.
+   - Visual evidence (`final_frame.png` + required `frames/` sequence for any consecutive-frame pass check).
+   - `frame_hash.txt` containing either per-frame hashes or a deterministic rolling hash window for the exact frame range used in pass/fail assertions.
 3. **Record outcome per title** in `summary.md` inside the same timestamped directory with:
    - `PASS`/`FAIL`.
    - Observed checkpoint frame number.
@@ -205,6 +205,8 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
 5. **Attach or reference evidence** in PR/issue notes by linking the timestamped artifact
    directory (or uploaded CI artifact package) so reviewers can reproduce and audit results.
 
+For this Milestone 4 matrix, keep `frames/` mandatory for the Tetris case because its pass signal depends on 120 consecutive frames; if additional titles later adopt consecutive-frame checks, apply the same requirement to those titles as well.
+
 Suggested artifact tree:
 
 ```text
@@ -214,13 +216,18 @@ tests/artifacts/smoke/milestone4/20260417-153000/
 │   ├── run.json
 │   ├── runner.log
 │   ├── final_frame.png
+│   ├── frames/
 │   └── frame_hash.txt
 ├── super-mario-land-world/
 │   ├── run.json
 │   ├── runner.log
-│   └── final_frame.png
+│   ├── final_frame.png
+│   ├── frames/
+│   └── frame_hash.txt
 └── zelda-links-awakening-world/
     ├── run.json
     ├── runner.log
-    └── final_frame.png
+    ├── final_frame.png
+    ├── frames/
+    └── frame_hash.txt
 ```
