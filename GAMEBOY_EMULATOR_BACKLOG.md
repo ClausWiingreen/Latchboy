@@ -197,7 +197,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Model CPU bus contention/timing impact during DMA.
   - [x] Add targeted tests for sprite fetch correctness under DMA activity.
 - [ ] **Framebuffer output**
-  - [ ] DMG 4-shade palette mapping.
+  - [x] DMG 4-shade palette mapping.
   - [ ] VBlank frame-ready signal to frontend.
 
 **Acceptance criteria**
