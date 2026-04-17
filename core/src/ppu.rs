@@ -490,6 +490,10 @@ impl Ppu {
 
     /// Returns the final DMG shade index (0-3) for the background/window layer.
     pub fn background_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return 0;
+        }
+
         let color_id = self.background_pixel_color_id(screen_x, screen_y);
         dmg_palette_shade(self.bgp, color_id)
     }
@@ -1197,5 +1201,19 @@ mod tests {
 
         ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
         assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn background_pixel_shade_returns_blank_when_lcd_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        ppu.write_vram(0x8000, 0xFF);
+        ppu.write_vram(0x8001, 0xFF);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        assert_eq!(ppu.background_pixel_shade(0, 0), 0);
     }
 }
