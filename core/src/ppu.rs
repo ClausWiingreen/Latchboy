@@ -216,6 +216,10 @@ impl Ppu {
         self.vram[(address - VRAM_START) as usize]
     }
 
+    pub fn dma_read_vram(&self, address: u16) -> u8 {
+        self.vram[(address - VRAM_START) as usize]
+    }
+
     pub fn write_vram(&mut self, address: u16, value: u8) {
         if !self.vram_accessible() {
             return;
@@ -232,12 +236,20 @@ impl Ppu {
         self.oam[(address - OAM_START) as usize]
     }
 
+    pub fn dma_read_oam(&self, address: u16) -> u8 {
+        self.oam[(address - OAM_START) as usize]
+    }
+
     pub fn write_oam(&mut self, address: u16, value: u8) {
         if !self.oam_accessible() {
             return;
         }
 
         self.oam[(address - OAM_START) as usize] = value;
+    }
+
+    pub fn dma_write_oam(&mut self, offset: u8, value: u8) {
+        self.oam[offset as usize] = value;
     }
 
     pub fn read_register(&self, address: u16) -> Option<u8> {
@@ -573,6 +585,31 @@ mod tests {
 
         ppu.stat &= !0x03;
         assert_eq!(ppu.read_oam(0xFE00), 0x56);
+    }
+
+    #[test]
+    fn dma_write_oam_bypasses_mode_restrictions() {
+        let mut ppu = Ppu::default();
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+
+        ppu.dma_write_oam(0, 0xAB);
+
+        ppu.stat &= !0x03;
+        assert_eq!(ppu.read_oam(0xFE00), 0xAB);
+    }
+
+    #[test]
+    fn dma_reads_bypass_vram_and_oam_mode_restrictions() {
+        let mut ppu = Ppu::default();
+        ppu.write_vram(0x8000, 0x11);
+        ppu.write_oam(0xFE00, 0x22);
+
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        assert_eq!(ppu.read_vram(0x8000), 0xFF);
+        assert_eq!(ppu.read_oam(0xFE00), 0xFF);
+
+        assert_eq!(ppu.dma_read_vram(0x8000), 0x11);
+        assert_eq!(ppu.dma_read_oam(0xFE00), 0x22);
     }
 
     #[test]
