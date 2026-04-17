@@ -204,6 +204,11 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - PPU timing + rendering test ROMs mostly pass.
 - Several commercial titles render readable menus/UI.
 
+**Milestone 4 completion gate (external validation wiring)**
+- Required Milestone 4 external validation entries in `tests/rom_manifest.toml` must all pass when marked `required = true`.
+- `core/tests/external_rom_validation.rs` required-suite tests must execute with `LATCHBOY_ROM_ROOT` set so required Milestone 2/3/4 entries are exercised in CI.
+- CI source of truth remains `CI / rust-checks` (`.github/workflows/ci.yml`, job `rust-checks`) with `LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}` configured for the external validation run.
+
 ---
 
 ## Milestone 5 — Input and DMA
