@@ -157,3 +157,70 @@ Practical verification in CI logs:
       Evidence: `CI / rust-checks` passes with the workspace test run that includes CPU interrupt-focused tests in `latchboy-core` plus required Milestone 2 ROM cases in external validation.
 - [ ] **Artifact check: Manifest and fixture contract is satisfied.**  
       Evidence: `tests/rom_manifest.toml` contains required `milestone = 2` + `required = true` entries; local/CI fixture tree resolves every required `path`.
+
+## Milestone 4 commercial smoke matrix
+
+Milestone 4 smoke checks are a **checkpoint-oriented**, deterministic sanity pass over a small
+set of locally supplied commercial titles. These checks are intended to confirm boot/menu-level
+readiness, not full gameplay coverage.
+
+> Commercial ROM binaries must remain local-only and must not be committed to this repository.
+> See `docs/rom-usage-policy.md` for licensing and distribution rules.
+
+### Curated title checkpoints (2–3 title baseline)
+
+Use this baseline matrix unless a release branch explicitly documents overrides:
+
+| Title (local-only ROM) | Expected milestone checkpoint | Deterministic budget | Explicit pass signal |
+| --- | --- | --- | --- |
+| **Tetris (World)** | Reaches playable title screen with the “1 PLAYER GAME / 2 PLAYER GAME” menu visible and stable. | `frame_limit = 420` (~7.0s @ 60fps), `wall_time_limit_ms = 10_000` | Pass when frame hash and OCR/manual review confirm the menu text is visible for at least 120 consecutive frames before timeout. |
+| **Super Mario Land (World)** | Reaches attract/title state where “START” prompt is visible after intro sequence. | `frame_limit = 540` (~9.0s @ 60fps), `wall_time_limit_ms = 12_000` | Pass when the recorded run includes a stable title frame with the “START” prompt and no emulator panic/abort occurred. |
+| **The Legend of Zelda: Link's Awakening (World)** | Reaches title scene where “PRESS START” appears following logo/opening sequence. | `frame_limit = 720` (~12.0s @ 60fps), `wall_time_limit_ms = 15_000` | Pass when “PRESS START” is observed in captured evidence within budget and the emulator remains responsive through the final frame. |
+
+### Known Milestone 4 constraints
+
+- This checkpoint does **not** require validated audio output.
+- This checkpoint does **not** require user input/controller interaction.
+- The checkpoint is satisfied by deterministic boot-to-title/menu behavior only.
+- If a title depends on additional hardware behavior beyond current scope, document the gap in
+  the result summary and keep the failure as a tracked compatibility issue.
+
+### Repeatable smoke result collection + review procedure
+
+1. **Create a timestamped evidence folder** (local or CI workspace):
+   `tests/artifacts/smoke/milestone4/<YYYYMMDD-HHMMSS>/`.
+2. **For each curated title**, run a deterministic headless capture from power-on reset to the
+   frame budget listed above, and save:
+   - Run metadata (`run.json`): commit SHA, ROM identifier, runner command, frame/time budget.
+   - Execution log (`runner.log`): stdout/stderr and timeout/pass status.
+   - Visual evidence (`final_frame.png` + optional `frames/` sequence).
+   - Optional summary hash (`frame_hash.txt`) used to detect regressions.
+3. **Record outcome per title** in `summary.md` inside the same timestamped directory with:
+   - `PASS`/`FAIL`.
+   - Observed checkpoint frame number.
+   - If failed, first failure reason (timeout, crash, incorrect visual state, etc.).
+4. **Review pass signals** by comparing captured evidence against the matrix expectations above.
+   A smoke run is green only when all curated titles satisfy their explicit pass signal within
+   deterministic budgets.
+5. **Attach or reference evidence** in PR/issue notes by linking the timestamped artifact
+   directory (or uploaded CI artifact package) so reviewers can reproduce and audit results.
+
+Suggested artifact tree:
+
+```text
+tests/artifacts/smoke/milestone4/20260417-153000/
+├── summary.md
+├── tetris-world/
+│   ├── run.json
+│   ├── runner.log
+│   ├── final_frame.png
+│   └── frame_hash.txt
+├── super-mario-land-world/
+│   ├── run.json
+│   ├── runner.log
+│   └── final_frame.png
+└── zelda-links-awakening-world/
+    ├── run.json
+    ├── runner.log
+    └── final_frame.png
+```
