@@ -108,6 +108,8 @@ Expose a deterministic, PPU-owned framebuffer from the core API:
 - Pixel format is **DMG shade index bytes** (`0..=3`) in row-major order.
 - `take_frame_ready()` emits **exactly one pulse per completed frame** at the VBlank-entry
   boundary after all visible scanlines have been composited into the framebuffer.
+- Disabling LCD (`LCDC.7 = 0`) clears the framebuffer to shade `0` (blank/white), matching
+  per-pixel APIs that return blank while LCD is off.
 
 ### API/ownership contract
 

@@ -318,6 +318,7 @@ impl Ppu {
                     self.scanline_dot = 0;
                     self.ly = 0;
                     self.set_mode(0x00);
+                    self.clear_framebuffer();
                     self.update_lyc_coincidence_flag();
                 }
 
@@ -576,6 +577,10 @@ impl Ppu {
         for x in 0..FRAMEBUFFER_WIDTH {
             self.framebuffer[row_base + x] = self.composited_pixel_shade(x as u8, scanline);
         }
+    }
+
+    fn clear_framebuffer(&mut self) {
+        self.framebuffer = [0; FRAMEBUFFER_LEN];
     }
 
     pub fn step(&mut self, interrupt_flag: &mut u8) {
@@ -860,6 +865,29 @@ mod tests {
             ppu.framebuffer()[FRAMEBUFFER_WIDTH * (FRAMEBUFFER_HEIGHT - 1)],
             2
         );
+    }
+
+    #[test]
+    fn disabling_lcd_clears_framebuffer_to_blank() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+        );
+        ppu.write_register(BGP_REGISTER, 0xE4);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0xFF);
+        ppu.write_vram(0x8011, 0x00);
+
+        for _ in 0..MODE0_CYCLES_END {
+            ppu.step(&mut interrupt_flag);
+        }
+        assert_eq!(ppu.framebuffer()[0], 1);
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        assert!(ppu.framebuffer().iter().all(|&pixel| pixel == 0));
     }
 
     #[test]
