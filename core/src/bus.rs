@@ -214,11 +214,11 @@ impl Bus {
 
                 self.cartridge.read(address)
             }
-            VRAM_START..=0x9FFF => self.ppu.read_vram(address),
+            VRAM_START..=0x9FFF => self.ppu.dma_read_vram(address),
             EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
             WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
             WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
-            OAM_START..=OAM_END => self.ppu.read_oam(address),
+            OAM_START..=OAM_END => self.ppu.dma_read_oam(address),
             UNUSABLE_START..=UNUSABLE_END => 0xFF,
             IO_REGISTERS_START..=IO_REGISTERS_END => {
                 if address == BOOT_ROM_DISABLE_REGISTER {
@@ -470,5 +470,32 @@ mod tests {
         bus.tick(200);
 
         assert_eq!(bus.read8(0xFE00), 0xDE);
+    }
+
+    #[test]
+    fn dma_transfer_reads_vram_source_even_when_cpu_vram_reads_are_blocked() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        for offset in 0..0xA0u16 {
+            bus.write8(0x8000 + offset, 0x80u8.wrapping_add(offset as u8));
+        }
+
+        bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
+        while (bus.read8(crate::ppu::STAT_REGISTER) & 0x03) != 0x03 {
+            bus.tick(1);
+        }
+
+        assert_eq!(bus.read8(0x8000), 0xFF);
+
+        bus.write8(DMA_REGISTER, 0x80);
+        bus.tick(200);
+
+        for offset in 0..0xA0u16 {
+            assert_eq!(
+                bus.read8(0xFE00 + offset),
+                0x80u8.wrapping_add(offset as u8)
+            );
+        }
     }
 }
