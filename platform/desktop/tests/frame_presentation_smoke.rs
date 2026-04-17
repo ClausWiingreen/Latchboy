@@ -39,7 +39,7 @@ fn frame_presentation_loop_runs_headless_without_panicking() {
     let mut emulator = Emulator::new();
     let mut presenter = HeadlessPresenter::new(1);
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(1))
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(1), Some(10_000))
         .expect("headless frame presentation should succeed");
 
     assert_eq!(frames, 1);
@@ -51,6 +51,18 @@ fn frame_presentation_loop_runs_headless_without_panicking() {
             .all(|pixel| DMG_PALETTE_RGB.contains(pixel)),
         "all rendered pixels should map to the stable DMG palette"
     );
+}
+
+#[test]
+fn emulation_loop_can_terminate_without_frame_ready_when_iteration_budget_is_exhausted() {
+    let mut emulator = Emulator::new();
+    let mut presenter = HeadlessPresenter::new(1);
+
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 4, Some(1), Some(8))
+        .expect("iteration budget should allow clean exit without panicking");
+
+    assert_eq!(frames, 0);
+    assert!(presenter.last_frame.is_empty());
 }
 
 #[test]

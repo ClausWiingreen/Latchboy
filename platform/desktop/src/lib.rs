@@ -94,9 +94,11 @@ pub fn run_emulation_loop<P: FramePresenter>(
     presenter: &mut P,
     cycle_step: u32,
     frame_limit: Option<u64>,
+    iteration_limit: Option<u64>,
 ) -> Result<u64, EmulationRunError<P::Error>> {
     let mut surface = vec![0u32; FRAMEBUFFER_LEN];
     let mut frames_presented = 0u64;
+    let mut iterations = 0u64;
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -104,8 +106,14 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 break;
             }
         }
+        if let Some(limit) = iteration_limit {
+            if iterations >= limit {
+                break;
+            }
+        }
 
         emulator.step_cycles(cycle_step);
+        iterations += 1;
         if !emulator.take_frame_ready() {
             continue;
         }

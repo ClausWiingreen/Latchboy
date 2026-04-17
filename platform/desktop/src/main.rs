@@ -74,6 +74,13 @@ impl FramePresenter for WindowSurface {
     }
 }
 
+fn iteration_budget_for_frames(frame_budget: u64, cycle_step: u32) -> u64 {
+    const DMG_FRAME_CYCLES: u64 = 70_224;
+    let step = u64::from(cycle_step.max(1));
+    let iterations_per_frame = DMG_FRAME_CYCLES.div_ceil(step);
+    frame_budget.saturating_mul(iterations_per_frame.saturating_mul(2))
+}
+
 fn frame_budget_from_env() -> u64 {
     env::var("LATCHBOY_DESKTOP_MAX_FRAMES")
         .ok()
@@ -123,6 +130,7 @@ fn main() -> ExitCode {
         persist_enabled,
     };
     let frame_budget = frame_budget_from_env();
+    let iteration_budget = iteration_budget_for_frames(frame_budget, 1_024);
     let mut surface = WindowSurface::new(frame_budget);
 
     if let Err(error) = run_emulation_loop(
@@ -130,6 +138,7 @@ fn main() -> ExitCode {
         &mut surface,
         1_024,
         Some(frame_budget),
+        Some(iteration_budget),
     ) {
         eprintln!("error: emulation loop aborted: {error}");
         return ExitCode::FAILURE;
