@@ -109,6 +109,23 @@ pub fn run_emulation_loop<P: FramePresenter>(
         return Err(EmulationRunError::InvalidCycleStep);
     }
 
+    fn present_if_ready<P: FramePresenter>(
+        emulator: &mut Emulator,
+        presenter: &mut P,
+        surface: &mut [u32],
+    ) -> Result<bool, EmulationRunError<P::Error>> {
+        if !emulator.take_frame_ready() {
+            return Ok(false);
+        }
+
+        blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), surface)
+            .map_err(EmulationRunError::FrameBlit)?;
+        presenter
+            .present_frame(surface)
+            .map_err(EmulationRunError::Present)?;
+        Ok(true)
+    }
+
     let mut surface = vec![0u32; FRAMEBUFFER_LEN];
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
@@ -118,6 +135,10 @@ pub fn run_emulation_loop<P: FramePresenter>(
             if frames_presented >= limit {
                 break;
             }
+        }
+        if present_if_ready(emulator, presenter, &mut surface)? {
+            frames_presented += 1;
+            continue;
         }
         let mut cycles_remaining = cycle_step;
         while cycles_remaining != 0 && presenter.is_open() {
@@ -132,21 +153,15 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 }
             }
 
+            if present_if_ready(emulator, presenter, &mut surface)? {
+                frames_presented += 1;
+                continue;
+            }
+
             let chunk = cycles_remaining.min(MAX_CYCLES_BETWEEN_FRAME_POLLS);
             emulator.step_cycles(chunk);
             cycles_remaining -= chunk;
             iterations += 1;
-
-            if !emulator.take_frame_ready() {
-                continue;
-            }
-
-            blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), &mut surface)
-                .map_err(EmulationRunError::FrameBlit)?;
-            presenter
-                .present_frame(&surface)
-                .map_err(EmulationRunError::Present)?;
-            frames_presented += 1;
         }
     }
 

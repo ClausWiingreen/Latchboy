@@ -104,3 +104,26 @@ fn emulation_loop_chunks_large_cycle_steps_to_avoid_dropping_frame_ready_pulses(
     assert_eq!(frames, 3);
     assert_eq!(presenter.last_frame.len(), latchboy_core::FRAMEBUFFER_LEN);
 }
+
+#[test]
+fn emulation_loop_drains_pending_frame_ready_before_stepping() {
+    let mut emulator = Emulator::new();
+    emulator.step_cycles(70_224);
+    assert!(
+        emulator.take_frame_ready(),
+        "precondition: one completed frame should be pending after pre-stepping"
+    );
+    emulator.step_cycles(70_224);
+    let pre_loop_cycles = emulator.total_cycles();
+
+    let mut presenter = HeadlessPresenter::new(1);
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 210_000, Some(1), Some(100))
+        .expect("pending frame-ready should be presented before stepping");
+
+    assert_eq!(frames, 1);
+    assert_eq!(
+        emulator.total_cycles(),
+        pre_loop_cycles,
+        "loop should not advance cycles before presenting pending frame-ready data"
+    );
+}
