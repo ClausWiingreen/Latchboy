@@ -613,6 +613,31 @@ mod tests {
     }
 
     #[test]
+    fn sprite_pixel_uses_dma_written_oam_data_during_mode_3() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0x00);
+
+        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        ppu.write_oam(0xFE00, 16);
+        assert_eq!(ppu.read_oam(0xFE00), 0xFF);
+
+        ppu.dma_write_oam(0, 16);
+        ppu.dma_write_oam(1, 8);
+        ppu.dma_write_oam(2, 0x01);
+        ppu.dma_write_oam(3, 0x00);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+    }
+
+    #[test]
     fn step_transitions_through_scanline_modes() {
         let mut ppu = Ppu::default();
         let mut interrupt_flag = 0u8;
