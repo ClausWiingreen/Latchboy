@@ -102,7 +102,11 @@ pub fn persist_save_data(cartridge: &Cartridge, save_path: &Path) {
         return;
     };
 
-    if let Err(error) = write_atomic(save_path, &save_data) {
+    persist_save_bytes(&save_data, save_path);
+}
+
+pub fn persist_save_bytes(save_data: &[u8], save_path: &Path) {
+    if let Err(error) = write_atomic(save_path, save_data) {
         eprintln!(
             "warning: failed to write save file '{}': {error}",
             save_path.display()

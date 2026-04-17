@@ -2,6 +2,31 @@
 
 This directory is reserved for ROM-based integration validation, deterministic headless harnesses, and golden output fixtures.
 
+## Desktop frame presentation smoke test
+
+The desktop frontend now runs a basic cycle-stepping loop and only presents when
+`Emulator::take_frame_ready()` signals a complete frame. The presentation path maps
+DMG shade indices (`0..=3`) through a stable four-color palette and blits ARGB8888
+pixels to the desktop window surface.
+
+Headless-friendly smoke coverage for the presentation path lives at:
+
+```bash
+cargo test -p latchboy-desktop --test frame_presentation_smoke
+```
+
+Runtime expectations/limitations for the desktop executable:
+
+- Launch with `cargo run -p latchboy-desktop -- /path/to/rom.gb`.
+- The frontend runs a cycle-stepping loop and presents frames into an internal
+  `WindowSurface` abstraction when `take_frame_ready()` fires.
+- Enter `q` or `quit` on stdin to request a clean shutdown path so the frontend
+  returns from `main` and save persistence can run.
+- The current implementation does not open a host OS window yet; it is intended as
+  a stable presentation scaffold that can be wired to a platform-specific window backend later.
+- Save-file load/persist semantics from `platform/desktop/src/savefile.rs` remain in place;
+  saves are loaded on startup and persisted on clean process exit when load status allows it.
+
 ## Current deterministic harness
 
 A deterministic headless harness scaffold lives in the `latchboy-core` test suite and can be executed with:

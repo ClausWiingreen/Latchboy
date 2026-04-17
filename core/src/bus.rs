@@ -311,6 +311,18 @@ impl Bus {
     pub fn take_frame_ready(&mut self) -> bool {
         self.ppu.take_frame_ready()
     }
+
+    pub fn framebuffer_shades(&self, output: &mut [u8; crate::FRAMEBUFFER_PIXELS]) {
+        for (index, shade) in output.iter_mut().enumerate() {
+            let x = (index % crate::FRAMEBUFFER_WIDTH) as u8;
+            let y = (index / crate::FRAMEBUFFER_WIDTH) as u8;
+            *shade = self.ppu.composited_pixel_shade(x, y);
+        }
+    }
+
+    pub fn cartridge_save_data(&self) -> Option<Vec<u8>> {
+        self.cartridge.save_data()
+    }
 }
 
 #[cfg(test)]
