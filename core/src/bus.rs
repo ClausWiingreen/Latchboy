@@ -323,6 +323,14 @@ impl Bus {
     pub fn cartridge_save_data(&self) -> Option<Vec<u8>> {
         self.cartridge.save_data()
     }
+
+    /// Returns the latest completed/partially-rendered PPU framebuffer snapshot view.
+    ///
+    /// The underlying storage is owned by the PPU and remains valid for the lifetime of
+    /// this bus borrow.
+    pub fn framebuffer_pixels(&self) -> &[u8] {
+        self.ppu.framebuffer_pixels()
+    }
 }
 
 #[cfg(test)]
