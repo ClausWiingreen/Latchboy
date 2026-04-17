@@ -200,6 +200,12 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] DMG 4-shade palette mapping.
   - [x] VBlank frame-ready signal to frontend.
 
+**Implementation review notes (2026-04-17)**
+- Core PPU implementation covers milestone building blocks in-tree: LCD register surface (`FF40–FF4B`), mode stepping (2/3/0/1), LY/LYC + STAT edge behavior, background/window tile fetch rules, sprite selection/priority/flip handling (including 8x16), and DMG palette shade mapping.
+- OAM DMA is integrated in the bus and already moved to this milestone scope: writing `FF46` performs a 160-byte transfer, models CPU bus blocking (except HRAM) for the DMA contention window, and has targeted unit-test coverage for bus blocking and sprite visibility under DMA writes.
+- The current rendering surface is still pixel-query based (`background_pixel_shade` / `composited_pixel_shade`) plus a frame-ready flag; there is not yet a committed scanline/framebuffer pipeline that writes a full 160x144 frame buffer each frame for frontend consumption.
+- Existing external ROM manifest entries tagged `milestone = 4` are currently CPU timing cases and are marked non-required; they do not validate PPU timing or rendering behavior.
+
 **Acceptance criteria**
 - PPU timing + rendering test ROMs mostly pass.
 - Several commercial titles render readable menus/UI.
@@ -208,6 +214,15 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Required Milestone 4 external validation entries in `tests/rom_manifest.toml` must all pass when marked `required = true`.
 - `core/tests/external_rom_validation.rs` required-suite tests must execute with `LATCHBOY_ROM_ROOT` set so required Milestone 2/3/4 entries are exercised in CI.
 - CI source of truth remains `CI / rust-checks` (`.github/workflows/ci.yml`, job `rust-checks`) with `LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}` configured for the external validation run.
+
+**Acceptance status review (2026-04-17)**
+- ⚠️ `PPU timing + rendering test ROMs mostly pass` is **not yet evidenced** by required ROM coverage. Current `tests/rom_manifest.toml` does not require any PPU-focused suites for Milestone 4, so this acceptance bullet cannot be treated as closed yet.
+- ⚠️ `Several commercial titles render readable menus/UI` is **not yet evidenced** in-repo. The desktop frontend remains a scaffold without a present loop that blits composited frames from the core, so this criterion remains open.
+- 🔧 Missing Milestone 4 closure items:
+  - Define a concrete framebuffer contract in `core` (dimensions, pixel format, ownership/lifetime, frame boundary semantics).
+  - Add required Milestone 4 ROM manifest entries for PPU mode timing, STAT behavior, and sprite/background priority interactions.
+  - Add at least a small curated title smoke list (e.g., 2–3 boot-to-menu checkpoints) with deterministic success signals documented in `tests/README.md`.
+  - Wire desktop/frontend presentation path to consume the frame output and verify readable UI rendering.
 
 ---
 
@@ -233,6 +248,10 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - [ ] **Document blocking dependencies directly inside milestones**
   - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
   - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
+- [ ] **Milestone 4 closure contract (new)**
+  - [ ] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
+  - [ ] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
+  - [ ] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
 
 ---
 
@@ -353,11 +372,11 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 2. CPU core (full opcode coverage + deterministic timing scaffolding)
 3. External validation harness + CI gate hardening (Milestone 3.5, already landed; continue extending with each milestone)
 4. Timers + interrupt controller integration + boot/no-boot startup defaults
-5. PPU timing + DMA + input integration (first visual/playability milestone; implement DMA alongside early PPU work even though listed under Milestone 5)
-6. Serial test-output support (to unlock Blargg/Mooneye automation feedback loops)
-7. Frontend minimum playable loop hardening (controls UX, `.sav` lifecycle checkpoints, reset/hot-reload behavior)
+5. PPU timing + DMA correctness + framebuffer contract lock-in (close Milestone 4 with required PPU validation before claiming playability)
+6. Input (`FF00`) + frontend minimum playable loop hardening (controls UX, frame presentation, `.sav` lifecycle checkpoints, reset/hot-reload behavior)
+7. Serial test-output support (to unlock broader Blargg/Mooneye automation feedback loops as compatibility grows)
 8. APU
-9. Compatibility hardening and CI automation of ROM suites
+9. Compatibility hardening and CI automation of ROM suites (including curated commercial smoke matrix)
 10. Optional CGB/link/platform enhancements
 
 ---
