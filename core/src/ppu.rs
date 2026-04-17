@@ -55,6 +55,18 @@ const SPRITE_ATTRIBUTE_Y_FLIP_BIT: u8 = 0x40;
 const SPRITE_ATTRIBUTE_X_FLIP_BIT: u8 = 0x20;
 const SPRITE_ATTRIBUTE_PALETTE_BIT: u8 = 0x10;
 
+/// Resolves a 2-bit DMG palette shade (0-3) from a palette register and logical color id.
+///
+/// DMG palette registers (`BGP`, `OBP0`, `OBP1`) encode four 2-bit shade selectors:
+/// - bits 1:0 map color id 0
+/// - bits 3:2 map color id 1
+/// - bits 5:4 map color id 2
+/// - bits 7:6 map color id 3
+pub fn dmg_palette_shade(palette: u8, color_id: u8) -> u8 {
+    let shift = (color_id & 0x03) * 2;
+    (palette >> shift) & 0x03
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpritePixel {
     pub color_id: u8,
@@ -474,6 +486,43 @@ impl Ppu {
                 Some(pixel)
             }
         })
+    }
+
+    /// Returns the final DMG shade index (0-3) for the background/window layer.
+    pub fn background_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return 0;
+        }
+        if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+            return 0;
+        }
+
+        let color_id = self.background_pixel_color_id(screen_x, screen_y);
+        dmg_palette_shade(self.bgp, color_id)
+    }
+
+    /// Returns the final DMG shade index (0-3) for the composited pixel at `(x, y)`.
+    ///
+    /// Sprite priority and transparency are resolved via [`Self::sprite_pixel`], then the
+    /// selected BGP/OBP palette register is applied to obtain the framebuffer shade.
+    pub fn composited_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return 0;
+        }
+
+        let bg_color_id = self.background_pixel_color_id(screen_x, screen_y);
+        if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg_color_id) {
+            let palette = if sprite.use_obp1 {
+                self.obp1
+            } else {
+                self.obp0
+            };
+            dmg_palette_shade(palette, sprite.color_id)
+        } else if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+            0
+        } else {
+            dmg_palette_shade(self.bgp, bg_color_id)
+        }
     }
 
     pub fn take_stat_irq_pending(&mut self) -> bool {
@@ -1093,5 +1142,111 @@ mod tests {
         ppu.write_vram(0x8071, 0b0000_0000);
 
         assert_eq!(ppu.sprite_pixel(0, 0, 0), None);
+    }
+
+    #[test]
+    fn dmg_palette_shade_decodes_each_color_slot() {
+        let palette = 0b01_10_11_00;
+        assert_eq!(dmg_palette_shade(palette, 0), 0);
+        assert_eq!(dmg_palette_shade(palette, 1), 3);
+        assert_eq!(dmg_palette_shade(palette, 2), 2);
+        assert_eq!(dmg_palette_shade(palette, 3), 1);
+    }
+
+    #[test]
+    fn composited_pixel_shade_applies_obj_palette_when_sprite_wins() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+
+        // Background tile 0 emits color id 0 at (0,0), which keeps sprite visible.
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
+
+        // Sprite at (0,0) emits color id 1 and selects OBP1.
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x01);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0x00);
+
+        ppu.write_register(OBP0_REGISTER, 0b00_00_00_00);
+        ppu.write_register(OBP1_REGISTER, 0b00_00_10_00);
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT | LCDC_ENABLED_BIT,
+        );
+
+        assert_eq!(ppu.background_pixel_shade(0, 0), 0);
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 2);
+    }
+
+    #[test]
+    fn composited_pixel_shade_returns_blank_when_lcd_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x01);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0x00);
+        ppu.write_register(OBP1_REGISTER, 0b00_00_10_00);
+
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT | LCDC_ENABLED_BIT,
+        );
+
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 2);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn background_pixel_shade_returns_blank_when_lcd_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        ppu.write_vram(0x8000, 0xFF);
+        ppu.write_vram(0x8001, 0xFF);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        assert_eq!(ppu.background_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn background_pixel_shade_returns_white_when_bg_window_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_01);
+
+        assert_eq!(ppu.background_pixel_shade(0, 0), 1);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        assert_eq!(ppu.background_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn composited_pixel_shade_returns_white_when_bg_window_disabled_and_no_sprite() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_01);
+
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 1);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
     }
 }
