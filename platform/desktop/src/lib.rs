@@ -5,6 +5,9 @@ use std::fmt;
 
 use latchboy_core::{Emulator, FRAMEBUFFER_LEN};
 
+const DMG_FRAME_CYCLES: u32 = 70_224;
+const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - 4;
+
 /// Stable DMG palette in RGB888 (0x00RRGGBB), darkest shade last.
 pub const DMG_PALETTE_RGB: [u32; 4] = [0x00E0F8D0, 0x0088C070, 0x00346856, 0x00081820];
 
@@ -112,24 +115,35 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 break;
             }
         }
-        if let Some(limit) = iteration_limit {
-            if iterations >= limit {
-                break;
+        let mut cycles_remaining = cycle_step;
+        while cycles_remaining != 0 && presenter.is_open() {
+            if let Some(limit) = iteration_limit {
+                if iterations >= limit {
+                    return Ok(frames_presented);
+                }
             }
-        }
+            if let Some(limit) = frame_limit {
+                if frames_presented >= limit {
+                    return Ok(frames_presented);
+                }
+            }
 
-        emulator.step_cycles(cycle_step);
-        iterations += 1;
-        if !emulator.take_frame_ready() {
-            continue;
-        }
+            let chunk = cycles_remaining.min(MAX_CYCLES_BETWEEN_FRAME_POLLS);
+            emulator.step_cycles(chunk);
+            cycles_remaining -= chunk;
+            iterations += 1;
 
-        blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), &mut surface)
-            .map_err(EmulationRunError::FrameBlit)?;
-        presenter
-            .present_frame(&surface)
-            .map_err(EmulationRunError::Present)?;
-        frames_presented += 1;
+            if !emulator.take_frame_ready() {
+                continue;
+            }
+
+            blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), &mut surface)
+                .map_err(EmulationRunError::FrameBlit)?;
+            presenter
+                .present_frame(&surface)
+                .map_err(EmulationRunError::Present)?;
+            frames_presented += 1;
+        }
     }
 
     Ok(frames_presented)

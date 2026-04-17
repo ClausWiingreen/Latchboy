@@ -255,6 +255,7 @@ cargo run -p latchboy-desktop -- /absolute/path/to/rom.gb
 - Renders framebuffer output into a minimal desktop-side window-surface buffer (`160x144`) using a stable four-shade DMG palette.
 - Uses save-file loading/persist gating from `platform/desktop/src/savefile.rs` exactly as before (invalid save load disables save overwrite).
 - Steps the emulator in fixed cycle chunks (`1024` cycles) and presents a frame only when frame-ready is raised.
+- Internally chunks larger step requests so frame-ready is polled frequently enough to avoid collapsing multiple completed frames into one presentation.
 - Applies an internal iteration budget derived from `LATCHBOY_DESKTOP_MAX_FRAMES`, so runs terminate even if the ROM never raises frame-ready (for example LCD-disabled execution).
 
 ### Limitations

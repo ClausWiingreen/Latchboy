@@ -92,3 +92,15 @@ fn emulation_loop_rejects_zero_cycle_step() {
         .expect_err("zero cycle step should be rejected");
     assert_eq!(error.to_string(), "cycle_step must be greater than zero");
 }
+
+#[test]
+fn emulation_loop_chunks_large_cycle_steps_to_avoid_dropping_frame_ready_pulses() {
+    let mut emulator = Emulator::new();
+    let mut presenter = HeadlessPresenter::new(3);
+
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 210_000, Some(3), Some(1_000))
+        .expect("large cycle-step run should complete");
+
+    assert_eq!(frames, 3);
+    assert_eq!(presenter.last_frame.len(), latchboy_core::FRAMEBUFFER_LEN);
+}
