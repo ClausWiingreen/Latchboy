@@ -55,7 +55,6 @@ const SPRITE_ATTRIBUTE_Y_FLIP_BIT: u8 = 0x40;
 const SPRITE_ATTRIBUTE_X_FLIP_BIT: u8 = 0x20;
 const SPRITE_ATTRIBUTE_PALETTE_BIT: u8 = 0x10;
 
-
 /// Resolves a 2-bit DMG palette shade (0-3) from a palette register and logical color id.
 ///
 /// DMG palette registers (`BGP`, `OBP0`, `OBP1`) encode four 2-bit shade selectors:
@@ -502,7 +501,11 @@ impl Ppu {
     pub fn composited_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
         let bg_color_id = self.background_pixel_color_id(screen_x, screen_y);
         if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg_color_id) {
-            let palette = if sprite.use_obp1 { self.obp1 } else { self.obp0 };
+            let palette = if sprite.use_obp1 {
+                self.obp1
+            } else {
+                self.obp0
+            };
             dmg_palette_shade(palette, sprite.color_id)
         } else {
             dmg_palette_shade(self.bgp, bg_color_id)
