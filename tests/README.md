@@ -184,12 +184,14 @@ at:
 
 For each curated title entry in a committed smoke summary artifact:
 
-- `run.json` object is required (or equivalently named run metadata object with identical fields):
+- `run.json` object is required:
   - `commit_sha`, `rom_id`, `runner_command`, `frame_limit`, `wall_time_limit_ms`.
-- `summary.json` object is required (or equivalently named summary metadata object with identical fields):
+- `summary.json` object is required:
   - `status` (`PASS`/`FAIL`), `checkpoint_frame_index`, `pass_fail_reason`.
 - Hash evidence is required:
   - `hash_window` with `algorithm`, `start_frame`, `end_frame`, `sample_stride`, and `hashes`.
+- Explicit non-asset attestation is required:
+  - `copyrighted_assets_committed` must be present and set to `false` for each title entry.
 - Checkpoint evidence is required:
   - `checkpoint_frame_index` integer for the observed pass/fail checkpoint frame.
 - Failure semantics are required:

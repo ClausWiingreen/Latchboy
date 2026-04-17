@@ -43,7 +43,8 @@
         "title_id",
         "run.json",
         "summary.json",
-        "hash_window"
+        "hash_window",
+        "copyrighted_assets_committed"
       ],
       "properties": {
         "title_id": {
