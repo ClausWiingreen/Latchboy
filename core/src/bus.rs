@@ -240,7 +240,8 @@ impl Bus {
     }
 
     fn start_oam_dma(&mut self, source_high: u8) {
-        let source_base = u16::from(source_high) << 8;
+        let source_page = source_high & 0xDF;
+        let source_base = u16::from(source_page) << 8;
         for offset in 0..Self::OAM_DMA_BYTES {
             let source_address = source_base.wrapping_add(offset);
             let value = self.read8_for_dma_source(source_address);
@@ -500,20 +501,39 @@ mod tests {
     }
 
     #[test]
-    fn dma_transfer_preserves_ff46_source_page() {
+    fn dma_transfer_preserves_ff46_source_page_for_valid_source_values() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);
 
         for offset in 0..0xA0u16 {
-            bus.write8(0xE000 + offset, 0x40u8.wrapping_add(offset as u8));
+            bus.write8(0xC000 + offset, 0x40u8.wrapping_add(offset as u8));
         }
 
-        bus.write8(DMA_REGISTER, 0xE0);
+        bus.write8(DMA_REGISTER, 0xC0);
 
         for offset in 0..0xA0u16 {
             assert_eq!(
                 bus.read8(0xFE00 + offset),
                 0x40u8.wrapping_add(offset as u8)
+            );
+        }
+    }
+
+    #[test]
+    fn dma_transfer_masks_ff46_source_page_to_hardware_supported_range() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        for offset in 0..0xA0u16 {
+            bus.write8(0xDE00 + offset, 0x60u8.wrapping_add(offset as u8));
+        }
+
+        bus.write8(DMA_REGISTER, 0xFE);
+
+        for offset in 0..0xA0u16 {
+            assert_eq!(
+                bus.read8(0xFE00 + offset),
+                0x60u8.wrapping_add(offset as u8)
             );
         }
     }
