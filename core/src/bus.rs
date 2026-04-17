@@ -311,6 +311,14 @@ impl Bus {
     pub fn take_frame_ready(&mut self) -> bool {
         self.ppu.take_frame_ready()
     }
+
+    /// Returns the latest completed/partially-rendered PPU framebuffer snapshot view.
+    ///
+    /// The underlying storage is owned by the PPU and remains valid for the lifetime of
+    /// this bus borrow.
+    pub fn framebuffer_pixels(&self) -> &[u8] {
+        self.ppu.framebuffer_pixels()
+    }
 }
 
 #[cfg(test)]

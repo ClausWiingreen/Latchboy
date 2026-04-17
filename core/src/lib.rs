@@ -9,6 +9,7 @@ pub mod observability;
 pub mod ppu;
 pub mod serial;
 pub mod timer;
+pub use ppu::{FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH};
 
 use bus::Bus;
 use cartridge::{
@@ -229,6 +230,19 @@ impl Emulator {
     /// Frontends can poll this to know when a complete frame is ready for presentation.
     pub fn take_frame_ready(&mut self) -> bool {
         self.bus.take_frame_ready()
+    }
+
+    /// Returns the PPU-owned framebuffer for the most recently rendered frame data.
+    ///
+    /// Contract:
+    /// - Pixel layout is row-major (`index = y * 160 + x`).
+    /// - Pixel format is DMG shade indices `0..=3` per byte.
+    /// - The slice is borrowed from emulator-owned storage; copy it if the frontend needs
+    ///   to retain image data across future mutable emulator calls.
+    /// - [`Self::take_frame_ready`] pulses once at each completed frame boundary (VBlank
+    ///   entry) and indicates this buffer now contains a coherent full frame.
+    pub fn framebuffer_pixels(&self) -> &[u8] {
+        self.bus.framebuffer_pixels()
     }
 
     /// Returns total cycles executed by this emulator instance.
