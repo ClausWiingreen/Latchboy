@@ -1195,10 +1195,7 @@ mod tests {
 
         assert_eq!(ppu.composited_pixel_shade(0, 0), 2);
 
-        ppu.write_register(
-            LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT,
-        );
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
         assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
     }
 }
