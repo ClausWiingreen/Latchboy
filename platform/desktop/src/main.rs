@@ -1,13 +1,18 @@
 use std::env;
+use std::error::Error;
+use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use latchboy_core::cartridge::Cartridge;
+use latchboy_core::{
+    cartridge::Cartridge, Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH,
+};
 use latchboy_desktop::savefile::{
     load_save_data_if_available, persist_save_data, save_path_from_rom_path,
     should_persist_after_load,
 };
+use latchboy_desktop::{run_emulation_loop, FramePresenter};
 
 struct SaveOnDrop {
     cartridge: Cartridge,
@@ -21,6 +26,60 @@ impl Drop for SaveOnDrop {
             persist_save_data(&self.cartridge, &self.save_path);
         }
     }
+}
+
+#[derive(Debug)]
+struct SurfaceError;
+
+impl fmt::Display for SurfaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "surface update failed")
+    }
+}
+
+impl Error for SurfaceError {}
+
+/// Minimal headless-friendly window surface buffer.
+struct WindowSurface {
+    buffer: Vec<u32>,
+    presented_frames: u64,
+    max_frames: u64,
+}
+
+impl WindowSurface {
+    fn new(max_frames: u64) -> Self {
+        Self {
+            buffer: vec![0; FRAMEBUFFER_LEN],
+            presented_frames: 0,
+            max_frames,
+        }
+    }
+}
+
+impl FramePresenter for WindowSurface {
+    type Error = SurfaceError;
+
+    fn is_open(&self) -> bool {
+        self.presented_frames < self.max_frames
+    }
+
+    fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
+        if surface.len() != self.buffer.len() {
+            return Err(SurfaceError);
+        }
+
+        self.buffer.copy_from_slice(surface);
+        self.presented_frames += 1;
+        Ok(())
+    }
+}
+
+fn frame_budget_from_env() -> u64 {
+    env::var("LATCHBOY_DESKTOP_MAX_FRAMES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(300)
 }
 
 fn main() -> ExitCode {
@@ -58,12 +117,24 @@ fn main() -> ExitCode {
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
     let persist_enabled = should_persist_after_load(load_status);
 
-    let _runtime = SaveOnDrop {
+    let runtime = SaveOnDrop {
         cartridge,
         save_path,
         persist_enabled,
     };
 
-    println!("Latchboy desktop frontend scaffold");
+    let mut emulator = Emulator::from_cartridge(runtime.cartridge.clone());
+    let frame_budget = frame_budget_from_env();
+    let mut surface = WindowSurface::new(frame_budget);
+
+    if let Err(error) = run_emulation_loop(&mut emulator, &mut surface, 1_024, Some(frame_budget)) {
+        eprintln!("error: emulation loop aborted: {error}");
+        return ExitCode::FAILURE;
+    }
+
+    println!(
+        "Latchboy desktop frame loop completed: rendered {} frames into {}x{} surface",
+        frame_budget, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
+    );
     ExitCode::SUCCESS
 }

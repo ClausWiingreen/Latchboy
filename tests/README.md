@@ -238,3 +238,26 @@ tests/artifacts/smoke/milestone4/20260417-153000/
     ├── final_frame.png        # local-only, do not publish
     └── frames/                # optional unless consecutive-frame check
 ```
+
+## Desktop frontend launch expectations (Milestone desktop frame presentation)
+
+The desktop frontend now runs a minimal cycle-stepping loop and presents frames whenever
+`Emulator::take_frame_ready()` pulses at VBlank.
+
+### Launch command
+
+```bash
+cargo run -p latchboy-desktop -- /absolute/path/to/rom.gb
+```
+
+### Current behavior
+
+- Renders framebuffer output into a minimal desktop-side window-surface buffer (`160x144`) using a stable four-shade DMG palette.
+- Uses save-file loading/persist gating from `platform/desktop/src/savefile.rs` exactly as before (invalid save load disables save overwrite).
+- Steps the emulator in fixed cycle chunks (`1024` cycles) and presents a frame only when frame-ready is raised.
+
+### Limitations
+
+- Audio output is not wired in this frontend yet.
+- Input/controller mapping is not implemented yet (current surface backend is headless-friendly and does not create an OS window).
+- The desktop integration smoke test is headless-friendly and validates that the frame presentation path is callable and non-panicking without creating a real OS window.
