@@ -270,7 +270,13 @@ impl Bus {
     }
 
     fn is_cpu_bus_access_blocked_by_oam_dma(&self, address: u16) -> bool {
-        self.is_oam_dma_active() && !(HRAM_START..=HRAM_END).contains(&address)
+        let is_interrupt_register = matches!(
+            address,
+            crate::interrupts::FLAG_REGISTER | crate::interrupts::ENABLE_REGISTER
+        );
+        self.is_oam_dma_active()
+            && !(HRAM_START..=HRAM_END).contains(&address)
+            && !is_interrupt_register
     }
 
     pub fn tick(&mut self, cycles: u32) {
@@ -590,5 +596,24 @@ mod tests {
         assert_eq!(bus.read8(0xC123), 0x42);
         bus.write8(0xC123, 0x99);
         assert_eq!(bus.read8(0xC123), 0x99);
+    }
+
+    #[test]
+    fn oam_dma_does_not_block_cpu_access_to_if_and_ie_registers() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.write8(crate::interrupts::FLAG_REGISTER, 0x12);
+        bus.write8(crate::interrupts::ENABLE_REGISTER, 0x1F);
+        bus.write8(DMA_REGISTER, 0xC0);
+
+        assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0x12);
+        assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0x1F);
+
+        bus.write8(crate::interrupts::FLAG_REGISTER, 0x00);
+        bus.write8(crate::interrupts::ENABLE_REGISTER, 0x00);
+
+        assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0x00);
+        assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0x00);
     }
 }
