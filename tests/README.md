@@ -182,7 +182,13 @@ at:
 
 - `tests/artifacts/milestone4-smoke-summary.schema.json`
 
-For each curated title entry in a committed smoke summary artifact:
+For a committed smoke summary artifact:
+
+- `titles` is required and must be an object map keyed by `title_id` (for example,
+  `tetris-world`, `super-mario-land-world`).
+- Because `titles` is key-addressed, each title entry is distinct by key (no duplicate title rows).
+
+For each `titles.<title_id>` entry:
 
 - `title_id` is required:
   - Stable, non-empty identifier for the title record (for example, `tetris-world`).
@@ -201,7 +207,7 @@ For each curated title entry in a committed smoke summary artifact:
 
 Summary-level coverage requirement:
 
-- `titles` must include at least **2** entries (matching the curated 2–3 title baseline for Milestone 4 smoke coverage).
+- `titles` must include at least **2** distinct title entries (matching the curated 2–3 title baseline for Milestone 4 smoke coverage).
 
 Copyright and artifact policy for committed evidence:
 

@@ -28,9 +28,14 @@
       "type": "string"
     },
     "titles": {
-      "type": "array",
-      "minItems": 2,
-      "items": {
+      "type": "object",
+      "description": "Map of title_id -> title evidence. Object keys enforce distinct title entries.",
+      "minProperties": 2,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
         "$ref": "#/$defs/titleEvidence"
       }
     }
