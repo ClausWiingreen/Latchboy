@@ -489,6 +489,30 @@ fn rom_manifest_registers_required_milestone_2_and_3_suites() {
 }
 
 #[test]
+fn rom_manifest_registers_required_milestone_4_ppu_suites() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    assert!(
+        manifest.roms.iter().any(|rom| {
+            rom.required && rom.milestone == 4 && rom.suite == "mooneye_acceptance_ppu"
+        }),
+        "manifest must include at least one required milestone 4 Mooneye PPU ROM entry"
+    );
+
+    for rom in &manifest.roms {
+        if rom.required && rom.milestone == 4 {
+            assert!(
+                !is_noop_pass_condition(rom.pass_condition),
+                "{} is required for milestone {} and must not use pass_condition = \"none\"",
+                rom.id,
+                rom.milestone
+            );
+        }
+    }
+}
+
+#[test]
 fn manifest_parser_accepts_inline_toml_comments() {
     let temp_dir = std::env::temp_dir();
     let manifest_path = temp_dir.join(format!(
