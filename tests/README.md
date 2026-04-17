@@ -187,14 +187,16 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
 
 ### Repeatable smoke result collection + review procedure
 
-1. **Create a timestamped evidence folder** (local or CI workspace):
+1. **Create a timestamped evidence folder** (local-only workspace):
    `tests/artifacts/smoke/milestone4/<YYYYMMDD-HHMMSS>/`.
+   This directory is intentionally gitignored and must not be uploaded as a PR/CI artifact when it contains commercial frame captures.
 2. **For each curated title**, run a deterministic headless capture from power-on reset to the
    frame budget listed above, and save:
    - Run metadata (`run.json`): commit SHA, ROM identifier, runner command, frame/time budget.
    - Execution log (`runner.log`): stdout/stderr and timeout/pass status.
-   - Visual evidence (`final_frame.png` + required `frames/` sequence for any consecutive-frame pass check).
+   - Local-only visual capture (`final_frame.png` + required `frames/` sequence for any consecutive-frame pass check).
    - `frame_hash.txt` containing either per-frame hashes or a deterministic rolling hash window for the exact frame range used in pass/fail assertions.
+   - `pass_window.json` describing the exact frame interval used for each assertion (for example, Tetris 120-frame window start/end).
 3. **Record outcome per title** in `summary.md` inside the same timestamped directory with:
    - `PASS`/`FAIL`.
    - Observed checkpoint frame number.
@@ -202,12 +204,14 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
 4. **Review pass signals** by comparing captured evidence against the matrix expectations above.
    A smoke run is green only when all curated titles satisfy their explicit pass signal within
    deterministic budgets.
-5. **Attach or reference evidence** in PR/issue notes by linking the timestamped artifact
-   directory (or uploaded CI artifact package) so reviewers can reproduce and audit results.
+5. **Report only non-copyrighted review evidence** in PR/issue notes:
+   - Include `summary.md`, budgets used, checkpoint frame numbers, and relevant hash/window values.
+   - Do **not** attach or link `final_frame.png`, `frames/`, or raw video captures from commercial titles in PRs, issues, or public CI artifact storage (consistent with `docs/rom-usage-policy.md`).
+   - If reviewer verification is needed, reviewers should rerun locally against their own legal ROM copies and compare against `frame_hash.txt` + `pass_window.json`.
 
 For this Milestone 4 matrix, keep `frames/` mandatory for the Tetris case because its pass signal depends on 120 consecutive frames; if additional titles later adopt consecutive-frame checks, apply the same requirement to those titles as well.
 
-Suggested artifact tree:
+Suggested **local-only** artifact tree (never commit or publish visual capture assets):
 
 ```text
 tests/artifacts/smoke/milestone4/20260417-153000/
@@ -215,19 +219,22 @@ tests/artifacts/smoke/milestone4/20260417-153000/
 ├── tetris-world/
 │   ├── run.json
 │   ├── runner.log
-│   ├── final_frame.png
-│   ├── frames/
-│   └── frame_hash.txt
+│   ├── frame_hash.txt
+│   ├── pass_window.json
+│   ├── final_frame.png        # local-only, do not publish
+│   └── frames/                # local-only, do not publish
 ├── super-mario-land-world/
 │   ├── run.json
 │   ├── runner.log
-│   ├── final_frame.png
-│   ├── frames/
-│   └── frame_hash.txt
+│   ├── frame_hash.txt
+│   ├── pass_window.json
+│   ├── final_frame.png        # local-only, do not publish
+│   └── frames/                # optional unless consecutive-frame check
 └── zelda-links-awakening-world/
     ├── run.json
     ├── runner.log
-    ├── final_frame.png
-    ├── frames/
-    └── frame_hash.txt
+    ├── frame_hash.txt
+    ├── pass_window.json
+    ├── final_frame.png        # local-only, do not publish
+    └── frames/                # optional unless consecutive-frame check
 ```
