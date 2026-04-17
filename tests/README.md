@@ -44,7 +44,7 @@ When enabled, it executes each required Milestone 2 entry with deterministic cyc
 
 Milestone 3 expands the manifest with required timer-focused entries, while keeping explicit deferred cases (`required = false`) when dependencies are still in progress.
 
-## Required local fixture layout for Milestone 2/3 ROM validation
+## Required local fixture layout for Milestone 2/3/4 ROM validation
 
 Local ROM fixtures must be mounted under a directory referenced by `LATCHBOY_ROM_ROOT`.
 The layout below is required for the current checked-in `tests/rom_manifest.toml` entries:
@@ -59,15 +59,21 @@ $LATCHBOY_ROM_ROOT/
 │       └── instr_timing.gb
 └── mooneye/
     └── acceptance/
-        └── timer/
-            ├── div_write.gb
-            └── rapid_toggle.gb
+        ├── timer/
+        │   ├── div_write.gb
+        │   └── rapid_toggle.gb
+        └── ppu/
+            ├── intr_2_mode0_timing.gb
+            ├── intr_2_oam_ok_timing.gb
+            ├── stat_irq_blocking.gb
+            └── lyc_onoff.gb
 ```
 
 If any required ROM is missing from these paths, `external_rom_validation` fails when ROM validation is enabled.
 
 Milestone 3 uses `mooneye/acceptance/timer/div_write.gb` as a required timer edge-case gate.
 `mooneye/acceptance/timer/rapid_toggle.gb` is intentionally deferred (`required = false`) until tighter edge-case behavior is in scope.
+Milestone 4 adds required `mooneye_acceptance_ppu` entries and enforces that required Milestone 4 manifest cases use a non-`none` `pass_condition`.
 
 ### Manifest examples
 
@@ -111,10 +117,11 @@ pass_condition = "mooneye_registers"
 LATCHBOY_ROM_ROOT=/absolute/path/to/rom-fixtures cargo test -p latchboy-core --test external_rom_validation
 ```
 
-Optional: run only required Milestone 2/3 manifest checks by selecting the manifest gate test:
+Optional: run manifest-gate checks directly:
 
 ```bash
 cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_and_3_suites
+cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_4_ppu_suites
 ```
 
 ## CI gate for Milestone 2 completion
@@ -147,7 +154,7 @@ Practical verification in CI logs:
 
 - Confirm `cargo test --workspace --all-targets` runs `external_rom_validation`.
 - Confirm there is no skip message indicating `LATCHBOY_ROM_ROOT` is unset/empty.
-- Confirm required Milestone 2/3 cases execute and report pass within configured budgets.
+- Confirm required Milestone 2/3/4 cases execute and report pass within configured budgets.
 
 ## Milestone 2 acceptance checklist → jobs/artifacts
 
