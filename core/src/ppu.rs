@@ -493,6 +493,9 @@ impl Ppu {
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
             return 0;
         }
+        if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+            return 0;
+        }
 
         let color_id = self.background_pixel_color_id(screen_x, screen_y);
         dmg_palette_shade(self.bgp, color_id)
@@ -515,6 +518,8 @@ impl Ppu {
                 self.obp0
             };
             dmg_palette_shade(palette, sprite.color_id)
+        } else if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+            0
         } else {
             dmg_palette_shade(self.bgp, bg_color_id)
         }
@@ -1215,5 +1220,33 @@ mod tests {
 
         ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
         assert_eq!(ppu.background_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn background_pixel_shade_returns_white_when_bg_window_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_01);
+
+        assert_eq!(ppu.background_pixel_shade(0, 0), 1);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        assert_eq!(ppu.background_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn composited_pixel_shade_returns_white_when_bg_window_disabled_and_no_sprite() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_01);
+
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 1);
+
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
     }
 }
