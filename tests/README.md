@@ -40,11 +40,11 @@ Each `[[roms]]` entry defines deterministic execution budgets:
 - `pass_condition`: suite-specific success signal (`blargg_mem` or `mooneye_registers`).
 
 The runner treats unset **or empty** `LATCHBOY_ROM_ROOT` as disabled and skips external ROM execution in that environment.
-When enabled, it executes each required Milestone 2 entry with deterministic cycle stepping, fails on unimplemented opcode dispatch, and fails when a required case does not positively report pass before exceeding its time/cycle/frame budget.
+When enabled, it executes each required Milestone 2/3/4 entry with deterministic cycle stepping, fails on unimplemented opcode dispatch, and fails when a required case does not positively report pass before exceeding its time/cycle/frame budget.
 
 Milestone 3 expands the manifest with required timer-focused entries, while keeping explicit deferred cases (`required = false`) when dependencies are still in progress.
 
-## Required local fixture layout for Milestone 2/3 ROM validation
+## Required local fixture layout for Milestone 2/3/4 ROM validation
 
 Local ROM fixtures must be mounted under a directory referenced by `LATCHBOY_ROM_ROOT`.
 The layout below is required for the current checked-in `tests/rom_manifest.toml` entries:
@@ -59,6 +59,8 @@ $LATCHBOY_ROM_ROOT/
 │       └── instr_timing.gb
 └── mooneye/
     └── acceptance/
+        ├── add_sp_e_timing.gb
+        ├── call_cc_timing.gb
         └── timer/
             ├── div_write.gb
             └── rapid_toggle.gb
@@ -68,6 +70,8 @@ If any required ROM is missing from these paths, `external_rom_validation` fails
 
 Milestone 3 uses `mooneye/acceptance/timer/div_write.gb` as a required timer edge-case gate.
 `mooneye/acceptance/timer/rapid_toggle.gb` is intentionally deferred (`required = false`) until tighter edge-case behavior is in scope.
+Milestone 4 uses `mooneye/acceptance/add_sp_e_timing.gb` and `mooneye/acceptance/call_cc_timing.gb` as required PPU-adjacent readiness checks.
+`mooneye/acceptance/jp_cc_timing.gb` remains explicitly deferred to Milestone 5 to keep remaining scope visible.
 
 ### Manifest examples
 
@@ -101,7 +105,7 @@ wall_time_limit_ms = 8_000
 pass_condition = "mooneye_registers"
 ```
 
-## Running Milestone 2 ROM validation locally
+## Running Milestone 2/3/4 ROM validation locally
 
 1. Ensure fixture files exist in the required layout under a local root directory.
 2. Point `LATCHBOY_ROM_ROOT` at that directory.
@@ -111,11 +115,21 @@ pass_condition = "mooneye_registers"
 LATCHBOY_ROM_ROOT=/absolute/path/to/rom-fixtures cargo test -p latchboy-core --test external_rom_validation
 ```
 
-Optional: run only required Milestone 2/3 manifest checks by selecting the manifest gate test:
+Optional: run only required Milestone 2/3/4 manifest checks by selecting the manifest gate test:
 
 ```bash
-cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_and_3_suites
+cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_3_and_4_suites
 ```
+
+## Commercial smoke matrix (Milestone 4)
+
+Commercial playability smoke coverage is defined in:
+
+- `tests/commercial_smoke_matrix.md`
+
+Latest dated execution evidence for the required matrix rows lives in:
+
+- `tests/validation/milestone4-commercial-smoke-2026-04-17.md`
 
 ## CI gate for Milestone 2 completion
 

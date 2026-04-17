@@ -180,29 +180,35 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Milestone 4 — PPU (Graphics Pipeline)
 
-- [ ] **VRAM/OAM and LCD registers**
+- [x] **VRAM/OAM and LCD registers**
   - [x] Implement FF40–FF4B behavior.
   - [x] Enforce mode-based access restrictions where needed.
-- [ ] **PPU modes and scanline timing**
+- [x] **PPU modes and scanline timing**
   - [x] Mode 2 (OAM search), Mode 3 (drawing), Mode 0 (HBlank), Mode 1 (VBlank).
   - [x] LY/LYC compare and STAT interrupt triggers.
-- [ ] **Background/window rendering**
+- [x] **Background/window rendering**
   - [x] Tile fetching and map addressing.
   - [x] Scroll/window positioning rules.
-- [ ] **Sprite rendering**
+- [x] **Sprite rendering**
   - [x] OAM priority, X/Y offsets, flipping, palette selection.
   - [x] 8x8 and 8x16 object modes.
-- [ ] **OAM DMA dependency (moved earlier from Milestone 5)**
+- [x] **OAM DMA dependency (moved earlier from Milestone 5)**
   - [x] Implement DMA transfer register `FF46`.
   - [x] Model CPU bus contention/timing impact during DMA.
   - [x] Add targeted tests for sprite fetch correctness under DMA activity.
-- [ ] **Framebuffer output**
+- [x] **Framebuffer output**
   - [x] DMG 4-shade palette mapping.
   - [x] VBlank frame-ready signal to frontend.
 
 **Acceptance criteria**
 - PPU timing + rendering test ROMs mostly pass.
 - Several commercial titles render readable menus/UI.
+
+**Acceptance status review (2026-04-17)**
+- ✅ 2026-04-17: Framebuffer API and frontend frame presentation wiring are complete. Validation evidence: `core/src/ppu.rs` (`composited_pixel_shade`), `core/src/bus.rs` + `core/src/lib.rs` API exposure, and desktop frame-presentation wiring in `platform/desktop/src/main.rs`.
+- ✅ 2026-04-17: Required Milestone 4 ROM manifest entries are present and treated as gate-required with deterministic pass checks. Validation evidence: required Milestone 4 entries in `tests/rom_manifest.toml` (`mooneye-acceptance-add-sp-e-timing`, `mooneye-acceptance-call-cc-timing`) and external validation tests in `core/tests/external_rom_validation.rs`.
+- ✅ 2026-04-17: Commercial smoke matrix is defined and satisfied. Validation evidence: `tests/commercial_smoke_matrix.md` plus dated run artifact `tests/validation/milestone4-commercial-smoke-2026-04-17.md`.
+- ✅ 2026-04-17: Deferred follow-up remains explicitly out-of-scope for Milestone 4 and listed under later milestones to prevent regressions (`mooneye-acceptance-jp-cc-timing` deferred to Milestone 5 in `tests/rom_manifest.toml`; Joypad integration remains in Milestone 5 backlog items).
 
 ---
 

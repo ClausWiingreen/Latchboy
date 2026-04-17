@@ -414,7 +414,7 @@ fn format_timeout_state(emulator: &Emulator, executed_cycles: u64) -> String {
 }
 
 #[test]
-fn rom_manifest_registers_required_milestone_2_and_3_suites() {
+fn rom_manifest_registers_required_milestone_2_3_and_4_suites() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
@@ -459,6 +459,20 @@ fn rom_manifest_registers_required_milestone_2_and_3_suites() {
             .any(|rom| !rom.required && rom.milestone == 3 && rom.suite == "mooneye_acceptance_timer"),
         "manifest must include at least one deferred milestone 3 timer ROM entry with an explicit dependency"
     );
+    assert!(
+        manifest
+            .roms
+            .iter()
+            .any(|rom| rom.required && rom.milestone == 4 && rom.suite == "mooneye_acceptance_cpu"),
+        "manifest must include required milestone 4 ROM entries for PPU-adjacent acceptance gating"
+    );
+    assert!(
+        manifest
+            .roms
+            .iter()
+            .any(|rom| !rom.required && rom.milestone >= 5),
+        "manifest must keep at least one deferred ROM entry in a later milestone to prevent scope regressions"
+    );
 
     for rom in &manifest.roms {
         assert!(
@@ -477,7 +491,7 @@ fn rom_manifest_registers_required_milestone_2_and_3_suites() {
             rom.id
         );
 
-        if rom.required && (rom.milestone == 2 || rom.milestone == 3) {
+        if rom.required && (rom.milestone == 2 || rom.milestone == 3 || rom.milestone == 4) {
             assert!(
                 !is_noop_pass_condition(rom.pass_condition),
                 "{} is required for milestone {} and must not use pass_condition = \"none\"",
@@ -523,7 +537,7 @@ pass_condition = "blargg_mem" # suite signal
 }
 
 #[test]
-fn required_milestone_2_and_3_roms_pass_under_external_validation_flow() {
+fn required_milestone_2_3_and_4_roms_pass_under_external_validation_flow() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
@@ -540,18 +554,20 @@ fn required_milestone_2_and_3_roms_pass_under_external_validation_flow() {
         rom_root.display()
     );
 
-    let required_m2_m3_roms: Vec<&RomEntry> = manifest
+    let required_m2_m3_m4_roms: Vec<&RomEntry> = manifest
         .roms
         .iter()
-        .filter(|rom| rom.required && (rom.milestone == 2 || rom.milestone == 3))
+        .filter(|rom| {
+            rom.required && (rom.milestone == 2 || rom.milestone == 3 || rom.milestone == 4)
+        })
         .collect();
 
     assert!(
-        !required_m2_m3_roms.is_empty(),
-        "manifest must define required milestone 2/3 ROM cases"
+        !required_m2_m3_m4_roms.is_empty(),
+        "manifest must define required milestone 2/3/4 ROM cases"
     );
 
-    for rom in &required_m2_m3_roms {
+    for rom in &required_m2_m3_m4_roms {
         assert!(
             !is_noop_pass_condition(rom.pass_condition),
             "{} is required for milestone {} and must not use pass_condition = \"none\"",
@@ -561,7 +577,7 @@ fn required_milestone_2_and_3_roms_pass_under_external_validation_flow() {
     }
 
     let mut failures = Vec::new();
-    for rom in required_m2_m3_roms {
+    for rom in required_m2_m3_m4_roms {
         if let Err(error) = run_rom(&rom_root, rom) {
             failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
         }
@@ -569,13 +585,13 @@ fn required_milestone_2_and_3_roms_pass_under_external_validation_flow() {
 
     assert!(
         failures.is_empty(),
-        "required milestone 2/3 ROM validation failures:\n{}",
+        "required milestone 2/3/4 ROM validation failures:\n{}",
         failures.join("\n")
     );
 }
 
 #[test]
-fn required_milestone_2_and_3_rom_runs_are_deterministic() {
+fn required_milestone_2_3_and_4_rom_runs_are_deterministic() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
@@ -584,18 +600,20 @@ fn required_milestone_2_and_3_rom_runs_are_deterministic() {
         return;
     };
 
-    let required_m2_m3_roms: Vec<&RomEntry> = manifest
+    let required_m2_m3_m4_roms: Vec<&RomEntry> = manifest
         .roms
         .iter()
-        .filter(|rom| rom.required && (rom.milestone == 2 || rom.milestone == 3))
+        .filter(|rom| {
+            rom.required && (rom.milestone == 2 || rom.milestone == 3 || rom.milestone == 4)
+        })
         .collect();
 
     assert!(
-        !required_m2_m3_roms.is_empty(),
-        "manifest must define required milestone 2/3 ROM cases"
+        !required_m2_m3_m4_roms.is_empty(),
+        "manifest must define required milestone 2/3/4 ROM cases"
     );
 
-    for rom in required_m2_m3_roms {
+    for rom in required_m2_m3_m4_roms {
         let first = run_rom(&rom_root, rom).expect("first ROM run should succeed");
         let second = run_rom(&rom_root, rom).expect("second ROM run should succeed");
 

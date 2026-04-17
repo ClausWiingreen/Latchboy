@@ -311,6 +311,10 @@ impl Bus {
     pub fn take_frame_ready(&mut self) -> bool {
         self.ppu.take_frame_ready()
     }
+
+    pub fn composited_pixel_shade(&self, x: u8, y: u8) -> u8 {
+        self.ppu.composited_pixel_shade(x, y)
+    }
 }
 
 #[cfg(test)]

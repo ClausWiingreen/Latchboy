@@ -231,6 +231,11 @@ impl Emulator {
         self.bus.take_frame_ready()
     }
 
+    /// Returns the final DMG shade index (0-3) for a framebuffer pixel at `(x, y)`.
+    pub fn composited_pixel_shade(&self, x: u8, y: u8) -> u8 {
+        self.bus.composited_pixel_shade(x, y)
+    }
+
     /// Returns total cycles executed by this emulator instance.
     pub const fn total_cycles(&self) -> u64 {
         self.total_cycles
@@ -324,6 +329,18 @@ mod tests {
 
         assert!(emulator.take_frame_ready());
         assert!(!emulator.take_frame_ready());
+    }
+
+    #[test]
+    fn composited_pixel_shade_is_exposed_through_emulator_api() {
+        let mut emulator = Emulator::new();
+        emulator.bus.write8(crate::ppu::LCDC_REGISTER, 0x91);
+        emulator.bus.write8(crate::ppu::BGP_REGISTER, 0b11_10_01_00);
+        emulator.bus.write8(0x9800, 0x00);
+        emulator.bus.write8(0x8000, 0xFF);
+        emulator.bus.write8(0x8001, 0xFF);
+
+        assert_eq!(emulator.composited_pixel_shade(0, 0), 3);
     }
 
     #[test]
