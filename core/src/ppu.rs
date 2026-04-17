@@ -499,6 +499,10 @@ impl Ppu {
     /// Sprite priority and transparency are resolved via [`Self::sprite_pixel`], then the
     /// selected BGP/OBP palette register is applied to obtain the framebuffer shade.
     pub fn composited_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return 0;
+        }
+
         let bg_color_id = self.background_pixel_color_id(screen_x, screen_y);
         if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg_color_id) {
             let palette = if sprite.use_obp1 {
@@ -1160,8 +1164,41 @@ mod tests {
 
         ppu.write_register(OBP0_REGISTER, 0b00_00_00_00);
         ppu.write_register(OBP1_REGISTER, 0b00_00_10_00);
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT | LCDC_ENABLED_BIT,
+        );
 
         assert_eq!(ppu.background_pixel_shade(0, 0), 0);
         assert_eq!(ppu.composited_pixel_shade(0, 0), 2);
+    }
+
+    #[test]
+    fn composited_pixel_shade_returns_blank_when_lcd_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_vram(0x8000, 0x00);
+        ppu.write_vram(0x8001, 0x00);
+        ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x01);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_vram(0x8010, 0b1000_0000);
+        ppu.write_vram(0x8011, 0x00);
+        ppu.write_register(OBP1_REGISTER, 0b00_00_10_00);
+
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT | LCDC_ENABLED_BIT,
+        );
+
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 2);
+
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT,
+        );
+        assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
     }
 }
