@@ -96,3 +96,34 @@ Re-evaluate these decisions if any of the following occur:
 - Persistent inability to hit target real-time performance on baseline hardware.
 - Need for multiple frontends requiring stricter plugin boundaries.
 - CGB timing support reveals architecture-level limitations in scheduler granularity.
+
+---
+
+## 6) PPU Framebuffer Ownership + Frame Boundary Contract
+
+### Decision
+Expose a deterministic, PPU-owned framebuffer from the core API:
+
+- Dimensions are fixed at **160x144** (`FRAMEBUFFER_WIDTH`, `FRAMEBUFFER_HEIGHT`).
+- Pixel format is **DMG shade index bytes** (`0..=3`) in row-major order.
+- `take_frame_ready()` emits **exactly one pulse per completed frame** at the VBlank-entry
+  boundary after all visible scanlines have been composited into the framebuffer.
+- Disabling LCD (`LCDC.7 = 0`) clears the framebuffer to shade `0` (blank/white), matching
+  per-pixel APIs that return blank while LCD is off.
+- Disabling LCD also clears any unconsumed `frame_ready` pulse so the signal cannot reference a
+  frame that is no longer present in the framebuffer.
+
+### API/ownership contract
+
+- Storage is owned internally by the PPU for the lifetime of the emulator instance.
+- Frontends receive a read-only borrow (`&[u8]`) and **must copy** if they need to hold frame
+  data across future mutable emulator stepping calls.
+- This keeps ownership simple, avoids per-frame allocations, and guarantees deterministic
+  visibility of the latest completed frame.
+
+### Rendering flow
+
+- During each visible scanline, pixels are composited (BG/window + sprite rules) and written into
+  the framebuffer when that scanline exits Mode 3 (pixel-transfer) into Mode 0 (HBlank).
+- By the time scanline 143 completes and VBlank starts, the framebuffer contains a coherent full
+  frame ready for frontend presentation.
