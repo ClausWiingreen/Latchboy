@@ -149,6 +149,10 @@ impl FramePresenter for SmokePresenter {
         self.elapsed_ms() <= u128::from(self.wall_time_limit_ms)
     }
 
+    fn poll_events(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
         let frame_index = self.frames_presented;
         let capture_hash_sample = frame_index >= self.hash_start_frame

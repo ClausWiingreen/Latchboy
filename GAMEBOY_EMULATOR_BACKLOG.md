@@ -213,12 +213,12 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 **Acceptance status review (2026-04-17, updated)**
 - ⚠️ `PPU timing + rendering test ROMs mostly pass` is **partially evidenced**: required Milestone 4 PPU ROMs are now registered in the manifest, but the current external validation tests only assert required suites for Milestones 2/3. Milestone 4 required entries are therefore not yet enforced by a dedicated automated gate.
-- ⚠️ `Several commercial titles render readable menus/UI` is **still open**: the title smoke matrix is documented in `tests/README.md`, but no committed smoke-run result artifacts or CI/local gate currently prove all listed title checkpoints.
+- ⚠️ `Several commercial titles render readable menus/UI` is **still open**: this evidence now depends on the desktop interactive presentation path (real window + event polling loop) and the title smoke matrix in `tests/README.md`, but no committed smoke-run result artifacts or CI/local gate currently prove all listed title checkpoints through that interactive path.
 - 🔧 Remaining Milestone 4 closure items:
   - Extend `external_rom_validation` manifest gate assertions to include required Milestone 4 PPU suites and budgets.
   - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
   - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
-  - Promote the minimal desktop frame loop to a real interactive presentation path (window + event/input plumbing) before using commercial title readability as a hard gate.
+  - Keep commercial title readability gating tied to the interactive desktop presentation path (window + event polling/input plumbing) rather than headless-only frame pumps.
 
 ---
 

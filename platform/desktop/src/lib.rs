@@ -73,6 +73,7 @@ pub trait FramePresenter {
     type Error: Error + Send + Sync + 'static;
 
     fn is_open(&self) -> bool;
+    fn poll_events(&mut self) -> Result<(), Self::Error>;
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error>;
 }
 
@@ -136,6 +137,12 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 break;
             }
         }
+        presenter
+            .poll_events()
+            .map_err(EmulationRunError::Present)?;
+        if !presenter.is_open() {
+            break;
+        }
         if present_if_ready(emulator, presenter, &mut surface)? {
             frames_presented += 1;
             continue;
@@ -151,6 +158,12 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 if frames_presented >= limit {
                     return Ok(frames_presented);
                 }
+            }
+            presenter
+                .poll_events()
+                .map_err(EmulationRunError::Present)?;
+            if !presenter.is_open() {
+                return Ok(frames_presented);
             }
 
             if present_if_ready(emulator, presenter, &mut surface)? {
