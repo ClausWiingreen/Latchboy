@@ -135,6 +135,9 @@ pub fn run_emulation_loop<P: FramePresenter>(
         presenter
             .poll_events()
             .map_err(EmulationRunError::Present)?;
+        if !presenter.is_open() {
+            break;
+        }
         if let Some(limit) = frame_limit {
             if frames_presented >= limit {
                 break;
@@ -149,6 +152,9 @@ pub fn run_emulation_loop<P: FramePresenter>(
             presenter
                 .poll_events()
                 .map_err(EmulationRunError::Present)?;
+            if !presenter.is_open() {
+                return Ok(frames_presented);
+            }
             if let Some(limit) = iteration_limit {
                 if iterations >= limit {
                     return Ok(frames_presented);

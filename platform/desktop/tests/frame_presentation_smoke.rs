@@ -11,6 +11,38 @@ struct HeadlessPresenter {
     event_polls: u64,
 }
 
+struct CloseOnPollPresenter {
+    open: bool,
+    presents: u64,
+}
+
+impl CloseOnPollPresenter {
+    fn new() -> Self {
+        Self {
+            open: true,
+            presents: 0,
+        }
+    }
+}
+
+impl FramePresenter for CloseOnPollPresenter {
+    type Error = Infallible;
+
+    fn is_open(&self) -> bool {
+        self.open
+    }
+
+    fn poll_events(&mut self) -> Result<(), Self::Error> {
+        self.open = false;
+        Ok(())
+    }
+
+    fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+        self.presents += 1;
+        Ok(())
+    }
+}
+
 impl HeadlessPresenter {
     fn new(frame_budget: u64) -> Self {
         Self {
@@ -147,5 +179,23 @@ fn emulation_loop_drains_pending_frame_ready_before_stepping() {
         emulator.total_cycles(),
         pre_loop_cycles,
         "loop should not advance cycles before presenting pending frame-ready data"
+    );
+}
+
+#[test]
+fn emulation_loop_stops_immediately_when_poll_requests_close() {
+    let mut emulator = Emulator::new();
+    let pre_loop_cycles = emulator.total_cycles();
+    let mut presenter = CloseOnPollPresenter::new();
+
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 210_000, Some(3), Some(1_000))
+        .expect("close-on-poll should terminate cleanly");
+
+    assert_eq!(frames, 0);
+    assert_eq!(presenter.presents, 0);
+    assert_eq!(
+        emulator.total_cycles(),
+        pre_loop_cycles,
+        "loop should not step cycles after a close request from poll_events"
     );
 }
