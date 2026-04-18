@@ -216,7 +216,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - ⚠️ `Several commercial titles render readable menus/UI` is **still open**: the title smoke matrix is documented in `tests/README.md`, but no committed smoke-run result artifacts or CI/local gate currently prove all listed title checkpoints.
 - 🔧 Remaining Milestone 4 closure items:
   - Extend `external_rom_validation` manifest gate assertions to include required Milestone 4 PPU suites and budgets.
-  - Add a repeatable smoke-run summary artifact format that can be checked in (metadata + hashes only, no copyrighted frames) and require it for Milestone 4 closure.
+  - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
+  - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
   - Promote the minimal desktop frame loop to a real interactive presentation path (window + event/input plumbing) before using commercial title readability as a hard gate.
 
 ---
@@ -253,7 +254,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
   - [ ] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
   - [x] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
-  - [ ] Require a machine-readable smoke summary file (title → PASS/FAIL + frame checkpoint + hash window) for milestone sign-off.
+  - [ ] Require committed smoke summary evidence matching `tests/artifacts/milestone4-smoke-summary.schema.json` (title → `run.json`, `summary.json`, `hash_window`, checkpoint frame index, pass/fail reason) for milestone sign-off.
+  - [ ] Enforce policy that only metadata + hashes are committed; copyrighted commercial frame/image/video assets are forbidden.
   - [ ] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
 
 ---

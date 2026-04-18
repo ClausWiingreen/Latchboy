@@ -174,6 +174,48 @@ readiness, not full gameplay coverage.
 > Commercial ROM binaries must remain local-only and must not be committed to this repository.
 > See `docs/rom-usage-policy.md` for licensing and distribution rules.
 
+### Committed smoke evidence schema (metadata + hashes only)
+
+Milestone 4 closure requires a committed, machine-readable smoke summary that contains **only**
+metadata and deterministic hash evidence (no frame/image/video assets). The canonical schema lives
+at:
+
+- `tests/artifacts/milestone4-smoke-summary.schema.json`
+
+For a committed smoke summary artifact:
+
+- `titles` is required and must be an object map keyed by curated Milestone 4 `title_id` values:
+  - `tetris-world`
+  - `super-mario-land-world`
+  - `legend-of-zelda-links-awakening-world`
+- Because `titles` is key-addressed, each title entry is distinct by key (no duplicate title rows).
+- The map key is the canonical `title_id`; do not duplicate a separate `title_id` field inside the value object.
+
+For each `titles.<title_id>` entry:
+
+- `run.json` object is required:
+  - `commit_sha`, `rom_id`, `runner_command`, `frame_limit`, `wall_time_limit_ms`.
+- `summary.json` object is required:
+  - `status` (`PASS`/`FAIL`), `checkpoint_frame_index`, `pass_fail_reason`.
+- Hash evidence is required:
+  - `hash_window` with `algorithm`, `start_frame`, `frame_count`, `sample_stride`, and `hashes`.
+- Explicit non-asset attestation is required:
+  - `copyrighted_assets_committed` must be present and set to `false` for each title entry.
+- Checkpoint evidence is required:
+  - `checkpoint_frame_index` integer for the observed pass/fail checkpoint frame.
+- Failure semantics are required:
+  - `pass_fail_reason` describing timeout, crash, incorrect visual state, or explicit pass signal match.
+
+Summary-level coverage requirement:
+
+- `titles` must include at least **2** distinct title entries (matching the curated 2–3 title baseline for Milestone 4 smoke coverage).
+
+Copyright and artifact policy for committed evidence:
+
+- ✅ Allowed: metadata JSON/TOML/Markdown summaries and deterministic hash values.
+- ❌ Forbidden: copyrighted commercial frame captures (`final_frame.png`, `frames/`, raw video, GIFs)
+  in git history, PR attachments, issues, or public CI artifacts.
+
 ### Curated title checkpoints (2–3 title baseline)
 
 Use this baseline matrix unless a release branch explicitly documents overrides:
@@ -203,7 +245,7 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
    - Execution log (`runner.log`): stdout/stderr and timeout/pass status.
    - Local-only visual capture (`final_frame.png` + required `frames/` sequence for any consecutive-frame pass check).
    - `frame_hash.txt` containing either per-frame hashes or a deterministic rolling hash window for the exact frame range used in pass/fail assertions.
-   - `pass_window.json` describing the exact frame interval used for each assertion (for example, Tetris 120-frame window start/end).
+   - `pass_window.json` describing the exact frame interval used for each assertion using `start_frame` + `frame_count` (for example, Tetris 120-frame window).
 3. **Record outcome per title** in `summary.md` inside the same timestamped directory with:
    - `PASS`/`FAIL`.
    - Observed checkpoint frame number.
