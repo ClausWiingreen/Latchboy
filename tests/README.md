@@ -236,6 +236,51 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
 
 ### Repeatable smoke result collection + review procedure
 
+
+### Local smoke harness command (metadata + hashes only)
+
+Milestone 4 now includes a repeatable local harness entrypoint at:
+
+- `platform/desktop/src/bin/milestone4_smoke.rs`
+
+Run it per title (local ROM copies only):
+
+```bash
+TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
+cargo run -p latchboy-desktop --bin milestone4_smoke -- \
+  --rom /absolute/path/to/roms/tetris.gb \
+  --rom-id tetris-world-local \
+  --title-id tetris-world \
+  --output-dir tests/artifacts/smoke/milestone4/${TIMESTAMP}/tetris-world
+```
+
+The harness consumes Milestone 4 matrix defaults when `--title-id` is one of:
+
+- `tetris-world`
+- `super-mario-land-world`
+- `legend-of-zelda-links-awakening-world`
+
+You can override budgets/checkpoint hashing manually with:
+
+- `--frame-limit`
+- `--wall-time-limit-ms`
+- `--checkpoint-start-frame` / `--checkpoint-frame-count`
+- `--hash-start-frame` / `--hash-frame-count` / `--hash-sample-stride`
+- `--cycle-step`
+
+Expected per-title outputs (metadata/hash evidence only) are written to `--output-dir`:
+
+- `run.json`
+- `summary.json`
+- `hash_window.json`
+- `pass_window.json`
+- `title-evidence.json`
+- `runner.log`
+
+These files intentionally exclude copyrighted frame/image/video assets and are
+compatible with the Milestone 4 smoke evidence schema fields (`run.json`,
+`summary.json`, `hash_window`, `pass_window`, and `copyrighted_assets_committed=false`).
+
 1. **Create a timestamped evidence folder** (local-only workspace):
    `tests/artifacts/smoke/milestone4/<YYYYMMDD-HHMMSS>/`.
    This directory is intentionally gitignored and must not be uploaded as a PR/CI artifact when it contains commercial frame captures.
@@ -244,7 +289,7 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
    - Run metadata (`run.json`): commit SHA, ROM identifier, runner command, frame/time budget.
    - Execution log (`runner.log`): stdout/stderr and timeout/pass status.
    - Local-only visual capture (`final_frame.png` + required `frames/` sequence for any consecutive-frame pass check).
-   - `frame_hash.txt` containing either per-frame hashes or a deterministic rolling hash window for the exact frame range used in pass/fail assertions.
+   - `hash_window.json` containing deterministic sampled frame hashes for the exact frame range used in pass/fail assertions.
    - `pass_window.json` describing the exact frame interval used for each assertion using `start_frame` + `frame_count` (for example, Tetris 120-frame window).
 3. **Record outcome per title** in `summary.md` inside the same timestamped directory with:
    - `PASS`/`FAIL`.
@@ -256,7 +301,7 @@ Use this baseline matrix unless a release branch explicitly documents overrides:
 5. **Report only non-copyrighted review evidence** in PR/issue notes:
    - Include `summary.md`, budgets used, checkpoint frame numbers, and relevant hash/window values.
    - Do **not** attach or link `final_frame.png`, `frames/`, or raw video captures from commercial titles in PRs, issues, or public CI artifact storage (consistent with `docs/rom-usage-policy.md`).
-   - If reviewer verification is needed, reviewers should rerun locally against their own legal ROM copies and compare against `frame_hash.txt` + `pass_window.json`.
+   - If reviewer verification is needed, reviewers should rerun locally against their own legal ROM copies and compare against `hash_window.json` + `pass_window.json`.
 
 For this Milestone 4 matrix, keep `frames/` mandatory for the Tetris case because its pass signal depends on 120 consecutive frames; if additional titles later adopt consecutive-frame checks, apply the same requirement to those titles as well.
 
@@ -268,21 +313,21 @@ tests/artifacts/smoke/milestone4/20260417-153000/
 ├── tetris-world/
 │   ├── run.json
 │   ├── runner.log
-│   ├── frame_hash.txt
+│   ├── hash_window.json
 │   ├── pass_window.json
 │   ├── final_frame.png        # local-only, do not publish
 │   └── frames/                # local-only, do not publish
 ├── super-mario-land-world/
 │   ├── run.json
 │   ├── runner.log
-│   ├── frame_hash.txt
+│   ├── hash_window.json
 │   ├── pass_window.json
 │   ├── final_frame.png        # local-only, do not publish
 │   └── frames/                # optional unless consecutive-frame check
 └── zelda-links-awakening-world/
     ├── run.json
     ├── runner.log
-    ├── frame_hash.txt
+    ├── hash_window.json
     ├── pass_window.json
     ├── final_frame.png        # local-only, do not publish
     └── frames/                # optional unless consecutive-frame check
