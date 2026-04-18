@@ -218,10 +218,10 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - `cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <absolute-rom-path> --rom-id <rom-id> --title-id <tetris-world|super-mario-land-world|legend-of-zelda-links-awakening-world> --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/<title-id>`
 
 **Acceptance status review (2026-04-17, updated)**
-- ⚠️ `Required Milestone 4 PPU manifest entries pass 100%` is **partially evidenced**: required Milestone 4 PPU ROMs are registered in the manifest, but the current external validation tests only assert required suites for Milestones 2/3. The named Milestone 4 gate must be added/enforced.
+- ⚠️ `Required Milestone 4 PPU manifest entries pass 100%` is **partially evidenced**: the run-level gate `required_milestone_4_roms_pass_under_external_validation_flow` now exists in `external_rom_validation`, but full sign-off still depends on fixture-backed CI/local executions with `LATCHBOY_ROM_ROOT` set and green results on the target commit.
 - ⚠️ `3/3 curated titles reach named menu checkpoints within fixed budgets` is **still open**: the title smoke matrix exists in `tests/README.md`, but committed summary artifacts and the schema-validation gate are not yet wired as required sign-off checks.
 - 🔧 Remaining Milestone 4 closure items:
-  - Extend `external_rom_validation` manifest gate assertions to include required Milestone 4 PPU suites and budgets.
+  - Enforce fixture-backed execution of `required_milestone_4_roms_pass_under_external_validation_flow` in CI for target commits (no skipped external ROM runs).
   - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
   - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
   - Keep commercial title readability gating tied to the interactive desktop presentation path (window + event polling/input plumbing) rather than headless-only frame pumps.
