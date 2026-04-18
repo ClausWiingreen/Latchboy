@@ -403,16 +403,27 @@ fn help_text() -> String {
     )
 }
 
-fn git_commit_sha() -> String {
+fn git_commit_sha() -> Result<String, Box<dyn Error>> {
     let output = Command::new("git")
         .args(["rev-parse", "--short=12", "HEAD"])
-        .output();
-    match output {
-        Ok(result) if result.status.success() => {
-            String::from_utf8_lossy(&result.stdout).trim().to_owned()
-        }
-        _ => "unknown".to_owned(),
+        .output()
+        .map_err(|error| format!("failed to execute git rev-parse: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!("git rev-parse --short=12 HEAD failed: {stderr}").into());
     }
+
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let valid_sha = !sha.is_empty() && sha.chars().all(|ch| ch.is_ascii_hexdigit());
+    if !valid_sha {
+        return Err(format!(
+            "git rev-parse returned non-hex commit SHA '{sha}', cannot emit schema-compatible run.json"
+        )
+        .into());
+    }
+
+    Ok(sha.to_ascii_lowercase())
 }
 
 fn escape_json(value: &str) -> String {
@@ -448,9 +459,15 @@ fn quoted(value: &str) -> String {
 }
 
 fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), Box<dyn Error>> {
+    if presenter.sampled_hashes.is_empty() {
+        return Err(
+            "no sampled frame hashes captured in configured hash window; adjust hash window settings so schema-required hash evidence is produced".into(),
+        );
+    }
+
     fs::create_dir_all(&config.output_dir)?;
 
-    let commit_sha = git_commit_sha();
+    let commit_sha = git_commit_sha()?;
     let title_id_value = config.title_id.as_deref().unwrap_or("unscoped-local-run");
     let mut run_fields = BTreeMap::new();
     run_fields.insert("commit_sha", quoted(&commit_sha));
@@ -491,15 +508,6 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         )
     };
 
-    let pass_fail_reason = if presenter.sampled_hashes.is_empty() {
-        format!(
-            "{} Fallback hash placeholder emitted because no frames landed in the configured hash window.",
-            pass_fail_reason
-        )
-    } else {
-        pass_fail_reason
-    };
-
     let mut summary_fields = BTreeMap::new();
     summary_fields.insert("status", quoted(status));
     summary_fields.insert("checkpoint_frame_index", checkpoint_frame_index.to_string());
@@ -519,20 +527,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         })
         .collect::<Vec<_>>();
 
-    let hashes_json = if hashes.is_empty() {
-        let fallback_frame_index = if presenter.frames_presented == 0 {
-            0
-        } else {
-            presenter.frames_presented.saturating_sub(1)
-        };
-        format!(
-            "[\n    {{\"frame_index\": {}, \"hash\": {}}}\n  ]",
-            fallback_frame_index,
-            quoted("no-sampled-frame-available")
-        )
-    } else {
-        format!("[\n{}\n  ]", hashes.join(",\n"))
-    };
+    let hashes_json = format!("[\n{}\n  ]", hashes.join(",\n"));
 
     let hash_window_json = format!(
         "{{\n  \"algorithm\": \"fnv1a64-rgb32le\",\n  \"start_frame\": {},\n  \"frame_count\": {},\n  \"sample_stride\": {},\n  \"hashes\": {}\n}}",
@@ -641,7 +636,10 @@ fn main() -> process::ExitCode {
         return process::ExitCode::FAILURE;
     }
 
-    if presenter.checkpoint_reached() && !presenter.timed_out {
+    if presenter.checkpoint_reached()
+        && !presenter.timed_out
+        && !presenter.sampled_hashes.is_empty()
+    {
         process::ExitCode::SUCCESS
     } else {
         process::ExitCode::FAILURE
