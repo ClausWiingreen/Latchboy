@@ -459,12 +459,6 @@ fn quoted(value: &str) -> String {
 }
 
 fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), Box<dyn Error>> {
-    if presenter.sampled_hashes.is_empty() {
-        return Err(
-            "no sampled frame hashes captured in configured hash window; adjust hash window settings so schema-required hash evidence is produced".into(),
-        );
-    }
-
     fs::create_dir_all(&config.output_dir)?;
 
     let commit_sha = git_commit_sha()?;
@@ -483,12 +477,20 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         .saturating_add(config.checkpoint_frame_count)
         .saturating_sub(1);
 
-    let status = if presenter.checkpoint_reached() && !presenter.timed_out {
+    let status = if presenter.checkpoint_reached()
+        && !presenter.timed_out
+        && !presenter.sampled_hashes.is_empty()
+    {
         "PASS"
     } else {
         "FAIL"
     };
-    let pass_fail_reason = if status == "PASS" {
+    let pass_fail_reason = if presenter.sampled_hashes.is_empty() {
+        format!(
+            "No sampled hashes were captured for hash window start={} frame_count={} stride={}; check hash window parameters or investigate early timeout/regression.",
+            config.hash_start_frame, config.hash_frame_count, config.hash_sample_stride
+        )
+    } else if status == "PASS" {
         format!(
             "Captured configured checkpoint window [{}..={}] within deterministic frame/time budget.",
             config.checkpoint_start_frame, checkpoint_frame_index
@@ -527,7 +529,20 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         })
         .collect::<Vec<_>>();
 
-    let hashes_json = format!("[\n{}\n  ]", hashes.join(",\n"));
+    let hashes_json = if hashes.is_empty() {
+        let fallback_frame_index = if presenter.frames_presented == 0 {
+            0
+        } else {
+            presenter.frames_presented.saturating_sub(1)
+        };
+        format!(
+            "[\n    {{\"frame_index\": {}, \"hash\": {}}}\n  ]",
+            fallback_frame_index,
+            quoted("no-sampled-frame-available")
+        )
+    } else {
+        format!("[\n{}\n  ]", hashes.join(",\n"))
+    };
 
     let hash_window_json = format!(
         "{{\n  \"algorithm\": \"fnv1a64-rgb32le\",\n  \"start_frame\": {},\n  \"frame_count\": {},\n  \"sample_stride\": {},\n  \"hashes\": {}\n}}",
