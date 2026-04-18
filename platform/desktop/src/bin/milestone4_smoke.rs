@@ -70,6 +70,7 @@ struct CliConfig {
     rom_id: String,
     title_id: Option<String>,
     output_dir: PathBuf,
+    runner_command: String,
     frame_limit: u64,
     wall_time_limit_ms: u64,
     checkpoint_start_frame: u64,
@@ -192,8 +193,25 @@ fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
     })
 }
 
+fn shell_escape_arg(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_owned();
+    }
+
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || "-_./:=".contains(ch))
+    {
+        return value.to_owned();
+    }
+
+    let escaped = value.replace('\'', "'\"'\"'");
+    format!("'{escaped}'")
+}
+
 fn parse_args() -> Result<CliConfig, UsageError> {
-    let mut args = env::args().skip(1);
+    let provided_args = env::args().skip(1).collect::<Vec<_>>();
+    let mut args = provided_args.iter();
 
     let mut rom_path: Option<PathBuf> = None;
     let mut rom_id: Option<String> = None;
@@ -220,25 +238,25 @@ fn parse_args() -> Result<CliConfig, UsageError> {
 
         match flag.as_str() {
             "--rom" => rom_path = Some(PathBuf::from(value)),
-            "--rom-id" => rom_id = Some(value),
-            "--title-id" => title_id = Some(value),
+            "--rom-id" => rom_id = Some(value.clone()),
+            "--title-id" => title_id = Some(value.clone()),
             "--output-dir" => output_dir = Some(PathBuf::from(value)),
-            "--frame-limit" => frame_limit = Some(parse_u64(&value, "frame-limit")?),
+            "--frame-limit" => frame_limit = Some(parse_u64(value, "frame-limit")?),
             "--wall-time-limit-ms" => {
-                wall_time_limit_ms = Some(parse_u64(&value, "wall-time-limit-ms")?)
+                wall_time_limit_ms = Some(parse_u64(value, "wall-time-limit-ms")?)
             }
             "--checkpoint-start-frame" => {
-                checkpoint_start_frame = Some(parse_u64(&value, "checkpoint-start-frame")?)
+                checkpoint_start_frame = Some(parse_u64(value, "checkpoint-start-frame")?)
             }
             "--checkpoint-frame-count" => {
-                checkpoint_frame_count = Some(parse_u64(&value, "checkpoint-frame-count")?)
+                checkpoint_frame_count = Some(parse_u64(value, "checkpoint-frame-count")?)
             }
-            "--hash-start-frame" => hash_start_frame = Some(parse_u64(&value, "hash-start-frame")?),
-            "--hash-frame-count" => hash_frame_count = Some(parse_u64(&value, "hash-frame-count")?),
+            "--hash-start-frame" => hash_start_frame = Some(parse_u64(value, "hash-start-frame")?),
+            "--hash-frame-count" => hash_frame_count = Some(parse_u64(value, "hash-frame-count")?),
             "--hash-sample-stride" => {
-                hash_sample_stride = Some(parse_u64(&value, "hash-sample-stride")?)
+                hash_sample_stride = Some(parse_u64(value, "hash-sample-stride")?)
             }
-            "--cycle-step" => cycle_step = Some(parse_u32(&value, "cycle-step")?),
+            "--cycle-step" => cycle_step = Some(parse_u32(value, "cycle-step")?),
             _ => {
                 return Err(UsageError(format!(
                     "unknown argument '{flag}'\n\n{}",
@@ -295,6 +313,14 @@ fn parse_args() -> Result<CliConfig, UsageError> {
     let hash_frame_count = hash_frame_count.unwrap_or(checkpoint_frame_count);
     let hash_sample_stride = hash_sample_stride.unwrap_or(1);
     let cycle_step = cycle_step.unwrap_or(DEFAULT_CYCLE_STEP);
+    let runner_command = format!(
+        "cargo run -p latchboy-desktop --bin milestone4_smoke -- {}",
+        provided_args
+            .iter()
+            .map(|arg| shell_escape_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
 
     if frame_limit == 0 {
         return Err(UsageError(
@@ -332,6 +358,7 @@ fn parse_args() -> Result<CliConfig, UsageError> {
         rom_id,
         title_id,
         output_dir,
+        runner_command,
         frame_limit,
         wall_time_limit_ms,
         checkpoint_start_frame,
@@ -425,16 +452,10 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
 
     let commit_sha = git_commit_sha();
     let title_id_value = config.title_id.as_deref().unwrap_or("unscoped-local-run");
-    let runner_command = format!(
-        "cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom {} --output-dir {}",
-        config.rom_path.display(),
-        config.output_dir.display(),
-    );
-
     let mut run_fields = BTreeMap::new();
     run_fields.insert("commit_sha", quoted(&commit_sha));
     run_fields.insert("rom_id", quoted(&config.rom_id));
-    run_fields.insert("runner_command", quoted(&runner_command));
+    run_fields.insert("runner_command", quoted(&config.runner_command));
     run_fields.insert("frame_limit", config.frame_limit.to_string());
     run_fields.insert("wall_time_limit_ms", config.wall_time_limit_ms.to_string());
     let run_json = json_object(&run_fields);
