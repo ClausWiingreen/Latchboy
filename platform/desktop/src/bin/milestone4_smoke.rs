@@ -48,6 +48,14 @@ const MATRIX_PRESETS: [MatrixPreset; 3] = [
 #[derive(Debug)]
 struct UsageError(String);
 
+fn known_title_ids() -> String {
+    MATRIX_PRESETS
+        .iter()
+        .map(|preset| preset.title_id)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 impl fmt::Display for UsageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -246,10 +254,19 @@ fn parse_args() -> Result<CliConfig, UsageError> {
         .ok_or_else(|| UsageError(format!("missing required --output-dir\n\n{}", help_text())))?;
 
     let selected_preset = match title_id.as_deref() {
-        Some(id) => MATRIX_PRESETS
-            .iter()
-            .find(|preset| preset.title_id == id)
-            .copied(),
+        Some(id) => {
+            let preset = MATRIX_PRESETS
+                .iter()
+                .find(|preset| preset.title_id == id)
+                .copied();
+            if preset.is_none() {
+                return Err(UsageError(format!(
+                    "unknown --title-id '{id}'. Expected one of: {}",
+                    known_title_ids()
+                )));
+            }
+            preset
+        }
         None => None,
     };
 
@@ -453,6 +470,15 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         )
     };
 
+    let pass_fail_reason = if presenter.sampled_hashes.is_empty() {
+        format!(
+            "{} Fallback hash placeholder emitted because no frames landed in the configured hash window.",
+            pass_fail_reason
+        )
+    } else {
+        pass_fail_reason
+    };
+
     let mut summary_fields = BTreeMap::new();
     summary_fields.insert("status", quoted(status));
     summary_fields.insert("checkpoint_frame_index", checkpoint_frame_index.to_string());
@@ -473,7 +499,16 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         .collect::<Vec<_>>();
 
     let hashes_json = if hashes.is_empty() {
-        "[]".to_owned()
+        let fallback_frame_index = if presenter.frames_presented == 0 {
+            0
+        } else {
+            presenter.frames_presented.saturating_sub(1)
+        };
+        format!(
+            "[\n    {{\"frame_index\": {}, \"hash\": {}}}\n  ]",
+            fallback_frame_index,
+            quoted("no-sampled-frame-available")
+        )
     } else {
         format!("[\n{}\n  ]", hashes.join(",\n"))
     };
