@@ -217,18 +217,22 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - `LATCHBOY_ROM_ROOT=<rom-fixtures> cargo test -p latchboy-core --test external_rom_validation required_milestone_4_roms_pass_under_external_validation_flow`
   - `cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <absolute-rom-path> --rom-id <rom-id> --title-id <tetris-world|super-mario-land-world|legend-of-zelda-links-awakening-world> --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/<title-id>`
 
-**Acceptance status review (2026-04-17, updated)**
-- ⚠️ `Required Milestone 4 PPU manifest entries pass 100%` is **partially evidenced**: the run-level gate `required_milestone_4_roms_pass_under_external_validation_flow` now exists in `external_rom_validation`, but full sign-off still depends on fixture-backed CI/local executions with `LATCHBOY_ROM_ROOT` set and green results on the target commit.
-- ⚠️ `3/3 curated titles reach named menu checkpoints within fixed budgets` is **still open**: the title smoke matrix exists in `tests/README.md`, but committed summary artifacts and the schema-validation gate are not yet wired as required sign-off checks.
+**Acceptance status review (2026-04-18, updated)**
+- ⚠️ `Required Milestone 4 PPU manifest entries pass 100%` remains **partially evidenced**. The gate test (`required_milestone_4_roms_pass_under_external_validation_flow`) is implemented and green in normal workspace test runs, but it intentionally skips when `LATCHBOY_ROM_ROOT` is unset/empty; therefore, a green run without fixtures is not sufficient sign-off evidence.
+- ⚠️ `3/3 curated titles reach named menu checkpoints within fixed budgets` is **still open**. The smoke harness (`milestone4_smoke`) and schema file are present, but no committed `tests/artifacts/milestone4-smoke-summary.json` evidence file currently exists.
+- ⚠️ Schema enforcement for smoke evidence is **still open**. The schema exists, but there is no dedicated automated validation test that fails when a committed milestone summary drifts from `tests/artifacts/milestone4-smoke-summary.schema.json`.
 - 🔧 Remaining Milestone 4 closure items:
   - Enforce fixture-backed execution of `required_milestone_4_roms_pass_under_external_validation_flow` in CI for target commits (no skipped external ROM runs).
-  - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
+  - Add and maintain committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.json` (schema-conformant) for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
+  - Add an automated schema-validation gate in tests/CI that validates the committed smoke summary against `tests/artifacts/milestone4-smoke-summary.schema.json`.
   - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
   - Keep commercial title readability gating tied to the interactive desktop presentation path (window + event polling/input plumbing) rather than headless-only frame pumps.
 
 ---
 
-## Milestone 5 — Input and DMA
+## Milestone 5 — Input and UX integration
+
+_Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctness/timing depends on it._
 
 - [ ] **Joypad input (FF00)**
   - [ ] Button matrix selection and polling.
@@ -242,20 +246,28 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Backlog sequencing refinements (2026-04-17)
 
-- [ ] **Tighten milestone-to-validation mapping**
+- [ ] **Priority 1: Tighten milestone-to-validation mapping**
   - [ ] For each milestone from 3 onward, define at least one required external ROM suite entry (`tests/rom_manifest.toml`) before marking the milestone complete.
   - [ ] Keep deferred/non-required entries explicit, with a note describing the dependency (e.g., PPU mode timing not yet in scope).
-- [ ] **Close the “registered vs enforced” validation gap**
+- [ ] **Priority 1: Close the “registered vs enforced” validation gap**
   - [ ] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
   - [ ] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
-- [ ] **Normalize acceptance criteria wording**
+- [ ] **Priority 1: Turn Milestone 4 evidence from “defined” to “enforced”**
+  - [ ] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
+  - [ ] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
+  - [ ] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
+- [ ] **Priority 2: Normalize acceptance criteria wording**
   - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
-- [ ] **Clarify “evidence of completion” artifacts**
+- [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [ ] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
   - [ ] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them.
-- [ ] **Document blocking dependencies directly inside milestones**
+- [ ] **Priority 3: Document blocking dependencies directly inside milestones**
   - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
   - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
+- [ ] **Priority 3: Re-scope Milestone 5 naming and order**
+  - [ ] Rename Milestone 5 heading from “Input and DMA” to “Input and UX integration” (DMA has already been pulled into Milestone 4 implementation scope).
+  - [ ] Keep FF00/joypad interrupt behavior as Milestone 5 gate prerequisites before adding broader game-compatibility smoke goals.
+  - [ ] Add a follow-on milestone note for post-input interactive goals (pause/reset hotkeys, deterministic input playback, and expanded compatibility smoke list).
 - [ ] **Milestone 4 closure contract**
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
   - [ ] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
