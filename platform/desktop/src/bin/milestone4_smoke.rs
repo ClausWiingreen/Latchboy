@@ -430,6 +430,12 @@ fn parse_args() -> Result<CliConfig, UsageError> {
             "--title-id requires --title-signal-hash so PASS can be gated on title-specific signal evidence".to_owned(),
         ));
     }
+    if title_signal_hash.is_some() && title_signal_frame.is_none() && title_id.is_none() {
+        return Err(UsageError(
+            "--title-signal-hash requires --title-signal-frame when --title-id is not provided"
+                .to_owned(),
+        ));
+    }
     if let Some(frame) = title_signal_frame {
         if !frame_is_hash_sample(
             frame,
@@ -566,7 +572,10 @@ fn title_signal_matches(config: &CliConfig, presenter: &SmokePresenter) -> Resul
         Some(value) => value,
         None => return Ok(true),
     };
-    let signal_frame = config.title_signal_frame.unwrap_or(0);
+    let signal_frame = config.title_signal_frame.ok_or_else(|| {
+        "Missing --title-signal-frame for --title-signal-hash (or provide --title-id to use preset-derived defaults)."
+            .to_owned()
+    })?;
 
     let observed = presenter
         .sampled_hashes
@@ -627,20 +636,6 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     };
     let pass_fail_reason = if let Err(reason) = title_signal_check {
         reason
-    } else if !has_full_hash_coverage {
-        format!(
-            "Incomplete hash-window coverage: expected {} samples for start={} frame_count={} stride={}, captured {}.",
-            expected_hash_samples,
-            config.hash_start_frame,
-            config.hash_frame_count,
-            config.hash_sample_stride,
-            actual_hash_samples
-        )
-    } else if status == "PASS" {
-        format!(
-            "Captured configured checkpoint window [{}..={}] within deterministic frame/time budget.",
-            config.checkpoint_start_frame, checkpoint_frame_index
-        )
     } else if presenter.timed_out && presenter.checkpoint_reached() {
         format!(
             "Timed out at {}ms after {} presented frames after reaching checkpoint window [{}..={}], before completing full smoke evidence requirements.",
@@ -657,10 +652,29 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
             config.checkpoint_start_frame,
             checkpoint_frame_index
         )
-    } else {
+    } else if !presenter.checkpoint_reached() {
         format!(
             "Frame budget exhausted after {} frames before reaching checkpoint window [{}..={}].",
             presenter.frames_presented, config.checkpoint_start_frame, checkpoint_frame_index
+        )
+    } else if !has_full_hash_coverage {
+        format!(
+            "Incomplete hash-window coverage: expected {} samples for start={} frame_count={} stride={}, captured {}.",
+            expected_hash_samples,
+            config.hash_start_frame,
+            config.hash_frame_count,
+            config.hash_sample_stride,
+            actual_hash_samples
+        )
+    } else if status == "PASS" {
+        format!(
+            "Captured configured checkpoint window [{}..={}] within deterministic frame/time budget.",
+            config.checkpoint_start_frame, checkpoint_frame_index
+        )
+    } else {
+        format!(
+            "Failed smoke checks despite reaching checkpoint window [{}..={}].",
+            config.checkpoint_start_frame, checkpoint_frame_index
         )
     };
 
