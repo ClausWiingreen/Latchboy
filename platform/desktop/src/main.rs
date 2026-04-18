@@ -89,6 +89,7 @@ impl FramePresenter for WindowSurface {
         while let Ok(event) = self.input_events.try_recv() {
             if event.trim().eq_ignore_ascii_case("q") || event.trim().eq_ignore_ascii_case("quit") {
                 self.close_requested = true;
+                return Ok(());
             }
         }
         Ok(())
