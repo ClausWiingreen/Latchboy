@@ -213,6 +213,12 @@ fn normalize_hash(value: &str) -> String {
     without_prefix.to_ascii_lowercase()
 }
 
+fn parse_hash_u64(value: &str) -> Result<u64, String> {
+    let normalized = normalize_hash(value);
+    u64::from_str_radix(&normalized, 16)
+        .map_err(|_| format!("invalid hash '{}' (expected 1-16 hex digits)", value.trim()))
+}
+
 fn hash_window_end_exclusive(hash_start_frame: u64, hash_frame_count: u64) -> u64 {
     hash_start_frame.saturating_add(hash_frame_count.max(1))
 }
@@ -590,12 +596,17 @@ fn title_signal_matches(config: &CliConfig, presenter: &SmokePresenter) -> Resul
         ));
     };
 
-    if observed_hash == expected_hash {
+    let expected_hash_value = parse_hash_u64(expected_hash)
+        .map_err(|reason| format!("Invalid --title-signal-hash: {}.", reason))?;
+    let observed_hash_value = parse_hash_u64(&observed_hash)
+        .map_err(|reason| format!("Captured non-hex title signal hash: {}.", reason))?;
+
+    if observed_hash_value == expected_hash_value {
         Ok(true)
     } else {
         Err(format!(
-            "Title signal mismatch at frame {}: expected {}, observed {}.",
-            signal_frame, expected_hash, observed_hash
+            "Title signal mismatch at frame {}: expected 0x{:016x}, observed 0x{:016x}.",
+            signal_frame, expected_hash_value, observed_hash_value
         ))
     }
 }
