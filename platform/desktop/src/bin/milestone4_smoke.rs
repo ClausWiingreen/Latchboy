@@ -458,6 +458,14 @@ fn quoted(value: &str) -> String {
     format!("\"{}\"", escape_json(value))
 }
 
+fn expected_hash_sample_count(config: &CliConfig) -> u64 {
+    config
+        .hash_frame_count
+        .saturating_sub(1)
+        .saturating_div(config.hash_sample_stride)
+        .saturating_add(1)
+}
+
 fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&config.output_dir)?;
 
@@ -477,18 +485,24 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         .saturating_add(config.checkpoint_frame_count)
         .saturating_sub(1);
 
-    let status = if presenter.checkpoint_reached()
-        && !presenter.timed_out
-        && !presenter.sampled_hashes.is_empty()
+    let expected_hash_samples = expected_hash_sample_count(config);
+    let actual_hash_samples = presenter.sampled_hashes.len() as u64;
+    let has_full_hash_coverage = actual_hash_samples == expected_hash_samples;
+
+    let status = if presenter.checkpoint_reached() && !presenter.timed_out && has_full_hash_coverage
     {
         "PASS"
     } else {
         "FAIL"
     };
-    let pass_fail_reason = if presenter.sampled_hashes.is_empty() {
+    let pass_fail_reason = if !has_full_hash_coverage {
         format!(
-            "No sampled hashes were captured for hash window start={} frame_count={} stride={}; check hash window parameters or investigate early timeout/regression.",
-            config.hash_start_frame, config.hash_frame_count, config.hash_sample_stride
+            "Incomplete hash-window coverage: expected {} samples for start={} frame_count={} stride={}, captured {}.",
+            expected_hash_samples,
+            config.hash_start_frame,
+            config.hash_frame_count,
+            config.hash_sample_stride,
+            actual_hash_samples
         )
     } else if status == "PASS" {
         format!(
@@ -572,7 +586,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     )?;
 
     let runner_log = format!(
-        "status={status}\nrom={}\nrom_id={}\ntitle_id={}\nframes_presented={}\nelapsed_ms={}\ncheckpoint_window={}..={}\nhash_samples={}\n",
+        "status={status}\nrom={}\nrom_id={}\ntitle_id={}\nframes_presented={}\nelapsed_ms={}\ncheckpoint_window={}..={}\nhash_samples={}\nexpected_hash_samples={}\n",
         config.rom_path.display(),
         config.rom_id,
         title_id_value,
@@ -580,7 +594,8 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         presenter.elapsed_ms(),
         config.checkpoint_start_frame,
         checkpoint_frame_index,
-        presenter.sampled_hashes.len()
+        presenter.sampled_hashes.len(),
+        expected_hash_samples
     );
     fs::write(config.output_dir.join("runner.log"), runner_log)?;
 
@@ -651,10 +666,9 @@ fn main() -> process::ExitCode {
         return process::ExitCode::FAILURE;
     }
 
-    if presenter.checkpoint_reached()
-        && !presenter.timed_out
-        && !presenter.sampled_hashes.is_empty()
-    {
+    let has_full_hash_coverage =
+        presenter.sampled_hashes.len() as u64 == expected_hash_sample_count(&config);
+    if presenter.checkpoint_reached() && !presenter.timed_out && has_full_hash_coverage {
         process::ExitCode::SUCCESS
     } else {
         process::ExitCode::FAILURE
