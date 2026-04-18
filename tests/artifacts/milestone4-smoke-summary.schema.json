@@ -163,7 +163,7 @@
         },
         "hashes": {
           "type": "array",
-          "minItems": 0,
+          "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,

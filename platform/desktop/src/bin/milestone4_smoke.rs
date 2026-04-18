@@ -571,6 +571,14 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
             "Captured configured checkpoint window [{}..={}] within deterministic frame/time budget.",
             config.checkpoint_start_frame, checkpoint_frame_index
         )
+    } else if presenter.timed_out && presenter.checkpoint_reached() {
+        format!(
+            "Timed out at {}ms after {} presented frames after reaching checkpoint window [{}..={}], before completing full smoke evidence requirements.",
+            presenter.elapsed_ms(),
+            presenter.frames_presented,
+            config.checkpoint_start_frame,
+            checkpoint_frame_index
+        )
     } else if presenter.timed_out {
         format!(
             "Timed out at {}ms after {} presented frames before reaching checkpoint window [{}..={}].",
