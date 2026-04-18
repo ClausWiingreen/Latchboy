@@ -633,6 +633,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     let expected_hash_samples = expected_hash_sample_count(config);
     let actual_hash_samples = presenter.sampled_hashes.len() as u64;
     let has_full_hash_coverage = actual_hash_samples == expected_hash_samples;
+    let no_frames_presented = presenter.frames_presented == 0;
     let title_signal_check = title_signal_matches(config, presenter);
     let title_signal_ok = title_signal_check.as_ref().is_ok_and(|matched| *matched);
 
@@ -663,6 +664,9 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
             config.checkpoint_start_frame,
             checkpoint_frame_index
         )
+    } else if no_frames_presented {
+        "No frames were presented before the run terminated; emitted placeholder hash evidence for schema compatibility."
+            .to_owned()
     } else if !presenter.checkpoint_reached() {
         format!(
             "Frame budget exhausted after {} frames before reaching checkpoint window [{}..={}].",
@@ -697,16 +701,15 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     fs::write(config.output_dir.join("summary.json"), &summary_json)?;
 
     let hashes = if presenter.sampled_hashes.is_empty() {
-        if presenter.frames_presented == 0 {
-            return Err(
-                "no frames were presented; cannot emit schema-compatible hash_window.json".into(),
-            );
-        }
-
+        let placeholder_hash = if no_frames_presented {
+            "missing-hash-window-sample-no-frames"
+        } else {
+            "missing-hash-window-sample"
+        };
         vec![format!(
             "    {{\"frame_index\": {}, \"hash\": {}}}",
             config.hash_start_frame,
-            quoted("missing-hash-window-sample")
+            quoted(placeholder_hash)
         )]
     } else {
         presenter
