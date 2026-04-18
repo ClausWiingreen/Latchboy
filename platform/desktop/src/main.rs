@@ -100,7 +100,7 @@ impl FramePresenter for WindowSurface {
         }
         self.buffer.copy_from_slice(surface);
         self.presented_frames += 1;
-        if self.presented_frames % 60 == 0 {
+        if self.presented_frames.is_multiple_of(60) {
             println!(
                 "presented {} frames at {}x{} (type 'q' then Enter to quit)",
                 self.presented_frames, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
