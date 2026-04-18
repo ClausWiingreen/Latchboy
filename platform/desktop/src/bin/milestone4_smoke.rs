@@ -615,30 +615,31 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     let summary_json = json_object(&summary_fields);
     fs::write(config.output_dir.join("summary.json"), &summary_json)?;
 
-    let hashes_source = if presenter.sampled_hashes.is_empty() {
-        match presenter.first_presented_hash.as_ref() {
-            Some(hash) => std::slice::from_ref(hash),
-            None => {
-                return Err(
-                    "no frames were presented; cannot emit schema-compatible hash_window.json"
-                        .into(),
-                )
-            }
+    let hashes = if presenter.sampled_hashes.is_empty() {
+        if presenter.frames_presented == 0 {
+            return Err(
+                "no frames were presented; cannot emit schema-compatible hash_window.json".into(),
+            );
         }
-    } else {
-        presenter.sampled_hashes.as_slice()
-    };
 
-    let hashes = hashes_source
-        .iter()
-        .map(|sample| {
-            format!(
-                "    {{\"frame_index\": {}, \"hash\": {}}}",
-                sample.frame_index,
-                quoted(&sample.hash)
-            )
-        })
-        .collect::<Vec<_>>();
+        vec![format!(
+            "    {{\"frame_index\": {}, \"hash\": {}}}",
+            config.hash_start_frame,
+            quoted("missing-hash-window-sample")
+        )]
+    } else {
+        presenter
+            .sampled_hashes
+            .iter()
+            .map(|sample| {
+                format!(
+                    "    {{\"frame_index\": {}, \"hash\": {}}}",
+                    sample.frame_index,
+                    quoted(&sample.hash)
+                )
+            })
+            .collect::<Vec<_>>()
+    };
 
     let hashes_json = if hashes.is_empty() {
         "[]".to_owned()
