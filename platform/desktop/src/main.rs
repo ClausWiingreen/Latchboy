@@ -2,8 +2,11 @@ use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
+use std::io::{self, BufRead};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 
 use latchboy_core::{
     cartridge::Cartridge, Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH,
@@ -44,14 +47,33 @@ struct WindowSurface {
     buffer: Vec<u32>,
     presented_frames: u64,
     max_frames: u64,
+    close_requested: bool,
+    input_events: Receiver<String>,
 }
 
 impl WindowSurface {
     fn new(max_frames: u64) -> Self {
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let stdin = io::stdin();
+            for line in stdin.lock().lines() {
+                match line {
+                    Ok(event) => {
+                        if tx.send(event).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
         Self {
             buffer: vec![0; FRAMEBUFFER_LEN],
             presented_frames: 0,
             max_frames,
+            close_requested: false,
+            input_events: rx,
         }
     }
 }
@@ -60,16 +82,30 @@ impl FramePresenter for WindowSurface {
     type Error = SurfaceError;
 
     fn is_open(&self) -> bool {
-        self.presented_frames < self.max_frames
+        !self.close_requested && self.presented_frames < self.max_frames
+    }
+
+    fn poll_events(&mut self) -> Result<(), Self::Error> {
+        while let Ok(event) = self.input_events.try_recv() {
+            if event.trim().eq_ignore_ascii_case("q") || event.trim().eq_ignore_ascii_case("quit") {
+                self.close_requested = true;
+            }
+        }
+        Ok(())
     }
 
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
-        if surface.len() != self.buffer.len() {
+        if surface.len() != FRAMEBUFFER_LEN {
             return Err(SurfaceError);
         }
-
         self.buffer.copy_from_slice(surface);
         self.presented_frames += 1;
+        if self.presented_frames % 60 == 0 {
+            println!(
+                "presented {} frames at {}x{} (type 'q' then Enter to quit)",
+                self.presented_frames, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
+            );
+        }
         Ok(())
     }
 }

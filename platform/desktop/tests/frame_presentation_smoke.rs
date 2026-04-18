@@ -8,6 +8,7 @@ use latchboy_desktop::{
 struct HeadlessPresenter {
     remaining_frames: u64,
     last_frame: Vec<u32>,
+    event_polls: u64,
 }
 
 impl HeadlessPresenter {
@@ -15,6 +16,7 @@ impl HeadlessPresenter {
         Self {
             remaining_frames: frame_budget,
             last_frame: Vec::new(),
+            event_polls: 0,
         }
     }
 }
@@ -24,6 +26,11 @@ impl FramePresenter for HeadlessPresenter {
 
     fn is_open(&self) -> bool {
         self.remaining_frames > 0
+    }
+
+    fn poll_events(&mut self) -> Result<(), Self::Error> {
+        self.event_polls += 1;
+        Ok(())
     }
 
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
@@ -103,6 +110,21 @@ fn emulation_loop_chunks_large_cycle_steps_to_avoid_dropping_frame_ready_pulses(
 
     assert_eq!(frames, 3);
     assert_eq!(presenter.last_frame.len(), latchboy_core::FRAMEBUFFER_LEN);
+}
+
+#[test]
+fn emulation_loop_polls_events_while_presenting_frames() {
+    let mut emulator = Emulator::new();
+    let mut presenter = HeadlessPresenter::new(2);
+
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(2), Some(20_000))
+        .expect("run with event polling enabled should complete");
+
+    assert_eq!(frames, 2);
+    assert!(
+        presenter.event_polls > 0,
+        "event polling should be exercised during frame loop"
+    );
 }
 
 #[test]
