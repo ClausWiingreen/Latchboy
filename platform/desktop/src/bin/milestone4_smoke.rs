@@ -83,7 +83,7 @@ struct CliConfig {
     cycle_step: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SampledFrameHash {
     frame_index: u64,
     hash: String,
@@ -101,6 +101,7 @@ struct SmokePresenter {
     hash_sample_stride: u64,
     frames_presented: u64,
     sampled_hashes: Vec<SampledFrameHash>,
+    first_presented_hash: Option<SampledFrameHash>,
     timed_out: bool,
 }
 
@@ -121,6 +122,7 @@ impl SmokePresenter {
             hash_sample_stride: config.hash_sample_stride.max(1),
             frames_presented: 0,
             sampled_hashes: Vec::new(),
+            first_presented_hash: None,
             timed_out: false,
         }
     }
@@ -149,15 +151,22 @@ impl FramePresenter for SmokePresenter {
 
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
         let frame_index = self.frames_presented;
-        if frame_index >= self.hash_start_frame
+        let capture_hash_sample = frame_index >= self.hash_start_frame
             && frame_index < self.hash_end_exclusive
-            && (frame_index - self.hash_start_frame).is_multiple_of(self.hash_sample_stride)
-        {
+            && (frame_index - self.hash_start_frame).is_multiple_of(self.hash_sample_stride);
+        let capture_fallback_sample = self.first_presented_hash.is_none();
+        if capture_hash_sample || capture_fallback_sample {
             let hash = fnv1a64_surface_hash(surface);
-            self.sampled_hashes.push(SampledFrameHash {
+            let sampled_frame = SampledFrameHash {
                 frame_index,
                 hash: format!("0x{hash:016x}"),
-            });
+            };
+            if capture_fallback_sample {
+                self.first_presented_hash = Some(sampled_frame.clone());
+            }
+            if capture_hash_sample {
+                self.sampled_hashes.push(sampled_frame);
+            }
         }
 
         self.frames_presented = self.frames_presented.saturating_add(1);
@@ -196,7 +205,12 @@ fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
 }
 
 fn normalize_hash(value: &str) -> String {
-    value.trim().trim_start_matches("0x").to_ascii_lowercase()
+    let trimmed = value.trim();
+    let without_prefix = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    without_prefix.to_ascii_lowercase()
 }
 
 fn shell_escape_arg(value: &str) -> String {
@@ -601,8 +615,21 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     let summary_json = json_object(&summary_fields);
     fs::write(config.output_dir.join("summary.json"), &summary_json)?;
 
-    let hashes = presenter
-        .sampled_hashes
+    let hashes_source = if presenter.sampled_hashes.is_empty() {
+        match presenter.first_presented_hash.as_ref() {
+            Some(hash) => std::slice::from_ref(hash),
+            None => {
+                return Err(
+                    "no frames were presented; cannot emit schema-compatible hash_window.json"
+                        .into(),
+                )
+            }
+        }
+    } else {
+        presenter.sampled_hashes.as_slice()
+    };
+
+    let hashes = hashes_source
         .iter()
         .map(|sample| {
             format!(
