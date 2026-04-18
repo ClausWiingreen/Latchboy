@@ -208,14 +208,20 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - In-tree desktop presentation is now a minimal frame loop (headless-friendly surface presenter) rather than a pure scaffold; this supports deterministic frame-ready consumption but does not yet provide interactive window/input UX.
 
 **Acceptance criteria**
-- PPU timing + rendering test ROMs mostly pass.
-- Several commercial titles render readable menus/UI.
+- **PPU ROM gate threshold (objective):** Required Milestone 4 PPU manifest entries (`milestone = 4`, `required = true`) pass **100%** under configured fixture runs (`LATCHBOY_ROM_ROOT` set) in `external_rom_validation` (run-level gate test: `required_milestone_4_roms_pass_under_external_validation_flow`).
+- **Curated title menu checkpoint threshold (objective):** **3/3** curated commercial-title smoke cases (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) reach their named menu checkpoints within their fixed frame/time budgets.
+- **Evidence linkage (must exist for sign-off):**
+  - Automated gate evidence: `external_rom_validation` output for `required_milestone_4_roms_pass_under_external_validation_flow`.
+  - Smoke evidence artifact: `tests/artifacts/milestone4-smoke-summary.json` (validated against `tests/artifacts/milestone4-smoke-summary.schema.json`).
+- **Deterministic verification commands (CI/local):**
+  - `LATCHBOY_ROM_ROOT=<rom-fixtures> cargo test -p latchboy-core --test external_rom_validation required_milestone_4_roms_pass_under_external_validation_flow`
+  - `cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <absolute-rom-path> --rom-id <rom-id> --title-id <tetris-world|super-mario-land-world|legend-of-zelda-links-awakening-world> --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/<title-id>`
 
 **Acceptance status review (2026-04-17, updated)**
-- ⚠️ `PPU timing + rendering test ROMs mostly pass` is **partially evidenced**: required Milestone 4 PPU ROMs are now registered in the manifest, but the current external validation tests only assert required suites for Milestones 2/3. Milestone 4 required entries are therefore not yet enforced by a dedicated automated gate.
-- ⚠️ `Several commercial titles render readable menus/UI` is **still open**: this evidence now depends on the desktop interactive presentation path (real window + event polling loop) and the title smoke matrix in `tests/README.md`, but no committed smoke-run result artifacts or CI/local gate currently prove all listed title checkpoints through that interactive path.
+- ⚠️ `Required Milestone 4 PPU manifest entries pass 100%` is **partially evidenced**: the run-level gate `required_milestone_4_roms_pass_under_external_validation_flow` now exists in `external_rom_validation`, but full sign-off still depends on fixture-backed CI/local executions with `LATCHBOY_ROM_ROOT` set and green results on the target commit.
+- ⚠️ `3/3 curated titles reach named menu checkpoints within fixed budgets` is **still open**: the title smoke matrix exists in `tests/README.md`, but committed summary artifacts and the schema-validation gate are not yet wired as required sign-off checks.
 - 🔧 Remaining Milestone 4 closure items:
-  - Extend `external_rom_validation` manifest gate assertions to include required Milestone 4 PPU suites and budgets.
+  - Enforce fixture-backed execution of `required_milestone_4_roms_pass_under_external_validation_flow` in CI for target commits (no skipped external ROM runs).
   - Require committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.schema.json` shape for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
   - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
   - Keep commercial title readability gating tied to the interactive desktop presentation path (window + event polling/input plumbing) rather than headless-only frame pumps.
