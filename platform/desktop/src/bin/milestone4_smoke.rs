@@ -544,16 +544,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         .collect::<Vec<_>>();
 
     let hashes_json = if hashes.is_empty() {
-        let fallback_frame_index = if presenter.frames_presented == 0 {
-            0
-        } else {
-            presenter.frames_presented.saturating_sub(1)
-        };
-        format!(
-            "[\n    {{\"frame_index\": {}, \"hash\": {}}}\n  ]",
-            fallback_frame_index,
-            quoted("no-sampled-frame-available")
-        )
+        "[]".to_owned()
     } else {
         format!("[\n{}\n  ]", hashes.join(",\n"))
     };
