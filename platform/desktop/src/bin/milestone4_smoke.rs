@@ -213,6 +213,40 @@ fn normalize_hash(value: &str) -> String {
     without_prefix.to_ascii_lowercase()
 }
 
+fn hash_window_end_exclusive(hash_start_frame: u64, hash_frame_count: u64) -> u64 {
+    hash_start_frame.saturating_add(hash_frame_count.max(1))
+}
+
+fn frame_is_hash_sample(
+    frame_index: u64,
+    hash_start_frame: u64,
+    hash_frame_count: u64,
+    hash_sample_stride: u64,
+) -> bool {
+    let hash_end_exclusive = hash_window_end_exclusive(hash_start_frame, hash_frame_count);
+    frame_index >= hash_start_frame
+        && frame_index < hash_end_exclusive
+        && (frame_index - hash_start_frame).is_multiple_of(hash_sample_stride.max(1))
+}
+
+fn default_title_signal_frame(
+    checkpoint_frame_index: u64,
+    hash_start_frame: u64,
+    hash_frame_count: u64,
+    hash_sample_stride: u64,
+) -> u64 {
+    let hash_end_exclusive = hash_window_end_exclusive(hash_start_frame, hash_frame_count);
+    let max_in_window = checkpoint_frame_index.min(hash_end_exclusive.saturating_sub(1));
+    if max_in_window < hash_start_frame {
+        return hash_start_frame;
+    }
+
+    let distance = max_in_window - hash_start_frame;
+    let stride = hash_sample_stride.max(1);
+    let offset = distance - (distance % stride);
+    hash_start_frame.saturating_add(offset)
+}
+
 fn shell_escape_arg(value: &str) -> String {
     if value.is_empty() {
         return "''".to_owned();
@@ -337,11 +371,20 @@ fn parse_args() -> Result<CliConfig, UsageError> {
     let checkpoint_frame_index = checkpoint_start_frame
         .saturating_add(checkpoint_frame_count)
         .saturating_sub(1);
-    let title_signal_frame = title_signal_frame.or(Some(checkpoint_frame_index));
 
     let hash_start_frame = hash_start_frame.unwrap_or(checkpoint_start_frame);
     let hash_frame_count = hash_frame_count.unwrap_or(checkpoint_frame_count);
     let hash_sample_stride = hash_sample_stride.unwrap_or(1);
+    let title_signal_frame = title_signal_frame.or_else(|| {
+        title_id.as_ref().map(|_| {
+            default_title_signal_frame(
+                checkpoint_frame_index,
+                hash_start_frame,
+                hash_frame_count,
+                hash_sample_stride,
+            )
+        })
+    });
     let cycle_step = cycle_step.unwrap_or(DEFAULT_CYCLE_STEP);
     let runner_command = format!(
         "cargo run -p latchboy-desktop --bin milestone4_smoke -- {}",
@@ -386,6 +429,19 @@ fn parse_args() -> Result<CliConfig, UsageError> {
         return Err(UsageError(
             "--title-id requires --title-signal-hash so PASS can be gated on title-specific signal evidence".to_owned(),
         ));
+    }
+    if let Some(frame) = title_signal_frame {
+        if !frame_is_hash_sample(
+            frame,
+            hash_start_frame,
+            hash_frame_count,
+            hash_sample_stride,
+        ) {
+            return Err(UsageError(format!(
+                "--title-signal-frame {} is not sampled by hash window start={} frame_count={} stride={}",
+                frame, hash_start_frame, hash_frame_count, hash_sample_stride
+            )));
+        }
     }
 
     Ok(CliConfig {
