@@ -75,6 +75,8 @@ struct CliConfig {
     wall_time_limit_ms: u64,
     checkpoint_start_frame: u64,
     checkpoint_frame_count: u64,
+    title_signal_frame: Option<u64>,
+    title_signal_hash: Option<String>,
     hash_start_frame: u64,
     hash_frame_count: u64,
     hash_sample_stride: u64,
@@ -193,6 +195,10 @@ fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
     })
 }
 
+fn normalize_hash(value: &str) -> String {
+    value.trim().trim_start_matches("0x").to_ascii_lowercase()
+}
+
 fn shell_escape_arg(value: &str) -> String {
     if value.is_empty() {
         return "''".to_owned();
@@ -222,6 +228,8 @@ fn parse_args() -> Result<CliConfig, UsageError> {
     let mut wall_time_limit_ms: Option<u64> = None;
     let mut checkpoint_start_frame: Option<u64> = None;
     let mut checkpoint_frame_count: Option<u64> = None;
+    let mut title_signal_frame: Option<u64> = None;
+    let mut title_signal_hash: Option<String> = None;
     let mut hash_start_frame: Option<u64> = None;
     let mut hash_frame_count: Option<u64> = None;
     let mut hash_sample_stride: Option<u64> = None;
@@ -251,6 +259,10 @@ fn parse_args() -> Result<CliConfig, UsageError> {
             "--checkpoint-frame-count" => {
                 checkpoint_frame_count = Some(parse_u64(value, "checkpoint-frame-count")?)
             }
+            "--title-signal-frame" => {
+                title_signal_frame = Some(parse_u64(value, "title-signal-frame")?)
+            }
+            "--title-signal-hash" => title_signal_hash = Some(normalize_hash(value)),
             "--hash-start-frame" => hash_start_frame = Some(parse_u64(value, "hash-start-frame")?),
             "--hash-frame-count" => hash_frame_count = Some(parse_u64(value, "hash-frame-count")?),
             "--hash-sample-stride" => {
@@ -308,6 +320,10 @@ fn parse_args() -> Result<CliConfig, UsageError> {
     let checkpoint_frame_count = checkpoint_frame_count
         .or(selected_preset.map(|preset| preset.checkpoint_frame_count))
         .unwrap_or(120);
+    let checkpoint_frame_index = checkpoint_start_frame
+        .saturating_add(checkpoint_frame_count)
+        .saturating_sub(1);
+    let title_signal_frame = title_signal_frame.or(Some(checkpoint_frame_index));
 
     let hash_start_frame = hash_start_frame.unwrap_or(checkpoint_start_frame);
     let hash_frame_count = hash_frame_count.unwrap_or(checkpoint_frame_count);
@@ -352,6 +368,11 @@ fn parse_args() -> Result<CliConfig, UsageError> {
             "--cycle-step must be greater than zero".to_owned(),
         ));
     }
+    if title_id.is_some() && title_signal_hash.is_none() {
+        return Err(UsageError(
+            "--title-id requires --title-signal-hash so PASS can be gated on title-specific signal evidence".to_owned(),
+        ));
+    }
 
     Ok(CliConfig {
         rom_path,
@@ -363,6 +384,8 @@ fn parse_args() -> Result<CliConfig, UsageError> {
         wall_time_limit_ms,
         checkpoint_start_frame,
         checkpoint_frame_count,
+        title_signal_frame,
+        title_signal_hash,
         hash_start_frame,
         hash_frame_count,
         hash_sample_stride,
@@ -394,6 +417,8 @@ fn help_text() -> String {
            --wall-time-limit-ms <u64>\n\
            --checkpoint-start-frame <u64>\n\
            --checkpoint-frame-count <u64>\n\
+           --title-signal-frame <u64>\n\
+           --title-signal-hash <hex|0xhex>  # required when --title-id is set\n\
            --hash-start-frame <u64>\n\
            --hash-frame-count <u64>\n\
            --hash-sample-stride <u64>\n\
@@ -466,6 +491,36 @@ fn expected_hash_sample_count(config: &CliConfig) -> u64 {
         .saturating_add(1)
 }
 
+fn title_signal_matches(config: &CliConfig, presenter: &SmokePresenter) -> Result<bool, String> {
+    let expected_hash = match config.title_signal_hash.as_deref() {
+        Some(value) => value,
+        None => return Ok(true),
+    };
+    let signal_frame = config.title_signal_frame.unwrap_or(0);
+
+    let observed = presenter
+        .sampled_hashes
+        .iter()
+        .find(|sample| sample.frame_index == signal_frame)
+        .map(|sample| normalize_hash(&sample.hash));
+
+    let Some(observed_hash) = observed else {
+        return Err(format!(
+            "Missing title-signal hash sample at frame {} (configure hash window/stride to include this frame).",
+            signal_frame
+        ));
+    };
+
+    if observed_hash == expected_hash {
+        Ok(true)
+    } else {
+        Err(format!(
+            "Title signal mismatch at frame {}: expected {}, observed {}.",
+            signal_frame, expected_hash, observed_hash
+        ))
+    }
+}
+
 fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(&config.output_dir)?;
 
@@ -488,14 +543,21 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     let expected_hash_samples = expected_hash_sample_count(config);
     let actual_hash_samples = presenter.sampled_hashes.len() as u64;
     let has_full_hash_coverage = actual_hash_samples == expected_hash_samples;
+    let title_signal_check = title_signal_matches(config, presenter);
+    let title_signal_ok = title_signal_check.as_ref().is_ok_and(|matched| *matched);
 
-    let status = if presenter.checkpoint_reached() && !presenter.timed_out && has_full_hash_coverage
+    let status = if presenter.checkpoint_reached()
+        && !presenter.timed_out
+        && has_full_hash_coverage
+        && title_signal_ok
     {
         "PASS"
     } else {
         "FAIL"
     };
-    let pass_fail_reason = if !has_full_hash_coverage {
+    let pass_fail_reason = if let Err(reason) = title_signal_check {
+        reason
+    } else if !has_full_hash_coverage {
         format!(
             "Incomplete hash-window coverage: expected {} samples for start={} frame_count={} stride={}, captured {}.",
             expected_hash_samples,
@@ -577,7 +639,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     )?;
 
     let runner_log = format!(
-        "status={status}\nrom={}\nrom_id={}\ntitle_id={}\nframes_presented={}\nelapsed_ms={}\ncheckpoint_window={}..={}\nhash_samples={}\nexpected_hash_samples={}\n",
+        "status={status}\nrom={}\nrom_id={}\ntitle_id={}\nframes_presented={}\nelapsed_ms={}\ncheckpoint_window={}..={}\nhash_samples={}\nexpected_hash_samples={}\ntitle_signal_frame={:?}\ntitle_signal_hash={:?}\n",
         config.rom_path.display(),
         config.rom_id,
         title_id_value,
@@ -586,7 +648,9 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.checkpoint_start_frame,
         checkpoint_frame_index,
         presenter.sampled_hashes.len(),
-        expected_hash_samples
+        expected_hash_samples,
+        config.title_signal_frame,
+        config.title_signal_hash
     );
     fs::write(config.output_dir.join("runner.log"), runner_log)?;
 
@@ -659,7 +723,12 @@ fn main() -> process::ExitCode {
 
     let has_full_hash_coverage =
         presenter.sampled_hashes.len() as u64 == expected_hash_sample_count(&config);
-    if presenter.checkpoint_reached() && !presenter.timed_out && has_full_hash_coverage {
+    let title_signal_ok = title_signal_matches(&config, &presenter).is_ok_and(|matched| matched);
+    if presenter.checkpoint_reached()
+        && !presenter.timed_out
+        && has_full_hash_coverage
+        && title_signal_ok
+    {
         process::ExitCode::SUCCESS
     } else {
         process::ExitCode::FAILURE

@@ -251,6 +251,7 @@ cargo run -p latchboy-desktop --bin milestone4_smoke -- \
   --rom /absolute/path/to/roms/tetris.gb \
   --rom-id tetris-world-local \
   --title-id tetris-world \
+  --title-signal-hash <expected-title-hash-at-checkpoint-frame> \
   --output-dir tests/artifacts/smoke/milestone4/${TIMESTAMP}/tetris-world
 ```
 
@@ -265,6 +266,7 @@ You can override budgets/checkpoint hashing manually with:
 - `--frame-limit`
 - `--wall-time-limit-ms`
 - `--checkpoint-start-frame` / `--checkpoint-frame-count`
+- `--title-signal-frame` / `--title-signal-hash` (`--title-signal-hash` is required when `--title-id` is set)
 - `--hash-start-frame` / `--hash-frame-count` / `--hash-sample-stride`
 - `--cycle-step`
 
