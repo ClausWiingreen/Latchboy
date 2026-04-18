@@ -132,16 +132,16 @@ pub fn run_emulation_loop<P: FramePresenter>(
     let mut iterations = 0u64;
 
     while presenter.is_open() {
+        if let Some(limit) = frame_limit {
+            if frames_presented >= limit {
+                break;
+            }
+        }
         presenter
             .poll_events()
             .map_err(EmulationRunError::Present)?;
         if !presenter.is_open() {
             break;
-        }
-        if let Some(limit) = frame_limit {
-            if frames_presented >= limit {
-                break;
-            }
         }
         if present_if_ready(emulator, presenter, &mut surface)? {
             frames_presented += 1;
@@ -149,12 +149,6 @@ pub fn run_emulation_loop<P: FramePresenter>(
         }
         let mut cycles_remaining = cycle_step;
         while cycles_remaining != 0 && presenter.is_open() {
-            presenter
-                .poll_events()
-                .map_err(EmulationRunError::Present)?;
-            if !presenter.is_open() {
-                return Ok(frames_presented);
-            }
             if let Some(limit) = iteration_limit {
                 if iterations >= limit {
                     return Ok(frames_presented);
@@ -164,6 +158,12 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 if frames_presented >= limit {
                     return Ok(frames_presented);
                 }
+            }
+            presenter
+                .poll_events()
+                .map_err(EmulationRunError::Present)?;
+            if !presenter.is_open() {
+                return Ok(frames_presented);
             }
 
             if present_if_ready(emulator, presenter, &mut surface)? {

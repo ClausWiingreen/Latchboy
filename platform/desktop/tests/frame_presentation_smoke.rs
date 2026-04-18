@@ -1,4 +1,6 @@
 use std::convert::Infallible;
+use std::error::Error;
+use std::fmt;
 
 use latchboy_core::Emulator;
 use latchboy_desktop::{
@@ -14,6 +16,51 @@ struct HeadlessPresenter {
 struct CloseOnPollPresenter {
     open: bool,
     presents: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PollFailed;
+
+impl fmt::Display for PollFailed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "poll failed")
+    }
+}
+
+impl Error for PollFailed {}
+
+struct PollErrorAfterSinglePresent {
+    open: bool,
+    presented_once: bool,
+}
+
+impl PollErrorAfterSinglePresent {
+    fn new() -> Self {
+        Self {
+            open: true,
+            presented_once: false,
+        }
+    }
+}
+
+impl FramePresenter for PollErrorAfterSinglePresent {
+    type Error = PollFailed;
+
+    fn is_open(&self) -> bool {
+        self.open
+    }
+
+    fn poll_events(&mut self) -> Result<(), Self::Error> {
+        if self.presented_once {
+            return Err(PollFailed);
+        }
+        Ok(())
+    }
+
+    fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+        self.presented_once = true;
+        Ok(())
+    }
 }
 
 impl CloseOnPollPresenter {
@@ -198,4 +245,15 @@ fn emulation_loop_stops_immediately_when_poll_requests_close() {
         pre_loop_cycles,
         "loop should not step cycles after a close request from poll_events"
     );
+}
+
+#[test]
+fn emulation_loop_honors_frame_limit_before_polling_again() {
+    let mut emulator = Emulator::new();
+    let mut presenter = PollErrorAfterSinglePresent::new();
+
+    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(1), Some(20_000))
+        .expect("frame-limit completion should return before next poll_events call");
+
+    assert_eq!(frames, 1);
 }
