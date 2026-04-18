@@ -208,13 +208,13 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - In-tree desktop presentation is now a minimal frame loop (headless-friendly surface presenter) rather than a pure scaffold; this supports deterministic frame-ready consumption but does not yet provide interactive window/input UX.
 
 **Acceptance criteria**
-- **PPU ROM gate threshold (objective):** Required Milestone 4 PPU manifest entries (`milestone = 4`, `required = true`) pass **100%** under configured fixture runs (`LATCHBOY_ROM_ROOT` set) in `external_rom_validation` (current manifest gate test: `rom_manifest_registers_required_milestone_4_ppu_suites`).
+- **PPU ROM gate threshold (objective):** Required Milestone 4 PPU manifest entries (`milestone = 4`, `required = true`) pass **100%** under configured fixture runs (`LATCHBOY_ROM_ROOT` set) in `external_rom_validation` (run-level gate test: `required_milestone_4_roms_pass_under_external_validation_flow`).
 - **Curated title menu checkpoint threshold (objective):** **3/3** curated commercial-title smoke cases (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) reach their named menu checkpoints within their fixed frame/time budgets.
 - **Evidence linkage (must exist for sign-off):**
-  - Automated gate evidence: `external_rom_validation` output for `rom_manifest_registers_required_milestone_4_ppu_suites`.
+  - Automated gate evidence: `external_rom_validation` output for `required_milestone_4_roms_pass_under_external_validation_flow`.
   - Smoke evidence artifact: `tests/artifacts/milestone4-smoke-summary.json` (validated against `tests/artifacts/milestone4-smoke-summary.schema.json`).
 - **Deterministic verification commands (CI/local):**
-  - `LATCHBOY_ROM_ROOT=<rom-fixtures> cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_4_ppu_suites`
+  - `LATCHBOY_ROM_ROOT=<rom-fixtures> cargo test -p latchboy-core --test external_rom_validation required_milestone_4_roms_pass_under_external_validation_flow`
   - `cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <absolute-rom-path> --rom-id <rom-id> --title-id <tetris-world|super-mario-land-world|legend-of-zelda-links-awakening-world> --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/<title-id>`
 
 **Acceptance status review (2026-04-17, updated)**

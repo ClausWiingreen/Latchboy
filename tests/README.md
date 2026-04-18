@@ -122,6 +122,7 @@ Optional: run manifest-gate checks directly:
 ```bash
 cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_2_and_3_suites
 cargo test -p latchboy-core --test external_rom_validation rom_manifest_registers_required_milestone_4_ppu_suites
+LATCHBOY_ROM_ROOT=/absolute/path/to/rom-fixtures cargo test -p latchboy-core --test external_rom_validation required_milestone_4_roms_pass_under_external_validation_flow
 ```
 
 ## CI gate for Milestone 2 completion
