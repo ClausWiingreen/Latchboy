@@ -33,3 +33,20 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-targets
 
+      - name: Milestone 4 required ROM gate
+        env:
+          LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}
+        run: |
+          if [ -z "${LATCHBOY_ROM_ROOT:-}" ]; then
+            echo "LATCHBOY_ROM_ROOT repository variable must be set for Milestone 4 gating."
+            exit 1
+          fi
+
+          if [ ! -d "${LATCHBOY_ROM_ROOT}" ]; then
+            echo "LATCHBOY_ROM_ROOT path does not exist on runner: ${LATCHBOY_ROM_ROOT}"
+            exit 1
+          fi
+
+          LATCHBOY_ROM_ROOT="${LATCHBOY_ROM_ROOT}" \
+            cargo test -p latchboy-core --test external_rom_validation \
+            required_milestone_4_roms_pass_under_external_validation_flow -- --exact

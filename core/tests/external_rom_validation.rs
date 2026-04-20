@@ -199,6 +199,15 @@ fn rom_root_from_env() -> Option<PathBuf> {
     Some(PathBuf::from(trimmed))
 }
 
+fn is_ci_gated_context() -> bool {
+    std::env::var("CI")
+        .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
+        .unwrap_or(false)
+        || std::env::var("GITHUB_ACTIONS")
+            .map(|value| value.eq_ignore_ascii_case("true") || value == "1")
+            .unwrap_or(false)
+}
+
 fn is_noop_pass_condition(pass_condition: PassCondition) -> bool {
     matches!(pass_condition, PassCondition::None)
 }
@@ -653,6 +662,12 @@ fn required_milestone_4_roms_pass_under_external_validation_flow() {
     let manifest = parse_manifest(&manifest_path);
 
     let Some(rom_root) = rom_root_from_env() else {
+        if is_ci_gated_context() {
+            panic!(
+                "{ROM_ROOT_ENV} must be set to a non-empty ROM fixture root in CI-gated milestone 4 validation contexts"
+            );
+        }
+
         eprintln!(
             "skipping required ROM run: set {ROM_ROOT_ENV} to execute external ROM validation"
         );
@@ -686,11 +701,18 @@ fn required_milestone_4_roms_pass_under_external_validation_flow() {
     }
 
     let mut failures = Vec::new();
+    let mut executed_required_m4_count = 0usize;
     for rom in required_m4_roms {
+        executed_required_m4_count += 1;
         if let Err(error) = run_rom(&rom_root, rom) {
             failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
         }
     }
+
+    assert!(
+        executed_required_m4_count > 0,
+        "required milestone 4 gate must execute at least one required ROM"
+    );
 
     assert!(
         failures.is_empty(),

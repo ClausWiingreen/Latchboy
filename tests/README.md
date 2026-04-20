@@ -41,6 +41,7 @@ Each `[[roms]]` entry defines deterministic execution budgets:
 
 The runner treats unset **or empty** `LATCHBOY_ROM_ROOT` as disabled and skips external ROM execution in that environment.
 When enabled, it executes each required Milestone 2 entry with deterministic cycle stepping, fails on unimplemented opcode dispatch, and fails when a required case does not positively report pass before exceeding its time/cycle/frame budget.
+For CI milestone-gating jobs (including the required Milestone 4 gate), missing or empty `LATCHBOY_ROM_ROOT` is a configuration failure and must fail the job rather than skip ROM execution.
 
 Milestone 3 expands the manifest with required timer-focused entries, while keeping explicit deferred cases (`required = false`) when dependencies are still in progress.
 
@@ -150,6 +151,7 @@ Recommended provisioning pattern for maintainers:
 2. Set repository variable **`LATCHBOY_ROM_ROOT`** to that absolute CI path (for example, `/opt/latchboy-roms`).
 3. Ensure the configured path exists on the runner before the `Run tests` step.
 4. Keep fixture contents synchronized with required manifest entries whenever required ROM cases are added or paths change.
+5. Treat missing fixture paths as CI configuration failures for milestone-gating jobs; they are not valid skip conditions.
 
 Practical verification in CI logs:
 
