@@ -253,11 +253,9 @@ fn check_pass_condition(emulator: &Emulator, rom: &RomEntry) -> PassCheck {
                 emulator.bus().read8(emulator.cpu().pc()),
                 emulator.bus().read8(emulator.cpu().pc().wrapping_add(1)),
             ];
-
             if signature != [0x18, 0xFE] {
                 return PassCheck::Pending;
             }
-            
             let registers = emulator.cpu().registers();
             if registers.b == 3
                 && registers.c == 5
