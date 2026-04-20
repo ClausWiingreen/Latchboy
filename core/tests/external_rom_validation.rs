@@ -292,7 +292,7 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
 
     let mut executed_cycles = 0u64;
     while executed_cycles < cycle_budget {
-        let step = (cycle_budget - executed_cycles).min(4_096) as u32;
+        let step = (cycle_budget - executed_cycles).min(128) as u32;
         emulator.step_cycles(step);
         executed_cycles += u64::from(step);
 
