@@ -144,18 +144,20 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - Timer test ROMs pass.
 - Boot/no-boot paths both produce stable startup.
 
-**Acceptance status review (2026-04-16)**
-- ⚠️ `Timer test ROMs pass` is **not yet fully evidenced** by the current repo wiring. Timer edge/overflow/reload behavior is covered by unit tests in `core/src/timer.rs`, but `tests/rom_manifest.toml` currently only requires Milestone 2 ROM suites and does not yet include required timer-focused ROM entries.
+**Acceptance status review (2026-04-20, updated)**
+- ✅ `Timer test ROMs pass` now has **manifest-level coverage wiring** in-tree: `tests/rom_manifest.toml` includes required Milestone 3 timer-adjacent entries (`blargg-instr-timing-m3-gate`, `mooneye-acceptance-timer-div-write`) plus an explicit deferred timer case (`mooneye-acceptance-timer-rapid-toggle`), and `external_rom_validation` enforces this structure.
+- ⚠️ `Timer test ROMs pass` is still **fixture-execution dependent** for final sign-off: required Milestone 2/3 ROM run tests skip when `LATCHBOY_ROM_ROOT` is unset/empty, so green workspace runs without fixtures are not sufficient closure evidence.
 - ✅ `Boot/no-boot paths both produce stable startup` is satisfied by in-tree tests covering DMG post-boot defaults, explicit boot ROM execution/unmapping via `FF50`, and reset behavior across startup modes.
-- 🔧 To fully close Milestone 3 acceptance, add required Milestone 3 external ROM entries (timer + interrupt edge cases) to `tests/rom_manifest.toml` and run them under `external_rom_validation` with `LATCHBOY_ROM_ROOT` fixtures.
+- 🔧 Remaining Milestone 3 closure refinement: add at least one explicit **required boot-path external ROM smoke entry** (or equivalent deterministic external harness case) so startup acceptance has both unit-level and fixture-level evidence, not only unit tests.
 
-**Milestone 3 completion gate (proposed)**
+**Milestone 3 completion gate (updated)**
 - Required ROM classes in `tests/rom_manifest.toml`:
-  - Blargg `instr_timing` timer-adjacent coverage (required, milestone = 3).
-  - Mooneye timer/interrupt edge-case subset (required, milestone = 3; no-PPU dependency set).
-  - Boot path smoke cases (required, milestone = 3; pass signal documented in manifest comments).
+  - Blargg `instr_timing` timer-adjacent coverage (required, milestone = 3) ✅ wired.
+  - Mooneye timer/interrupt edge-case subset (required + deferred split, milestone = 3; no-PPU dependency set) ✅ wired.
+  - Boot path smoke case(s) (required, milestone = 3; pass signal documented in manifest comments) ⚠️ still missing explicit manifest entry.
 - Required CI evidence:
   - `cargo test --workspace --all-targets` with `LATCHBOY_ROM_ROOT` set in the CI environment that runs external ROM validation.
+  - CI should fail milestone-gating jobs when `LATCHBOY_ROM_ROOT` is unset/empty (avoid skip-based false green).
   - Green check for `CI / rust-checks` on the target commit.
 
 ---
@@ -258,6 +260,19 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
 - [ ] **Priority 2: Normalize acceptance criteria wording**
   - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
+
+## Backlog sequencing refinements (2026-04-20, review-driven updates)
+
+- [ ] **Priority 0: Close Milestone 3 objective evidence gap before expanding milestone scope**
+  - [ ] Add a required Milestone 3 boot/startup external validation case to `tests/rom_manifest.toml` (or an equivalent required deterministic external harness case) so startup acceptance is fixture-backed, not unit-only.
+  - [ ] Add a dedicated Milestone 3 gate test in `core/tests/external_rom_validation.rs` (`required_milestone_3_roms_pass_under_external_validation_flow`) to avoid coupling Milestone 3 pass/fail status to Milestone 2 runs.
+- [ ] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
+  - [ ] Add an explicit CI preflight check that fails when `LATCHBOY_ROM_ROOT` is unset/empty for milestone-gating jobs.
+  - [ ] Keep developer-local runs skippable, but make release/merge gate jobs fixture-mandatory and documented as such.
+- [ ] **Priority 1: Reorder validation progression to match dependency risk**
+  - [ ] Complete Milestone 3 fixture-enforced closure first.
+  - [ ] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
+  - [ ] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [ ] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
   - [ ] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them.
