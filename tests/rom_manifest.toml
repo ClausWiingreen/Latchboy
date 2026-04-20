@@ -96,7 +96,7 @@ pass_condition = "mooneye_registers"
 [[roms]]
 id = "mooneye-acceptance-ppu-lyc-onoff"
 suite = "mooneye_acceptance_ppu"
-path = "mooneye/acceptance/ppu/lyc_onoff.gb"
+path = "mooneye/acceptance/ppu/stat_lyc_onoff.gb"
 milestone = 4
 required = true
 cycle_limit = 14_000_000
