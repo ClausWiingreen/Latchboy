@@ -230,6 +230,18 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
   - Explicitly forbid committing copyrighted commercial frame/image/video captures (`final_frame.png`, `frames/`, raw video) in repository history, PR attachments, or public CI artifacts.
   - Keep commercial title readability gating tied to the interactive desktop presentation path (window + event polling/input plumbing) rather than headless-only frame pumps.
 
+**Implementation review delta (2026-04-20)**
+- ✅ Milestone 4 implementation scope remains materially complete in code (PPU pipeline, DMA transfer path, framebuffer surface contract, desktop smoke harness entrypoint, and milestone-specific manifest registration).
+- ⚠️ Milestone 4 closure acceptance remains **not yet satisfied** end-to-end because closure evidence is still missing/enforcement-incomplete:
+  - Required ROM gate test can pass via skip when `LATCHBOY_ROM_ROOT` is unset (not a true fixture-backed closure signal).
+  - Committed smoke evidence file (`tests/artifacts/milestone4-smoke-summary.json`) is still missing.
+  - No dedicated schema-validation test currently blocks drift between committed evidence and `tests/artifacts/milestone4-smoke-summary.schema.json`.
+- 🔧 Missing Milestone 4 features to add before closure:
+  - CI hard-fail behavior for missing/empty `LATCHBOY_ROM_ROOT` in milestone-gating jobs.
+  - Schema-validation test for the committed smoke summary artifact.
+  - Committed metadata+hash summary artifact covering all curated title IDs used by milestone closure.
+  - A single wording contract across docs/backlog for smoke coverage thresholds (see refinement items below).
+
 ---
 
 ## Milestone 5 — Input and UX integration
@@ -258,6 +270,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
   - [ ] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
   - [ ] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
+  - [ ] Add a CI assertion that milestone-gating runs report **executed required ROM count > 0** (to prevent skip-green sign-offs).
 - [ ] **Priority 2: Normalize acceptance criteria wording**
   - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
 
@@ -276,6 +289,9 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [ ] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
   - [ ] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them.
+- [ ] **Priority 2: Remove cross-doc threshold ambiguity (Milestone 4 smoke coverage)**
+  - [ ] Align backlog and `tests/README.md` on one closure threshold: either strict **3/3** curated title passes or explicitly documented phased policy (**2/3 minimum for interim, 3/3 for release sign-off**).
+  - [ ] Mirror the chosen threshold in smoke schema-facing guidance so artifact review does not rely on tribal knowledge.
 - [ ] **Priority 3: Document blocking dependencies directly inside milestones**
   - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
   - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
@@ -290,6 +306,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Require committed smoke summary evidence matching `tests/artifacts/milestone4-smoke-summary.schema.json` (title → `run.json`, `summary.json`, `hash_window`, checkpoint frame index, pass/fail reason) for milestone sign-off.
   - [ ] Enforce policy that only metadata + hashes are committed; copyrighted commercial frame/image/video assets are forbidden.
   - [ ] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
+  - [ ] Enforce one smoke-threshold policy across backlog + `tests/README.md` + CI output messaging.
 
 ---
 
@@ -416,6 +433,15 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 8. APU
 9. Compatibility hardening and CI automation of ROM suites (including curated commercial smoke matrix)
 10. Optional CGB/link/platform enhancements
+
+## Backlog-wide refinement pass (2026-04-20)
+
+- [ ] **Ordering refinement: move serial test-output hook earlier**
+  - [ ] Pull minimal serial pass/fail capture hook (current Milestone 6 subset) forward to immediately after Milestone 4 closure so broader external ROM diagnostics are available before deeper UX/debug investments.
+  - [ ] Keep full link-cable behavior in Milestone 6 scope; only the ROM-diagnostic hook moves earlier.
+- [ ] **Closure semantics refinement**
+  - [ ] Preserve the distinction between “implemented in code”, “validated with fixtures/artifacts”, and “CI-enforced” across all remaining milestones.
+  - [ ] For every milestone ≥ 4, require one explicit closure block: required tests, required artifact(s), and CI job/check names that enforce them.
 
 ---
 
