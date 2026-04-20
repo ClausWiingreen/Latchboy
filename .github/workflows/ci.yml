@@ -34,10 +34,17 @@ jobs:
         env:
           LATCHBOY_ROM_ROOT: /opt/latchboy
         run: |
+          TEMP_DIR=$(mktemp --directory -t latchboy.XXXXXXXXXX)
           mkdir -p $LATCHBOY_ROM_ROOT
-          wget https://gbdev.gg8.se/files/roms/blargg-gb-tests/cpu_instrs.zip
-          unzip -d "$LATCHBOY_ROM_ROOT/blargg" cpu_instrs.zip
-          rm cpu_instrs.zip
+          
+          wget --directory-prefix="$TEMP_DIR" \
+            https://gbdev.gg8.se/files/roms/blargg-gb-tests/cpu_instrs.zip \
+            https://gbdev.gg8.se/files/roms/blargg-gb-tests/instr_timing.zip
+          
+          unzip -d "$LATCHBOY_ROM_ROOT/blargg" "$TEMP_DIR/cpu_instrs.zip"
+          unzip -d "$LATCHBOY_ROM_ROOT/blargg" "$TEMP_DIR/instr_timing.zip"
+          
+          rm -rf $TEMP_DIR
 
       - name: Run tests
         env:
