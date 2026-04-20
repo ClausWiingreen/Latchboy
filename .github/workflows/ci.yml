@@ -30,10 +30,7 @@ jobs:
       - name: Lint with clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Run tests
-        run: cargo test --workspace --all-targets
-
-      - name: Milestone 4 required ROM gate
+      - name: Fetch test roms
         env:
           LATCHBOY_ROM_ROOT: /opt/latchboy
         run: |
@@ -42,5 +39,14 @@ jobs:
           unzip -d "$LATCHBOY_ROM_ROOT/blargg" cpu_instrs.zip
           rm cpu_instrs.zip
 
+      - name: Run tests
+        env:
+          LATCHBOY_ROM_ROOT: /opt/latchboy
+        run: cargo test --workspace --all-targets
+
+      - name: Milestone 4 required ROM gate
+        env:
+          LATCHBOY_ROM_ROOT: /opt/latchboy
+        run: |
           cargo test -p latchboy-core --test external_rom_validation \
             required_milestone_4_roms_pass_under_external_validation_flow -- --exact
