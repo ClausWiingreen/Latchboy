@@ -100,6 +100,8 @@ pub struct Cpu {
     ime_enable_pending: bool,
     halt_bug_active: bool,
     last_unimplemented_opcode: Option<u8>,
+    last_step_fetch_bytes: [u8; 3],
+    last_step_fetch_count: u8,
 }
 
 impl Default for Cpu {
@@ -129,6 +131,8 @@ impl Cpu {
             ime_enable_pending: false,
             halt_bug_active: false,
             last_unimplemented_opcode: None,
+            last_step_fetch_bytes: [0; 3],
+            last_step_fetch_count: 0,
         }
     }
 
@@ -152,6 +156,8 @@ impl Cpu {
             ime_enable_pending: false,
             halt_bug_active: false,
             last_unimplemented_opcode: None,
+            last_step_fetch_bytes: [0; 3],
+            last_step_fetch_count: 0,
         }
     }
 
@@ -183,12 +189,29 @@ impl Cpu {
         self.last_unimplemented_opcode
     }
 
+    pub(crate) fn last_step_operand1_fetch(&self) -> Option<u8> {
+        if self.last_step_fetch_count > 1 {
+            Some(self.last_step_fetch_bytes[1])
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn last_step_operand2_fetch(&self) -> Option<u8> {
+        if self.last_step_fetch_count > 2 {
+            Some(self.last_step_fetch_bytes[2])
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn will_service_interrupt(&self, bus: &Bus) -> bool {
         let pending_interrupts = self.pending_interrupts(bus);
         pending_interrupts != 0 && !self.halted_by_unimplemented_opcode && self.ime
     }
 
     pub fn step(&mut self, bus: &mut Bus) -> u32 {
+        self.last_step_fetch_count = 0;
         let pending_interrupts = self.pending_interrupts(bus);
         if pending_interrupts != 0 && !self.halted_by_unimplemented_opcode {
             if self.halted {
@@ -623,6 +646,11 @@ impl Cpu {
 
     fn fetch8(&mut self, bus: &Bus) -> u8 {
         let value = bus.read8(self.pc);
+        if self.last_step_fetch_count < self.last_step_fetch_bytes.len() as u8 {
+            let index = self.last_step_fetch_count as usize;
+            self.last_step_fetch_bytes[index] = value;
+            self.last_step_fetch_count += 1;
+        }
         if self.halt_bug_active {
             self.halt_bug_active = false;
         } else {

@@ -16,6 +16,8 @@ pub struct CpuStepObservation {
     pub end_cycle: u64,
     pub pc_before: u16,
     pub pc_after: u16,
+    pub operand1_before: Option<u8>,
+    pub operand2_before: Option<u8>,
     pub sp_before: u16,
     pub sp_after: u16,
     pub opcode_hint: Option<u8>,
@@ -26,8 +28,11 @@ pub struct CpuStepObservation {
     pub ime_after: bool,
     pub halted_before: bool,
     pub halted_after: bool,
+    pub interrupt_flag_before: u8,
+    pub interrupt_enable_before: u8,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
+    pub unimplemented_opcode: Option<u8>,
 }
 
 /// Observation emitted when step batching fast-forwards a HALTed CPU.
@@ -44,6 +49,10 @@ pub struct HaltedFastForwardObservation {
 /// Event sink for emulator execution observability.
 pub trait EmulatorObserver {
     fn on_event(&mut self, event: EmulatorEvent);
+
+    fn should_stop(&self) -> bool {
+        false
+    }
 }
 
 /// Fixed-size recorder for retaining recent execution events.

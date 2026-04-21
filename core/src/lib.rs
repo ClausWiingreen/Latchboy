@@ -142,8 +142,9 @@ impl Emulator {
     ) {
         let target = cycles as u64;
         let mut available = self.cycle_carry as u64;
+        let mut stopped_early = observer.should_stop();
 
-        while available < target {
+        while !stopped_early && available < target {
             if self.cpu.halted() {
                 let pending_interrupts = self.bus.read8(interrupt_regs::FLAG_REGISTER)
                     & self.bus.read8(interrupt_regs::ENABLE_REGISTER)
@@ -170,6 +171,10 @@ impl Emulator {
                     ));
                     self.tick_bus_cycles(halted_advance);
                     available += halted_advance;
+                    if observer.should_stop() {
+                        stopped_early = true;
+                        break;
+                    }
                     break;
                 }
             }
@@ -190,6 +195,8 @@ impl Emulator {
             };
 
             let cycles_taken = self.cpu.step(&mut self.bus);
+            let operand1_before = self.cpu.last_step_operand1_fetch();
+            let operand2_before = self.cpu.last_step_operand2_fetch();
             self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
 
@@ -198,6 +205,8 @@ impl Emulator {
                 end_cycle: start_cycle.wrapping_add(cycles_taken as u64),
                 pc_before,
                 pc_after: self.cpu.pc(),
+                operand1_before,
+                operand2_before,
                 sp_before,
                 sp_after: self.cpu.sp(),
                 opcode_hint,
@@ -208,13 +217,21 @@ impl Emulator {
                 ime_after: self.cpu.ime(),
                 halted_before,
                 halted_after: self.cpu.halted(),
-                interrupt_flag,
-                interrupt_enable,
+                interrupt_flag_before: interrupt_flag,
+                interrupt_enable_before: interrupt_enable,
+                interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
+                interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
+                unimplemented_opcode: self.cpu.last_unimplemented_opcode(),
             }));
+            if observer.should_stop() {
+                stopped_early = true;
+                break;
+            }
         }
 
-        self.cycle_carry = (available - target) as u32;
-        self.total_cycles = self.total_cycles.wrapping_add(target);
+        let consumed = if stopped_early { available } else { target };
+        self.cycle_carry = (available - consumed) as u32;
+        self.total_cycles = self.total_cycles.wrapping_add(consumed);
     }
 
     pub const fn cpu(&self) -> &Cpu {
@@ -707,5 +724,31 @@ mod tests {
 
         let interrupt_event = interrupt_event.expect("interrupt service step should be traced");
         assert_eq!(interrupt_event.opcode_hint, None);
+    }
+
+    #[test]
+    fn observer_pre_stop_prevents_extra_execution() {
+        use crate::observability::{EmulatorEvent, EmulatorObserver};
+
+        struct PreStoppedObserver;
+
+        impl EmulatorObserver for PreStoppedObserver {
+            fn on_event(&mut self, _event: EmulatorEvent) {
+                panic!("pre-stopped observer should not receive events");
+            }
+
+            fn should_stop(&self) -> bool {
+                true
+            }
+        }
+
+        let mut emulator = Emulator::default();
+        let initial_pc = emulator.cpu().pc();
+
+        let mut observer = PreStoppedObserver;
+        emulator.step_cycles_with_observer(4, &mut observer);
+
+        assert_eq!(emulator.cpu().pc(), initial_pc);
+        assert_eq!(emulator.total_cycles(), 0);
     }
 }
