@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -9,6 +8,7 @@ use std::process::ExitCode;
 
 use latchboy_core::{
     cartridge::Cartridge,
+    interrupts,
     observability::{
         CpuStepObservation, EmulatorEvent, EmulatorObserver, HaltedFastForwardObservation,
     },
@@ -52,25 +52,89 @@ enum ExitReason {
     UnimplementedOpcode { opcode: u8, pc: u16 },
 }
 
-struct TraceCollector {
-    events: VecDeque<EmulatorEvent>,
+struct TraceCollector<'a> {
+    writer: &'a mut BufWriter<fs::File>,
+    config: &'a CliConfig,
+    cpu_steps: u64,
+    budget_steps: u64,
+    executed_cycles: u64,
+    last_cpu_pc_before: Option<u16>,
+    exit_reason: Option<ExitReason>,
+    io_error: Option<io::Error>,
 }
 
-impl TraceCollector {
-    fn new() -> Self {
+impl<'a> TraceCollector<'a> {
+    fn new(writer: &'a mut BufWriter<fs::File>, config: &'a CliConfig) -> Self {
         Self {
-            events: VecDeque::new(),
+            writer,
+            config,
+            cpu_steps: 0,
+            budget_steps: 0,
+            executed_cycles: 0,
+            last_cpu_pc_before: None,
+            exit_reason: None,
+            io_error: None,
         }
     }
-
-    fn pop_front(&mut self) -> Option<EmulatorEvent> {
-        self.events.pop_front()
-    }
 }
 
-impl EmulatorObserver for TraceCollector {
+impl<'a> EmulatorObserver for TraceCollector<'a> {
     fn on_event(&mut self, event: EmulatorEvent) {
-        self.events.push_back(event);
+        if self.exit_reason.is_some() || self.io_error.is_some() {
+            return;
+        }
+
+        match event {
+            EmulatorEvent::CpuStep(observation) => {
+                if let Some(limit) = self.config.max_steps {
+                    if self.budget_steps >= limit {
+                        self.exit_reason = Some(ExitReason::MaxStepsReached { limit });
+                        return;
+                    }
+                }
+
+                if let Err(error) = write_cpu_step_line(self.writer, self.cpu_steps, &observation) {
+                    self.io_error = Some(error);
+                    return;
+                }
+                self.cpu_steps = self.cpu_steps.saturating_add(1);
+                self.budget_steps = self.budget_steps.saturating_add(1);
+                self.executed_cycles = observation.end_cycle;
+                self.last_cpu_pc_before = Some(observation.pc_before);
+
+                if self.exit_reason.is_none() {
+                    self.exit_reason = exit_reason_from_step(self.config, &observation);
+                }
+                if self.exit_reason.is_none() {
+                    if let Some(limit) = self.config.max_cycles {
+                        if observation.end_cycle >= limit {
+                            self.exit_reason = Some(ExitReason::MaxCyclesReached { limit });
+                        }
+                    }
+                }
+            }
+            EmulatorEvent::HaltedFastForward(observation) => {
+                if let Some(limit) = self.config.max_steps {
+                    if self.budget_steps >= limit {
+                        self.exit_reason = Some(ExitReason::MaxStepsReached { limit });
+                        return;
+                    }
+                }
+                if let Err(error) = write_halted_fast_forward_line(self.writer, &observation) {
+                    self.io_error = Some(error);
+                    return;
+                }
+                self.budget_steps = self.budget_steps.saturating_add(1);
+                self.executed_cycles = observation.end_cycle;
+                if self.exit_reason.is_none() {
+                    if let Some(limit) = self.config.max_cycles {
+                        if observation.end_cycle >= limit {
+                            self.exit_reason = Some(ExitReason::MaxCyclesReached { limit });
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -238,10 +302,13 @@ fn exit_reason_from_step(
     config: &CliConfig,
     observation: &CpuStepObservation,
 ) -> Option<ExitReason> {
+    let pending_enabled_interrupts =
+        observation.interrupt_flag & observation.interrupt_enable & interrupts::MASK;
+
     if config.exit_on_jr_fe
         && observation.opcode_hint == Some(0x18)
         && observation.pc_after == observation.pc_before
-        && !(observation.ime_after && observation.interrupt_enable != 0)
+        && !(observation.ime_after && pending_enabled_interrupts != 0)
     {
         return Some(ExitReason::JrFeInfiniteLoop {
             pc: observation.pc_before,
@@ -308,11 +375,11 @@ fn main() -> ExitCode {
     };
     let mut trace_writer = BufWriter::new(trace_file);
 
-    let mut observer = TraceCollector::new();
     let mut cpu_steps = 0u64;
     let mut budget_steps = 0u64;
     let mut executed_cycles = 0u64;
     let mut exit_reason = None;
+    let mut last_cpu_pc_before = None;
 
     while exit_reason.is_none() {
         if let Some(limit) = config.max_steps {
@@ -341,84 +408,34 @@ fn main() -> ExitCode {
             break;
         }
 
+        let mut observer = TraceCollector::new(&mut trace_writer, &config);
+        observer.cpu_steps = cpu_steps;
+        observer.budget_steps = budget_steps;
+        observer.executed_cycles = executed_cycles;
+        observer.last_cpu_pc_before = last_cpu_pc_before;
         emulator.step_cycles_with_observer(cycle_batch, &mut observer);
 
-        let mut saw_event = false;
-        while let Some(event) = observer.pop_front() {
-            saw_event = true;
-            match event {
-                EmulatorEvent::CpuStep(observation) => {
-                    if let Some(limit) = config.max_steps {
-                        if budget_steps >= limit {
-                            exit_reason = Some(ExitReason::MaxStepsReached { limit });
-                            break;
-                        }
-                    }
-                    if let Err(error) =
-                        write_cpu_step_line(&mut trace_writer, cpu_steps, &observation)
-                    {
-                        eprintln!(
-                            "error: failed writing CPU trace to '{}': {error}",
-                            config.output_path.display()
-                        );
-                        return ExitCode::FAILURE;
-                    }
-                    cpu_steps = cpu_steps.saturating_add(1);
-                    budget_steps = budget_steps.saturating_add(1);
-                    executed_cycles = observation.end_cycle;
-                    if exit_reason.is_none() {
-                        exit_reason = exit_reason_from_step(&config, &observation);
-                    }
-                    if exit_reason.is_none() && config.exit_on_unimplemented {
-                        if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
-                            exit_reason = Some(ExitReason::UnimplementedOpcode {
-                                opcode,
-                                pc: observation.pc_before,
-                            });
-                        }
-                    }
-                    if exit_reason.is_none() {
-                        if let Some(limit) = config.max_cycles {
-                            if observation.end_cycle >= limit {
-                                exit_reason = Some(ExitReason::MaxCyclesReached { limit });
-                            }
-                        }
-                    }
-                }
-                EmulatorEvent::HaltedFastForward(observation) => {
-                    if let Some(limit) = config.max_steps {
-                        if budget_steps >= limit {
-                            exit_reason = Some(ExitReason::MaxStepsReached { limit });
-                            break;
-                        }
-                    }
-                    if let Err(error) =
-                        write_halted_fast_forward_line(&mut trace_writer, &observation)
-                    {
-                        eprintln!(
-                            "error: failed writing HALT trace to '{}': {error}",
-                            config.output_path.display()
-                        );
-                        return ExitCode::FAILURE;
-                    }
-                    budget_steps = budget_steps.saturating_add(1);
-                    executed_cycles = observation.end_cycle;
-                    if exit_reason.is_none() {
-                        if let Some(limit) = config.max_cycles {
-                            if observation.end_cycle >= limit {
-                                exit_reason = Some(ExitReason::MaxCyclesReached { limit });
-                            }
-                        }
-                    }
-                }
-            }
-
-            if exit_reason.is_some() {
-                break;
-            }
+        if let Some(error) = observer.io_error {
+            eprintln!(
+                "error: failed writing trace to '{}': {error}",
+                config.output_path.display()
+            );
+            return ExitCode::FAILURE;
         }
-        if !saw_event {
-            continue;
+
+        cpu_steps = observer.cpu_steps;
+        budget_steps = observer.budget_steps;
+        executed_cycles = observer.executed_cycles;
+        last_cpu_pc_before = observer.last_cpu_pc_before;
+        exit_reason = observer.exit_reason;
+
+        if exit_reason.is_none() && config.exit_on_unimplemented {
+            if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
+                exit_reason = Some(ExitReason::UnimplementedOpcode {
+                    opcode,
+                    pc: last_cpu_pc_before.unwrap_or(emulator.cpu().pc().wrapping_sub(1)),
+                });
+            }
         }
     }
 
