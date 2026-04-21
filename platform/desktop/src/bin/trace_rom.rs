@@ -39,6 +39,11 @@ struct CliConfig {
     exit_on_unimplemented: bool,
 }
 
+enum CliParseResult {
+    Help,
+    Config(CliConfig),
+}
+
 #[derive(Debug)]
 enum ExitReason {
     MaxStepsReached { limit: u64 },
@@ -85,16 +90,19 @@ fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
     })
 }
 
-fn parse_cli() -> Result<CliConfig, UsageError> {
-    let mut args = env::args().skip(1);
-    let rom_path = args
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| UsageError("missing ROM path".to_string()))?;
-    let output_path = args
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(|| UsageError("missing output trace path".to_string()))?;
+fn parse_cli() -> Result<CliParseResult, UsageError> {
+    let mut args = env::args().skip(1).collect::<Vec<_>>();
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        return Ok(CliParseResult::Help);
+    }
+    if args.len() < 2 {
+        return Err(UsageError(
+            "missing ROM path and/or output trace path".to_string(),
+        ));
+    }
+    let rom_path = PathBuf::from(args.remove(0));
+    let output_path = PathBuf::from(args.remove(0));
+    let mut args = args.into_iter();
 
     let mut cycle_step = DEFAULT_CYCLE_STEP;
     let mut max_steps = None;
@@ -132,7 +140,7 @@ fn parse_cli() -> Result<CliConfig, UsageError> {
             "--exit-on-unimplemented" => exit_on_unimplemented = true,
             "--no-exit-on-unimplemented" => exit_on_unimplemented = false,
             "-h" | "--help" => {
-                return Err(UsageError(usage()));
+                return Ok(CliParseResult::Help);
             }
             _ => {
                 return Err(UsageError(format!(
@@ -143,7 +151,7 @@ fn parse_cli() -> Result<CliConfig, UsageError> {
         }
     }
 
-    Ok(CliConfig {
+    Ok(CliParseResult::Config(CliConfig {
         rom_path,
         output_path,
         cycle_step,
@@ -151,7 +159,7 @@ fn parse_cli() -> Result<CliConfig, UsageError> {
         max_cycles,
         exit_on_jr_fe,
         exit_on_unimplemented,
-    })
+    }))
 }
 
 fn usage() -> String {
@@ -259,7 +267,11 @@ fn cycle_batch_target(config: &CliConfig, steps: u64, total_cycles: u64) -> u32 
 
 fn main() -> ExitCode {
     let config = match parse_cli() {
-        Ok(config) => config,
+        Ok(CliParseResult::Help) => {
+            println!("{}", usage());
+            return ExitCode::SUCCESS;
+        }
+        Ok(CliParseResult::Config(config)) => config,
         Err(error) => {
             eprintln!("error: {error}");
             eprintln!("{}", usage());
@@ -288,12 +300,13 @@ fn main() -> ExitCode {
     let mut trace_writer = BufWriter::new(trace_file);
 
     let mut observer = TraceCollector::new();
-    let mut steps = 0u64;
+    let mut cpu_steps = 0u64;
+    let mut budget_steps = 0u64;
     let mut exit_reason = None;
 
     while exit_reason.is_none() {
         if let Some(limit) = config.max_steps {
-            if steps >= limit {
+            if budget_steps >= limit {
                 exit_reason = Some(ExitReason::MaxStepsReached { limit });
                 break;
             }
@@ -306,7 +319,7 @@ fn main() -> ExitCode {
             }
         }
 
-        let cycle_batch = cycle_batch_target(&config, steps, emulator.total_cycles());
+        let cycle_batch = cycle_batch_target(&config, budget_steps, emulator.total_cycles());
         if cycle_batch == 0 {
             exit_reason = Some(if let Some(limit) = config.max_steps {
                 ExitReason::MaxStepsReached { limit }
@@ -326,7 +339,7 @@ fn main() -> ExitCode {
             match event {
                 EmulatorEvent::CpuStep(observation) => {
                     if let Some(limit) = config.max_steps {
-                        if steps >= limit {
+                        if budget_steps >= limit {
                             exit_reason = Some(ExitReason::MaxStepsReached { limit });
                             break;
                         }
@@ -338,7 +351,8 @@ fn main() -> ExitCode {
                         }
                     }
 
-                    if let Err(error) = write_cpu_step_line(&mut trace_writer, steps, &observation)
+                    if let Err(error) =
+                        write_cpu_step_line(&mut trace_writer, cpu_steps, &observation)
                     {
                         eprintln!(
                             "error: failed writing CPU trace to '{}': {error}",
@@ -346,12 +360,27 @@ fn main() -> ExitCode {
                         );
                         return ExitCode::FAILURE;
                     }
-                    steps = steps.saturating_add(1);
+                    cpu_steps = cpu_steps.saturating_add(1);
+                    budget_steps = budget_steps.saturating_add(1);
                     if exit_reason.is_none() {
                         exit_reason = exit_reason_from_step(&config, &observation);
                     }
+                    if exit_reason.is_none() && config.exit_on_unimplemented {
+                        if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
+                            exit_reason = Some(ExitReason::UnimplementedOpcode {
+                                opcode,
+                                pc: observation.pc_before,
+                            });
+                        }
+                    }
                 }
                 EmulatorEvent::HaltedFastForward(observation) => {
+                    if let Some(limit) = config.max_steps {
+                        if budget_steps >= limit {
+                            exit_reason = Some(ExitReason::MaxStepsReached { limit });
+                            break;
+                        }
+                    }
                     if let Some(limit) = config.max_cycles {
                         if observation.end_cycle > limit {
                             exit_reason = Some(ExitReason::MaxCyclesReached { limit });
@@ -367,6 +396,7 @@ fn main() -> ExitCode {
                         );
                         return ExitCode::FAILURE;
                     }
+                    budget_steps = budget_steps.saturating_add(1);
                 }
             }
 
@@ -376,15 +406,6 @@ fn main() -> ExitCode {
         }
         if !saw_event {
             continue;
-        }
-
-        if config.exit_on_unimplemented {
-            if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
-                exit_reason = Some(ExitReason::UnimplementedOpcode {
-                    opcode,
-                    pc: emulator.cpu().pc(),
-                });
-            }
         }
     }
 
@@ -403,25 +424,29 @@ fn main() -> ExitCode {
         Some(ExitReason::MaxCyclesReached { limit }) => {
             println!(
                 "trace completed after reaching cycle limit ({limit}); executed cycles={} steps={steps}",
-                emulator.total_cycles()
+                emulator.total_cycles(),
+                steps = cpu_steps
             );
         }
         Some(ExitReason::JrFeInfiniteLoop { pc }) => {
             println!(
                 "trace completed: detected infinite loop via JR -2 at PC={pc:04X}; cycles={} steps={steps}",
-                emulator.total_cycles()
+                emulator.total_cycles(),
+                steps = cpu_steps
             );
         }
         Some(ExitReason::UnimplementedOpcode { opcode, pc }) => {
             println!(
                 "trace completed: hit unimplemented opcode {opcode:02X} at PC={pc:04X}; cycles={} steps={steps}",
-                emulator.total_cycles()
+                emulator.total_cycles(),
+                steps = cpu_steps
             );
         }
         None => {
             println!(
                 "trace completed without explicit exit condition; cycles={} steps={steps}",
-                emulator.total_cycles()
+                emulator.total_cycles(),
+                steps = cpu_steps
             );
         }
     }
