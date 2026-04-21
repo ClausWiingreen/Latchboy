@@ -142,6 +142,7 @@ impl Emulator {
     ) {
         let target = cycles as u64;
         let mut available = self.cycle_carry as u64;
+        let mut stopped_early = false;
 
         while available < target {
             if self.cpu.halted() {
@@ -170,6 +171,10 @@ impl Emulator {
                     ));
                     self.tick_bus_cycles(halted_advance);
                     available += halted_advance;
+                    if observer.should_stop() {
+                        stopped_early = true;
+                        break;
+                    }
                     break;
                 }
             }
@@ -214,11 +219,17 @@ impl Emulator {
                 halted_after: self.cpu.halted(),
                 interrupt_flag,
                 interrupt_enable,
+                unimplemented_opcode: self.cpu.last_unimplemented_opcode(),
             }));
+            if observer.should_stop() {
+                stopped_early = true;
+                break;
+            }
         }
 
-        self.cycle_carry = (available - target) as u32;
-        self.total_cycles = self.total_cycles.wrapping_add(target);
+        let consumed = if stopped_early { available } else { target };
+        self.cycle_carry = (available - consumed) as u32;
+        self.total_cycles = self.total_cycles.wrapping_add(consumed);
     }
 
     pub const fn cpu(&self) -> &Cpu {

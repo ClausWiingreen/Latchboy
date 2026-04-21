@@ -105,6 +105,14 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
                 if self.exit_reason.is_none() {
                     self.exit_reason = exit_reason_from_step(self.config, &observation);
                 }
+                if self.exit_reason.is_none() && self.config.exit_on_unimplemented {
+                    if let Some(opcode) = observation.unimplemented_opcode {
+                        self.exit_reason = Some(ExitReason::UnimplementedOpcode {
+                            opcode,
+                            pc: observation.pc_before,
+                        });
+                    }
+                }
                 if self.exit_reason.is_none() {
                     if let Some(limit) = self.config.max_cycles {
                         if observation.end_cycle >= limit {
@@ -135,6 +143,10 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
                 }
             }
         }
+    }
+
+    fn should_stop(&self) -> bool {
+        self.exit_reason.is_some() || self.io_error.is_some()
     }
 }
 
@@ -302,12 +314,13 @@ fn exit_reason_from_step(
     config: &CliConfig,
     observation: &CpuStepObservation,
 ) -> Option<ExitReason> {
-    let enabled_interrupts = observation.interrupt_enable & interrupts::MASK;
+    let pending_interrupts =
+        observation.interrupt_enable & observation.interrupt_flag & interrupts::MASK;
 
     if config.exit_on_jr_fe
         && observation.opcode_hint == Some(0x18)
         && observation.pc_after == observation.pc_before
-        && !(observation.ime_after && enabled_interrupts != 0)
+        && !(observation.ime_after && pending_interrupts != 0)
     {
         return Some(ExitReason::JrFeInfiniteLoop {
             pc: observation.pc_before,
@@ -427,15 +440,6 @@ fn main() -> ExitCode {
         executed_cycles = observer.executed_cycles;
         last_cpu_pc_before = observer.last_cpu_pc_before;
         exit_reason = observer.exit_reason;
-
-        if exit_reason.is_none() && config.exit_on_unimplemented {
-            if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
-                exit_reason = Some(ExitReason::UnimplementedOpcode {
-                    opcode,
-                    pc: last_cpu_pc_before.unwrap_or(emulator.cpu().pc().wrapping_sub(1)),
-                });
-            }
-        }
     }
 
     if let Err(error) = trace_writer.flush() {

@@ -30,6 +30,7 @@ pub struct CpuStepObservation {
     pub halted_after: bool,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
+    pub unimplemented_opcode: Option<u8>,
 }
 
 /// Observation emitted when step batching fast-forwards a HALTed CPU.
@@ -46,6 +47,10 @@ pub struct HaltedFastForwardObservation {
 /// Event sink for emulator execution observability.
 pub trait EmulatorObserver {
     fn on_event(&mut self, event: EmulatorEvent);
+
+    fn should_stop(&self) -> bool {
+        false
+    }
 }
 
 /// Fixed-size recorder for retaining recent execution events.
