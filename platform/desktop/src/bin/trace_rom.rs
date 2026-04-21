@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fmt;
@@ -47,26 +48,24 @@ enum ExitReason {
 }
 
 struct TraceCollector {
-    events: Vec<EmulatorEvent>,
+    events: VecDeque<EmulatorEvent>,
 }
 
 impl TraceCollector {
     fn new() -> Self {
-        Self { events: Vec::new() }
+        Self {
+            events: VecDeque::new(),
+        }
     }
 
-    fn len(&self) -> usize {
-        self.events.len()
-    }
-
-    fn event_at(&self, index: usize) -> Option<&EmulatorEvent> {
-        self.events.get(index)
+    fn pop_front(&mut self) -> Option<EmulatorEvent> {
+        self.events.pop_front()
     }
 }
 
 impl EmulatorObserver for TraceCollector {
     fn on_event(&mut self, event: EmulatorEvent) {
-        self.events.push(event);
+        self.events.push_back(event);
     }
 }
 
@@ -238,6 +237,29 @@ fn exit_reason_from_step(
     None
 }
 
+fn cycle_batch_target(config: &CliConfig, steps: u64, total_cycles: u64) -> u32 {
+    let mut target = config.cycle_step;
+
+    if let Some(limit) = config.max_steps {
+        let remaining_steps = limit.saturating_sub(steps);
+        if remaining_steps == 0 {
+            return 0;
+        }
+        let max_cycles_for_remaining_steps = remaining_steps.saturating_mul(4);
+        target = target.min(max_cycles_for_remaining_steps.min(u64::from(u32::MAX)) as u32);
+    }
+
+    if let Some(limit) = config.max_cycles {
+        let remaining_cycles = limit.saturating_sub(total_cycles);
+        if remaining_cycles == 0 {
+            return 0;
+        }
+        target = target.min(remaining_cycles.min(u64::from(u32::MAX)) as u32);
+    }
+
+    target.max(1)
+}
+
 fn main() -> ExitCode {
     let config = match parse_cli() {
         Ok(config) => config,
@@ -269,7 +291,6 @@ fn main() -> ExitCode {
     let mut trace_writer = BufWriter::new(trace_file);
 
     let mut observer = TraceCollector::new();
-    let mut emitted_event_index = 0usize;
     let mut steps = 0u64;
     let mut exit_reason = None;
 
@@ -288,21 +309,40 @@ fn main() -> ExitCode {
             }
         }
 
-        let events_before = observer.len();
-        emulator.step_cycles_with_observer(config.cycle_step, &mut observer);
-        if observer.len() == events_before {
-            continue;
+        let cycle_batch = cycle_batch_target(&config, steps, emulator.total_cycles());
+        if cycle_batch == 0 {
+            exit_reason = Some(if let Some(limit) = config.max_steps {
+                ExitReason::MaxStepsReached { limit }
+            } else {
+                ExitReason::MaxCyclesReached {
+                    limit: config.max_cycles.unwrap_or(emulator.total_cycles()),
+                }
+            });
+            break;
         }
 
-        while emitted_event_index < observer.len() {
-            let Some(event) = observer.event_at(emitted_event_index) else {
-                break;
-            };
+        emulator.step_cycles_with_observer(cycle_batch, &mut observer);
 
+        let mut saw_event = false;
+        while let Some(event) = observer.pop_front() {
+            saw_event = true;
             match event {
                 EmulatorEvent::CpuStep(observation) => {
+                    if let Some(limit) = config.max_steps {
+                        if steps >= limit {
+                            exit_reason = Some(ExitReason::MaxStepsReached { limit });
+                            break;
+                        }
+                    }
+                    if let Some(limit) = config.max_cycles {
+                        if observation.end_cycle > limit {
+                            exit_reason = Some(ExitReason::MaxCyclesReached { limit });
+                            break;
+                        }
+                    }
+
                     if let Err(error) =
-                        write_cpu_step_line(&mut trace_writer, steps, observation, &emulator)
+                        write_cpu_step_line(&mut trace_writer, steps, &observation, &emulator)
                     {
                         eprintln!(
                             "error: failed writing CPU trace to '{}': {error}",
@@ -312,12 +352,18 @@ fn main() -> ExitCode {
                     }
                     steps = steps.saturating_add(1);
                     if exit_reason.is_none() {
-                        exit_reason = exit_reason_from_step(&config, observation);
+                        exit_reason = exit_reason_from_step(&config, &observation);
                     }
                 }
                 EmulatorEvent::HaltedFastForward(observation) => {
+                    if let Some(limit) = config.max_cycles {
+                        if observation.end_cycle > limit {
+                            exit_reason = Some(ExitReason::MaxCyclesReached { limit });
+                            break;
+                        }
+                    }
                     if let Err(error) =
-                        write_halted_fast_forward_line(&mut trace_writer, observation)
+                        write_halted_fast_forward_line(&mut trace_writer, &observation)
                     {
                         eprintln!(
                             "error: failed writing HALT trace to '{}': {error}",
@@ -328,10 +374,12 @@ fn main() -> ExitCode {
                 }
             }
 
-            emitted_event_index += 1;
             if exit_reason.is_some() {
                 break;
             }
+        }
+        if !saw_event {
+            continue;
         }
 
         if config.exit_on_unimplemented {
