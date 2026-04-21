@@ -142,9 +142,9 @@ impl Emulator {
     ) {
         let target = cycles as u64;
         let mut available = self.cycle_carry as u64;
-        let mut stopped_early = false;
+        let mut stopped_early = observer.should_stop();
 
-        while available < target {
+        while !stopped_early && available < target {
             if self.cpu.halted() {
                 let pending_interrupts = self.bus.read8(interrupt_regs::FLAG_REGISTER)
                     & self.bus.read8(interrupt_regs::ENABLE_REGISTER)
@@ -724,5 +724,31 @@ mod tests {
 
         let interrupt_event = interrupt_event.expect("interrupt service step should be traced");
         assert_eq!(interrupt_event.opcode_hint, None);
+    }
+
+    #[test]
+    fn observer_pre_stop_prevents_extra_execution() {
+        use crate::observability::{EmulatorEvent, EmulatorObserver};
+
+        struct PreStoppedObserver;
+
+        impl EmulatorObserver for PreStoppedObserver {
+            fn on_event(&mut self, _event: EmulatorEvent) {
+                panic!("pre-stopped observer should not receive events");
+            }
+
+            fn should_stop(&self) -> bool {
+                true
+            }
+        }
+
+        let mut emulator = Emulator::default();
+        let initial_pc = emulator.cpu().pc();
+
+        let mut observer = PreStoppedObserver;
+        emulator.step_cycles_with_observer(4, &mut observer);
+
+        assert_eq!(emulator.cpu().pc(), initial_pc);
+        assert_eq!(emulator.total_cycles(), 0);
     }
 }
