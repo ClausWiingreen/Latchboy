@@ -16,6 +16,8 @@ pub struct CpuStepObservation {
     pub end_cycle: u64,
     pub pc_before: u16,
     pub pc_after: u16,
+    pub operand1_before: u8,
+    pub operand2_before: u8,
     pub sp_before: u16,
     pub sp_after: u16,
     pub opcode_hint: Option<u8>,

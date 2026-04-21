@@ -180,6 +180,8 @@ impl Emulator {
             let registers_before = *self.cpu.registers();
             let ime_before = self.cpu.ime();
             let halted_before = self.cpu.halted();
+            let operand1_before = self.bus.read8(pc_before.wrapping_add(1));
+            let operand2_before = self.bus.read8(pc_before.wrapping_add(2));
             let interrupt_flag = self.bus.read8(interrupt_regs::FLAG_REGISTER);
             let interrupt_enable = self.bus.read8(interrupt_regs::ENABLE_REGISTER);
             let will_service_interrupt = self.cpu.will_service_interrupt(&self.bus);
@@ -198,6 +200,8 @@ impl Emulator {
                 end_cycle: start_cycle.wrapping_add(cycles_taken as u64),
                 pc_before,
                 pc_after: self.cpu.pc(),
+                operand1_before,
+                operand2_before,
                 sp_before,
                 sp_after: self.cpu.sp(),
                 opcode_hint,

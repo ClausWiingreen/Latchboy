@@ -176,15 +176,12 @@ fn write_cpu_step_line(
     writer: &mut BufWriter<fs::File>,
     step_index: u64,
     observation: &CpuStepObservation,
-    emulator: &Emulator,
 ) -> io::Result<()> {
     let regs = &observation.registers_after;
     let opcode = observation
         .opcode_hint
         .map(|opcode| format!("{opcode:02X}"))
         .unwrap_or_else(|| "--".to_string());
-    let op1 = emulator.bus().read8(observation.pc_before.wrapping_add(1));
-    let op2 = emulator.bus().read8(observation.pc_before.wrapping_add(2));
 
     writeln!(
         writer,
@@ -194,8 +191,8 @@ fn write_cpu_step_line(
         observation.pc_before,
         observation.pc_after,
         opcode,
-        op1,
-        op2,
+        observation.operand1_before,
+        observation.operand2_before,
         regs.a,
         regs.f,
         regs.b,
@@ -341,8 +338,7 @@ fn main() -> ExitCode {
                         }
                     }
 
-                    if let Err(error) =
-                        write_cpu_step_line(&mut trace_writer, steps, &observation, &emulator)
+                    if let Err(error) = write_cpu_step_line(&mut trace_writer, steps, &observation)
                     {
                         eprintln!(
                             "error: failed writing CPU trace to '{}': {error}",
