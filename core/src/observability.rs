@@ -28,6 +28,8 @@ pub struct CpuStepObservation {
     pub ime_after: bool,
     pub halted_before: bool,
     pub halted_after: bool,
+    pub interrupt_flag_before: u8,
+    pub interrupt_enable_before: u8,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
     pub unimplemented_opcode: Option<u8>,

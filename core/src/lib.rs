@@ -217,8 +217,10 @@ impl Emulator {
                 ime_after: self.cpu.ime(),
                 halted_before,
                 halted_after: self.cpu.halted(),
-                interrupt_flag,
-                interrupt_enable,
+                interrupt_flag_before: interrupt_flag,
+                interrupt_enable_before: interrupt_enable,
+                interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
+                interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
                 unimplemented_opcode: self.cpu.last_unimplemented_opcode(),
             }));
             if observer.should_stop() {
