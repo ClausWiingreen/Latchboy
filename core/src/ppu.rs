@@ -320,7 +320,6 @@ impl Ppu {
                     self.set_mode(0x00);
                     self.clear_framebuffer();
                     self.frame_ready_pending = false;
-                    self.update_lyc_coincidence_flag();
                 }
 
                 self.update_stat_irq_line(None);
@@ -659,6 +658,27 @@ mod tests {
 
         ppu.write_register(LY_REGISTER, 0x99);
         assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
+    }
+
+    #[test]
+    fn lcd_disable_preserves_latched_stat_coincidence_bit() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LYC_REGISTER, 0x01);
+
+        // Force a latched coincidence state before LCD disable.
+        ppu.stat |= STAT_LYC_EQUAL_BIT;
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        let stat = ppu.read_register(STAT_REGISTER).unwrap();
+        assert_eq!(stat & STAT_MODE_MASK, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+
+        // Writing STAT should still preserve read-only mode/coincidence bits.
+        ppu.write_register(STAT_REGISTER, 0x00);
+        let stat_after_write = ppu.read_register(STAT_REGISTER).unwrap();
+        assert_eq!(stat_after_write & STAT_MODE_MASK, 0x00);
+        assert_eq!(stat_after_write & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
     }
 
     #[test]
