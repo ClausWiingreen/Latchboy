@@ -588,7 +588,6 @@ impl Ppu {
             self.scanline_dot = 0;
             self.ly = 0;
             self.set_mode(0);
-            self.update_lyc_coincidence_flag();
             self.update_stat_irq_line(Some(interrupt_flag));
             return;
         }
@@ -955,6 +954,47 @@ mod tests {
             STAT_LYC_EQUAL_BIT
         );
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
+    }
+
+    #[test]
+    fn lcd_disable_preserves_coincidence_bit_when_currently_matching() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LYC_REGISTER, 0x00);
+
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        let stat = ppu.read_register(STAT_REGISTER).unwrap();
+        assert_eq!(stat & STAT_MODE_MASK, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+        assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
+    }
+
+    #[test]
+    fn lcd_off_step_keeps_latched_coincidence_and_does_not_raise_stat() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LYC_REGISTER, 0x00);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        assert!(ppu.take_stat_irq_pending());
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+        let mut interrupt_flag = 0u8;
+
+        for _ in 0..8 {
+            ppu.step(&mut interrupt_flag);
+            let stat = ppu.read_register(STAT_REGISTER).unwrap();
+            assert_eq!(stat & STAT_MODE_MASK, 0x00);
+            assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+            assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
+        }
+
+        assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, 0);
     }
 
     #[test]
