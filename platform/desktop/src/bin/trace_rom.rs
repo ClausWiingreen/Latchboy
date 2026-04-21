@@ -185,22 +185,30 @@ fn write_cpu_step_line(
     step_index: u64,
     observation: &CpuStepObservation,
 ) -> io::Result<()> {
+    fn format_operand(value: Option<u8>) -> String {
+        value
+            .map(|byte| format!("{byte:02X}"))
+            .unwrap_or_else(|| "--".to_string())
+    }
+
     let regs = &observation.registers_after;
     let opcode = observation
         .opcode_hint
         .map(|opcode| format!("{opcode:02X}"))
         .unwrap_or_else(|| "--".to_string());
+    let operand1 = format_operand(observation.operand1_before);
+    let operand2 = format_operand(observation.operand2_before);
 
     writeln!(
         writer,
-        "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{:02X} {:02X}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={}",
+        "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={}",
         observation.start_cycle,
         observation.end_cycle,
         observation.pc_before,
         observation.pc_after,
         opcode,
-        observation.operand1_before,
-        observation.operand2_before,
+        operand1,
+        operand2,
         regs.a,
         regs.f,
         regs.b,
