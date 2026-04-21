@@ -233,6 +233,7 @@ fn exit_reason_from_step(
     if config.exit_on_jr_fe
         && observation.opcode_hint == Some(0x18)
         && observation.pc_after == observation.pc_before
+        && !observation.ime_after
     {
         return Some(ExitReason::JrFeInfiniteLoop {
             pc: observation.pc_before,
@@ -302,6 +303,7 @@ fn main() -> ExitCode {
     let mut observer = TraceCollector::new();
     let mut cpu_steps = 0u64;
     let mut budget_steps = 0u64;
+    let mut executed_cycles = 0u64;
     let mut exit_reason = None;
 
     while exit_reason.is_none() {
@@ -355,6 +357,7 @@ fn main() -> ExitCode {
                     }
                     cpu_steps = cpu_steps.saturating_add(1);
                     budget_steps = budget_steps.saturating_add(1);
+                    executed_cycles = observation.end_cycle;
                     if exit_reason.is_none() {
                         exit_reason = exit_reason_from_step(&config, &observation);
                     }
@@ -391,6 +394,7 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                     budget_steps = budget_steps.saturating_add(1);
+                    executed_cycles = observation.end_cycle;
                     if exit_reason.is_none() {
                         if let Some(limit) = config.max_cycles {
                             if observation.end_cycle >= limit {
@@ -425,28 +429,28 @@ fn main() -> ExitCode {
         Some(ExitReason::MaxCyclesReached { limit }) => {
             println!(
                 "trace completed after reaching cycle limit ({limit}); executed cycles={} steps={steps}",
-                emulator.total_cycles(),
+                executed_cycles,
                 steps = cpu_steps
             );
         }
         Some(ExitReason::JrFeInfiniteLoop { pc }) => {
             println!(
                 "trace completed: detected infinite loop via JR -2 at PC={pc:04X}; cycles={} steps={steps}",
-                emulator.total_cycles(),
+                executed_cycles,
                 steps = cpu_steps
             );
         }
         Some(ExitReason::UnimplementedOpcode { opcode, pc }) => {
             println!(
                 "trace completed: hit unimplemented opcode {opcode:02X} at PC={pc:04X}; cycles={} steps={steps}",
-                emulator.total_cycles(),
+                executed_cycles,
                 steps = cpu_steps
             );
         }
         None => {
             println!(
                 "trace completed without explicit exit condition; cycles={} steps={steps}",
-                emulator.total_cycles(),
+                executed_cycles,
                 steps = cpu_steps
             );
         }
