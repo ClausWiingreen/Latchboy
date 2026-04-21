@@ -302,13 +302,12 @@ fn exit_reason_from_step(
     config: &CliConfig,
     observation: &CpuStepObservation,
 ) -> Option<ExitReason> {
-    let pending_enabled_interrupts =
-        observation.interrupt_flag & observation.interrupt_enable & interrupts::MASK;
+    let enabled_interrupts = observation.interrupt_enable & interrupts::MASK;
 
     if config.exit_on_jr_fe
         && observation.opcode_hint == Some(0x18)
         && observation.pc_after == observation.pc_before
-        && !(observation.ime_after && pending_enabled_interrupts != 0)
+        && !(observation.ime_after && enabled_interrupts != 0)
     {
         return Some(ExitReason::JrFeInfiniteLoop {
             pc: observation.pc_before,
