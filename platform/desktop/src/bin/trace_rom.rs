@@ -344,13 +344,6 @@ fn main() -> ExitCode {
                             break;
                         }
                     }
-                    if let Some(limit) = config.max_cycles {
-                        if observation.end_cycle > limit {
-                            exit_reason = Some(ExitReason::MaxCyclesReached { limit });
-                            break;
-                        }
-                    }
-
                     if let Err(error) =
                         write_cpu_step_line(&mut trace_writer, cpu_steps, &observation)
                     {
@@ -373,17 +366,18 @@ fn main() -> ExitCode {
                             });
                         }
                     }
+                    if exit_reason.is_none() {
+                        if let Some(limit) = config.max_cycles {
+                            if observation.end_cycle >= limit {
+                                exit_reason = Some(ExitReason::MaxCyclesReached { limit });
+                            }
+                        }
+                    }
                 }
                 EmulatorEvent::HaltedFastForward(observation) => {
                     if let Some(limit) = config.max_steps {
                         if budget_steps >= limit {
                             exit_reason = Some(ExitReason::MaxStepsReached { limit });
-                            break;
-                        }
-                    }
-                    if let Some(limit) = config.max_cycles {
-                        if observation.end_cycle > limit {
-                            exit_reason = Some(ExitReason::MaxCyclesReached { limit });
                             break;
                         }
                     }
@@ -397,6 +391,13 @@ fn main() -> ExitCode {
                         return ExitCode::FAILURE;
                     }
                     budget_steps = budget_steps.saturating_add(1);
+                    if exit_reason.is_none() {
+                        if let Some(limit) = config.max_cycles {
+                            if observation.end_cycle >= limit {
+                                exit_reason = Some(ExitReason::MaxCyclesReached { limit });
+                            }
+                        }
+                    }
                 }
             }
 

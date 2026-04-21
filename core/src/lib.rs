@@ -180,8 +180,8 @@ impl Emulator {
             let registers_before = *self.cpu.registers();
             let ime_before = self.cpu.ime();
             let halted_before = self.cpu.halted();
-            let operand1_before = self.bus.read8(pc_before.wrapping_add(1));
-            let operand2_before = self.bus.read8(pc_before.wrapping_add(2));
+            let default_operand1_before = self.bus.read8(pc_before.wrapping_add(1));
+            let default_operand2_before = self.bus.read8(pc_before.wrapping_add(2));
             let interrupt_flag = self.bus.read8(interrupt_regs::FLAG_REGISTER);
             let interrupt_enable = self.bus.read8(interrupt_regs::ENABLE_REGISTER);
             let will_service_interrupt = self.cpu.will_service_interrupt(&self.bus);
@@ -192,6 +192,14 @@ impl Emulator {
             };
 
             let cycles_taken = self.cpu.step(&mut self.bus);
+            let operand1_before = self
+                .cpu
+                .last_step_operand1_fetch()
+                .unwrap_or(default_operand1_before);
+            let operand2_before = self
+                .cpu
+                .last_step_operand2_fetch()
+                .unwrap_or(default_operand2_before);
             self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
 
