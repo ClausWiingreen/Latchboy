@@ -241,7 +241,7 @@ fn exit_reason_from_step(
     if config.exit_on_jr_fe
         && observation.opcode_hint == Some(0x18)
         && observation.pc_after == observation.pc_before
-        && !observation.ime_after
+        && !(observation.ime_after && observation.interrupt_enable != 0)
     {
         return Some(ExitReason::JrFeInfiniteLoop {
             pc: observation.pc_before,
