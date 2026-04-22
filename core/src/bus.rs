@@ -471,7 +471,7 @@ mod tests {
         let mut bus = Bus::new(cartridge);
         bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
 
-        let cycles_to_vblank = 456 * 144 + 4;
+        let cycles_to_vblank = 456 * 144 + u32::from(crate::ppu::LCD_ENABLE_STARTUP_DELAY_DOTS);
         bus.tick(cycles_to_vblank);
 
         assert_eq!(bus.read8(crate::ppu::LY_REGISTER), 144);
@@ -497,7 +497,7 @@ mod tests {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);
         bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
-        bus.tick(5);
+        bus.tick(u32::from(crate::ppu::LCD_ENABLE_STARTUP_DELAY_DOTS) + 1);
         assert_eq!(bus.read8(crate::ppu::STAT_REGISTER) & 0x03, 0x02);
         bus.write8(crate::ppu::STAT_REGISTER, 0x20);
 

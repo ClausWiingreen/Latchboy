@@ -364,7 +364,7 @@ mod tests {
         let mut emulator = Emulator::new();
         emulator.bus.write8(crate::ppu::LCDC_REGISTER, 0x80);
 
-        emulator.step_cycles(456 * 144);
+        emulator.step_cycles(456 * 144 + u32::from(crate::ppu::LCD_ENABLE_STARTUP_DELAY_DOTS));
 
         assert!(emulator.take_frame_ready());
         assert!(!emulator.take_frame_ready());
