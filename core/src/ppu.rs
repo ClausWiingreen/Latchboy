@@ -25,6 +25,7 @@ const TOTAL_SCANLINES: u8 = 154;
 const MODE2_CYCLES: u16 = 80;
 const MODE3_CYCLES: u16 = 172;
 const MODE0_CYCLES_END: u16 = MODE2_CYCLES + MODE3_CYCLES;
+const LCD_ENABLE_STARTUP_DELAY_DOTS: u8 = 4;
 pub const FRAMEBUFFER_WIDTH: usize = 160;
 pub const FRAMEBUFFER_HEIGHT: usize = 144;
 pub const FRAMEBUFFER_LEN: usize = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT;
@@ -93,6 +94,7 @@ pub struct Ppu {
     wy: u8,
     wx: u8,
     scanline_dot: u16,
+    lcd_enable_delay_dots: u8,
     stat_irq_line_high: bool,
     stat_irq_pending: bool,
     /// Most recently rendered DMG frame in row-major order (`y * 160 + x`).
@@ -128,6 +130,7 @@ impl Default for Ppu {
             wy: 0,
             wx: 0,
             scanline_dot: 0,
+            lcd_enable_delay_dots: 0,
             stat_irq_line_high: false,
             stat_irq_pending: false,
             framebuffer: [0; FRAMEBUFFER_LEN],
@@ -313,11 +316,13 @@ impl Ppu {
                     self.scanline_dot = 0;
                     self.ly = 0;
                     self.set_mode(0x00);
+                    self.lcd_enable_delay_dots = LCD_ENABLE_STARTUP_DELAY_DOTS;
                     self.update_lyc_coincidence_flag();
                 } else if was_enabled && !now_enabled {
                     self.scanline_dot = 0;
                     self.ly = 0;
                     self.set_mode(0x00);
+                    self.lcd_enable_delay_dots = 0;
                     self.clear_framebuffer();
                     self.frame_ready_pending = false;
                 }
@@ -591,7 +596,18 @@ impl Ppu {
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
             self.scanline_dot = 0;
             self.ly = 0;
+            self.lcd_enable_delay_dots = 0;
             self.set_mode(0);
+            self.update_stat_irq_line(Some(interrupt_flag));
+            return;
+        }
+
+        if self.lcd_enable_delay_dots != 0 {
+            self.lcd_enable_delay_dots -= 1;
+            self.scanline_dot = 0;
+            self.ly = 0;
+            self.set_mode(0);
+            self.update_lyc_coincidence_flag();
             self.update_stat_irq_line(Some(interrupt_flag));
             return;
         }
@@ -773,6 +789,11 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(LCDC_REGISTER, 0x80);
 
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+            assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x00);
+        }
+
         ppu.step(&mut interrupt_flag);
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
@@ -800,6 +821,10 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(LCDC_REGISTER, 0x80);
         ppu.write_register(STAT_REGISTER, STAT_MODE_1_INTERRUPT_BIT);
+
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
 
         let cycles_to_vblank = (CYCLES_PER_SCANLINE as u32) * (VISIBLE_SCANLINES as u32);
         for _ in 0..cycles_to_vblank {
@@ -847,6 +872,10 @@ mod tests {
             ppu.write_vram(0x8021 + row * 2, 0xFF);
         }
 
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
+
         for _ in 0..MODE0_CYCLES_END {
             ppu.step(&mut interrupt_flag);
         }
@@ -877,6 +906,10 @@ mod tests {
         ppu.write_vram(0x802e, 0x00);
         ppu.write_vram(0x802f, 0xFF);
 
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
+
         let cycles_to_vblank = usize::from(CYCLES_PER_SCANLINE) * usize::from(VISIBLE_SCANLINES);
         for _ in 0..cycles_to_vblank {
             ppu.step(&mut interrupt_flag);
@@ -904,6 +937,10 @@ mod tests {
         ppu.write_vram(0x8010, 0xFF);
         ppu.write_vram(0x8011, 0x00);
 
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
+
         for _ in 0..MODE0_CYCLES_END {
             ppu.step(&mut interrupt_flag);
         }
@@ -927,6 +964,10 @@ mod tests {
         ppu.write_vram(0x8010, 0xFF);
         ppu.write_vram(0x8011, 0x00);
 
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
+
         let cycles_to_vblank = usize::from(CYCLES_PER_SCANLINE) * usize::from(VISIBLE_SCANLINES);
         for _ in 0..cycles_to_vblank {
             ppu.step(&mut interrupt_flag);
@@ -947,6 +988,10 @@ mod tests {
         ppu.write_register(LCDC_REGISTER, 0x80);
         ppu.write_register(LYC_REGISTER, 0x01);
         ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
 
         for _ in 0..CYCLES_PER_SCANLINE {
             ppu.step(&mut interrupt_flag);
@@ -1043,6 +1088,10 @@ mod tests {
         let mut ppu = Ppu::default();
         let mut interrupt_flag = 0u8;
         ppu.write_register(LCDC_REGISTER, 0x80);
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+            assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x00);
+        }
         ppu.step(&mut interrupt_flag);
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert!(!ppu.take_stat_irq_pending());
@@ -1085,6 +1134,10 @@ mod tests {
         assert!(ppu.take_stat_irq_pending());
 
         let mut interrupt_flag = 0u8;
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+            assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x00);
+        }
         ppu.step(&mut interrupt_flag);
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
     }
@@ -1101,6 +1154,11 @@ mod tests {
         assert!(!ppu.take_stat_irq_pending());
 
         let mut interrupt_flag = 0u8;
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+            assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x00);
+            assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, 0);
+        }
         ppu.step(&mut interrupt_flag);
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
@@ -1128,7 +1186,7 @@ mod tests {
     }
 
     #[test]
-    fn lcd_enable_recomputes_coincidence_after_lyc_changed_while_off() {
+    fn lcd_enable_round1_recomputes_coincidence_without_immediate_mode_2() {
         let mut ppu = Ppu::default();
         ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
         ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
@@ -1166,6 +1224,10 @@ mod tests {
             STAT_REGISTER,
             STAT_MODE_0_INTERRUPT_BIT | STAT_COINCIDENCE_INTERRUPT_BIT,
         );
+
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
 
         for _ in 0..(CYCLES_PER_SCANLINE - 1) {
             ppu.step(&mut interrupt_flag);
