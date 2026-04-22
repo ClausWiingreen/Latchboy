@@ -333,13 +333,17 @@ impl Ppu {
             SCX_REGISTER => self.scx = value,
             LY_REGISTER => {
                 self.ly = 0;
-                self.update_lyc_coincidence_flag();
-                self.update_stat_irq_line(None);
+                if (self.lcdc & LCDC_ENABLED_BIT) != 0 {
+                    self.update_lyc_coincidence_flag();
+                    self.update_stat_irq_line(None);
+                }
             }
             LYC_REGISTER => {
                 self.lyc = value;
-                self.update_lyc_coincidence_flag();
-                self.update_stat_irq_line(None);
+                if (self.lcdc & LCDC_ENABLED_BIT) != 0 {
+                    self.update_lyc_coincidence_flag();
+                    self.update_stat_irq_line(None);
+                }
             }
             DMA_REGISTER => self.dma = value,
             BGP_REGISTER => self.bgp = value,
@@ -995,6 +999,21 @@ mod tests {
         }
 
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, 0);
+    }
+
+    #[test]
+    fn lcd_off_lyc_write_preserves_latched_coincidence_bit() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.stat |= STAT_LYC_EQUAL_BIT;
+        ppu.write_register(LCDC_REGISTER, 0x00);
+
+        ppu.write_register(LYC_REGISTER, 0x01);
+
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
     }
 
     #[test]
