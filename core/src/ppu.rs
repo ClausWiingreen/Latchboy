@@ -313,6 +313,7 @@ impl Ppu {
                     self.scanline_dot = 0;
                     self.ly = 0;
                     self.set_mode(0x00);
+                    self.update_lyc_coincidence_flag();
                 } else if was_enabled && !now_enabled {
                     self.scanline_dot = 0;
                     self.ly = 0;
@@ -1124,6 +1125,35 @@ mod tests {
         assert_eq!(stat & STAT_MODE_MASK, 0x00);
         assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
         assert_eq!(stat & 0xC0, 0xC0);
+    }
+
+    #[test]
+    fn lcd_enable_recomputes_coincidence_after_lyc_changed_while_off() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(LYC_REGISTER, 0x00);
+        assert!(ppu.take_stat_irq_pending());
+
+        ppu.write_register(LCDC_REGISTER, 0x00);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
+
+        // While LCD is off, writes should not update coincidence.
+        ppu.write_register(LYC_REGISTER, 0x01);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
+            STAT_LYC_EQUAL_BIT
+        );
+
+        // Re-enabling must recompute coincidence against LY=0 immediately.
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        let stat = ppu.read_register(STAT_REGISTER).unwrap();
+        assert_eq!(stat & STAT_MODE_MASK, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL_BIT, 0x00);
+        assert!(!ppu.take_stat_irq_pending());
     }
 
     #[test]
