@@ -1,4 +1,5 @@
 use crate::cartridge::Cartridge;
+use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
 use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
 
@@ -306,6 +307,26 @@ impl Bus {
 
     pub fn ppu_may_generate_interrupt(&self) -> bool {
         self.ppu.may_request_interrupt(self.interrupt_enable)
+    }
+
+    pub fn ppu_snapshot(&self) -> PpuSnapshot {
+        PpuSnapshot {
+            lcdc: self
+                .ppu
+                .read_register(crate::ppu::LCDC_REGISTER)
+                .unwrap_or(0),
+            stat: self
+                .ppu
+                .read_register(crate::ppu::STAT_REGISTER)
+                .unwrap_or(0),
+            ly: self.ppu.read_register(crate::ppu::LY_REGISTER).unwrap_or(0),
+            lyc: self
+                .ppu
+                .read_register(crate::ppu::LYC_REGISTER)
+                .unwrap_or(0),
+            scanline_dot: self.ppu.scanline_dot(),
+            lcd_enable_delay_dots: self.ppu.lcd_enable_delay_dots(),
+        }
     }
 
     pub fn take_frame_ready(&mut self) -> bool {

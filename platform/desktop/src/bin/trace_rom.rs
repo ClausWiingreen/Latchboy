@@ -277,7 +277,7 @@ fn write_cpu_step_line(
 
     writeln!(
         writer,
-        "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={}",
+        "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={} ppu_lcdc={:02X}->{:02X} ppu_stat={:02X}->{:02X} ppu_ly={:02X}->{:02X} ppu_lyc={:02X}->{:02X} ppu_dot={:03}->{:03} ppu_lcd_warmup={}->{}",
         observation.start_cycle,
         observation.end_cycle,
         observation.pc_before,
@@ -296,6 +296,18 @@ fn write_cpu_step_line(
         observation.sp_after,
         observation.ime_after,
         observation.halted_after,
+        observation.ppu_before.lcdc,
+        observation.ppu_after.lcdc,
+        observation.ppu_before.stat,
+        observation.ppu_after.stat,
+        observation.ppu_before.ly,
+        observation.ppu_after.ly,
+        observation.ppu_before.lyc,
+        observation.ppu_after.lyc,
+        observation.ppu_before.scanline_dot,
+        observation.ppu_after.scanline_dot,
+        observation.ppu_before.lcd_enable_delay_dots,
+        observation.ppu_after.lcd_enable_delay_dots,
     )
 }
 

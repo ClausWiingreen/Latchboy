@@ -187,6 +187,7 @@ impl Emulator {
             let halted_before = self.cpu.halted();
             let interrupt_flag = self.bus.read8(interrupt_regs::FLAG_REGISTER);
             let interrupt_enable = self.bus.read8(interrupt_regs::ENABLE_REGISTER);
+            let ppu_before = self.bus.ppu_snapshot();
             let will_service_interrupt = self.cpu.will_service_interrupt(&self.bus);
             let opcode_hint = if halted_before || will_service_interrupt {
                 None
@@ -219,8 +220,10 @@ impl Emulator {
                 halted_after: self.cpu.halted(),
                 interrupt_flag_before: interrupt_flag,
                 interrupt_enable_before: interrupt_enable,
+                ppu_before,
                 interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
                 interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
+                ppu_after: self.bus.ppu_snapshot(),
                 unimplemented_opcode: self.cpu.last_unimplemented_opcode(),
             }));
             if observer.should_stop() {

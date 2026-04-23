@@ -30,9 +30,22 @@ pub struct CpuStepObservation {
     pub halted_after: bool,
     pub interrupt_flag_before: u8,
     pub interrupt_enable_before: u8,
+    pub ppu_before: PpuSnapshot,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
+    pub ppu_after: PpuSnapshot,
     pub unimplemented_opcode: Option<u8>,
+}
+
+/// Compact PPU snapshot captured around each CPU step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PpuSnapshot {
+    pub lcdc: u8,
+    pub stat: u8,
+    pub ly: u8,
+    pub lyc: u8,
+    pub scanline_dot: u16,
+    pub lcd_enable_delay_dots: u8,
 }
 
 /// Observation emitted when step batching fast-forwards a HALTed CPU.
