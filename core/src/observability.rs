@@ -7,6 +7,7 @@ use crate::cpu::Registers;
 pub enum EmulatorEvent {
     CpuStep(CpuStepObservation),
     HaltedFastForward(HaltedFastForwardObservation),
+    WatchIo(WatchIoObservation),
 }
 
 /// Per-instruction observation with pre/post CPU state.
@@ -16,6 +17,8 @@ pub struct CpuStepObservation {
     pub end_cycle: u64,
     pub pc_before: u16,
     pub pc_after: u16,
+    pub operand1_before: Option<u8>,
+    pub operand2_before: Option<u8>,
     pub sp_before: u16,
     pub sp_after: u16,
     pub opcode_hint: Option<u8>,
@@ -26,8 +29,24 @@ pub struct CpuStepObservation {
     pub ime_after: bool,
     pub halted_before: bool,
     pub halted_after: bool,
+    pub interrupt_flag_before: u8,
+    pub interrupt_enable_before: u8,
+    pub ppu_before: PpuSnapshot,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
+    pub ppu_after: PpuSnapshot,
+    pub unimplemented_opcode: Option<u8>,
+}
+
+/// Compact PPU snapshot captured around each CPU step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PpuSnapshot {
+    pub lcdc: u8,
+    pub stat: u8,
+    pub ly: u8,
+    pub lyc: u8,
+    pub scanline_dot: u16,
+    pub lcd_enable_delay_dots: u8,
 }
 
 /// Observation emitted when step batching fast-forwards a HALTed CPU.
@@ -41,9 +60,33 @@ pub struct HaltedFastForwardObservation {
     pub interrupt_enable: u8,
 }
 
+/// Access type for watchpointed I/O interactions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WatchIoAccessType {
+    Read,
+    Write,
+}
+
+/// Observation emitted for watchpointed MMIO accesses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchIoObservation {
+    pub step_start_cycle: u64,
+    pub pc: u16,
+    pub opcode_hint: Option<u8>,
+    pub access_type: WatchIoAccessType,
+    pub address: u16,
+    pub value: u8,
+    pub ppu_mode: u8,
+    pub ppu_coincidence: bool,
+}
+
 /// Event sink for emulator execution observability.
 pub trait EmulatorObserver {
     fn on_event(&mut self, event: EmulatorEvent);
+
+    fn should_stop(&self) -> bool {
+        false
+    }
 }
 
 /// Fixed-size recorder for retaining recent execution events.
@@ -126,6 +169,7 @@ mod tests {
         let mut cycles = trace.iter().map(|event| match event {
             EmulatorEvent::HaltedFastForward(observation) => observation.end_cycle,
             EmulatorEvent::CpuStep(_) => 0,
+            EmulatorEvent::WatchIo(_) => 0,
         });
         assert_eq!(cycles.next(), Some(8));
         assert_eq!(cycles.next(), Some(12));
