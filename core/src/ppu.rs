@@ -1223,6 +1223,43 @@ mod tests {
     }
 
     #[test]
+    fn lcd_toggle_preserves_latched_coincidence_until_reenable_recomputes_stat() {
+        const STAT_STABLE_MASK: u8 = 0x80 | 0x78 | STAT_LYC_EQUAL_BIT | STAT_MODE_MASK;
+
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(LYC_REGISTER, 0x00);
+
+        // 1) Reach LY==LYC with coincidence set.
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_STABLE_MASK,
+            0xC4
+        );
+
+        // 2) Disable LCD, coincidence stays latched.
+        ppu.write_register(LCDC_REGISTER, 0x00);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_STABLE_MASK,
+            0xC4
+        );
+
+        // 3) LYC writes while LCD is off must not change the latched coincidence state.
+        ppu.write_register(LYC_REGISTER, 0x01);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_STABLE_MASK,
+            0xC4
+        );
+
+        // 4) Re-enabling LCD immediately recomputes coincidence (LY=0, LYC=1) while mode is still 0.
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_STABLE_MASK,
+            0xC0
+        );
+    }
+
+    #[test]
     fn stat_line_handoff_between_sources_does_not_create_spurious_edge() {
         let mut ppu = Ppu::default();
         let mut interrupt_flag = 0u8;
