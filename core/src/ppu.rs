@@ -140,6 +140,14 @@ impl Default for Ppu {
 }
 
 impl Ppu {
+    pub const fn scanline_dot(&self) -> u16 {
+        self.scanline_dot
+    }
+
+    pub const fn lcd_enable_delay_dots(&self) -> u8 {
+        self.lcd_enable_delay_dots
+    }
+
     fn window_map_base_offset(&self) -> usize {
         if (self.lcdc & LCDC_WINDOW_TILE_MAP_SELECT_BIT) != 0 {
             BG_MAP_1_OFFSET
