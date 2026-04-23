@@ -11,7 +11,7 @@ pub mod serial;
 pub mod timer;
 pub use ppu::{FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH};
 
-use bus::Bus;
+use bus::{Bus, BusWatchIoAccessType};
 use cartridge::{
     compute_header_checksum, Cartridge, CartridgeType, DestinationCode, RamSize, RomSize,
 };
@@ -19,6 +19,7 @@ use cpu::Cpu;
 use interrupts as interrupt_regs;
 use observability::{
     CpuStepObservation, EmulatorEvent, EmulatorObserver, HaltedFastForwardObservation,
+    WatchIoAccessType, WatchIoObservation,
 };
 use std::hash::{Hash, Hasher};
 
@@ -134,6 +135,11 @@ impl Emulator {
         self.step_cycles_with_observer(cycles, &mut observer);
     }
 
+    /// Enables or disables MMIO watchpoint collection for observability streams.
+    pub fn set_watch_io_enabled(&mut self, enabled: bool) {
+        self.bus.set_watch_io_enabled(enabled);
+    }
+
     /// Advances execution by at least `cycles` machine cycles and emits detailed execution events.
     pub fn step_cycles_with_observer<O: EmulatorObserver>(
         &mut self,
@@ -146,9 +152,8 @@ impl Emulator {
 
         while !stopped_early && available < target {
             if self.cpu.halted() {
-                let pending_interrupts = self.bus.read8(interrupt_regs::FLAG_REGISTER)
-                    & self.bus.read8(interrupt_regs::ENABLE_REGISTER)
-                    & interrupt_regs::MASK;
+                let pending_interrupts =
+                    self.bus.interrupt_flag() & self.bus.interrupt_enable() & interrupt_regs::MASK;
 
                 if (pending_interrupts == 0 || !self.cpu.halted_is_interrupt_wakeable())
                     && !self.bus.timer_may_generate_interrupt()
@@ -165,8 +170,8 @@ impl Emulator {
                                 .wrapping_add(halted_advance),
                             pc: self.cpu.pc(),
                             cycles: halted_advance,
-                            interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
-                            interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
+                            interrupt_flag: self.bus.interrupt_flag(),
+                            interrupt_enable: self.bus.interrupt_enable(),
                         },
                     ));
                     self.tick_bus_cycles(halted_advance);
@@ -185,8 +190,8 @@ impl Emulator {
             let registers_before = *self.cpu.registers();
             let ime_before = self.cpu.ime();
             let halted_before = self.cpu.halted();
-            let interrupt_flag = self.bus.read8(interrupt_regs::FLAG_REGISTER);
-            let interrupt_enable = self.bus.read8(interrupt_regs::ENABLE_REGISTER);
+            let interrupt_flag = self.bus.interrupt_flag();
+            let interrupt_enable = self.bus.interrupt_enable();
             let ppu_before = self.bus.ppu_snapshot();
             let will_service_interrupt = self.cpu.will_service_interrupt(&self.bus);
             let opcode_hint = if halted_before || will_service_interrupt {
@@ -198,8 +203,32 @@ impl Emulator {
             let cycles_taken = self.cpu.step(&mut self.bus);
             let operand1_before = self.cpu.last_step_operand1_fetch();
             let operand2_before = self.cpu.last_step_operand2_fetch();
+            let watch_io_events = self.bus.take_watch_io_events();
             self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
+
+            for watch_event in watch_io_events {
+                observer.on_event(EmulatorEvent::WatchIo(WatchIoObservation {
+                    step_start_cycle: start_cycle,
+                    pc: pc_before,
+                    opcode_hint,
+                    access_type: match watch_event.access_type {
+                        BusWatchIoAccessType::Read => WatchIoAccessType::Read,
+                        BusWatchIoAccessType::Write => WatchIoAccessType::Write,
+                    },
+                    address: watch_event.address,
+                    value: watch_event.value,
+                    ppu_mode: watch_event.ppu_stat_after & 0x03,
+                    ppu_coincidence: (watch_event.ppu_stat_after & 0x04) != 0,
+                }));
+                if observer.should_stop() {
+                    stopped_early = true;
+                    break;
+                }
+            }
+            if stopped_early {
+                break;
+            }
 
             observer.on_event(EmulatorEvent::CpuStep(CpuStepObservation {
                 start_cycle,
@@ -221,8 +250,8 @@ impl Emulator {
                 interrupt_flag_before: interrupt_flag,
                 interrupt_enable_before: interrupt_enable,
                 ppu_before,
-                interrupt_flag: self.bus.read8(interrupt_regs::FLAG_REGISTER),
-                interrupt_enable: self.bus.read8(interrupt_regs::ENABLE_REGISTER),
+                interrupt_flag: self.bus.interrupt_flag(),
+                interrupt_enable: self.bus.interrupt_enable(),
                 ppu_after: self.bus.ppu_snapshot(),
                 unimplemented_opcode: self.cpu.last_unimplemented_opcode(),
             }));
@@ -687,6 +716,7 @@ mod tests {
             .filter_map(|event| match event {
                 EmulatorEvent::CpuStep(observation) => Some(observation.opcode_hint),
                 EmulatorEvent::HaltedFastForward(_) => None,
+                EmulatorEvent::WatchIo(_) => None,
             })
             .collect();
         assert_eq!(opcodes, vec![Some(0x00), Some(0x00), Some(0x76)]);

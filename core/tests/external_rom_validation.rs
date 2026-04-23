@@ -389,6 +389,10 @@ fn format_trace(trace: &TraceBuffer) -> String {
                 halted.interrupt_flag,
                 halted.interrupt_enable
             ),
+            EmulatorEvent::WatchIo(watch) => format!(
+                "#{index:02} watch_io cycle={} pc={:04X} addr={:04X} value={:02X}",
+                watch.step_start_cycle, watch.pc, watch.address, watch.value
+            ),
         })
         .collect::<Vec<_>>()
         .join("\n")
