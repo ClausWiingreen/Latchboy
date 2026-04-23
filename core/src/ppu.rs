@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn lcd_toggle_preserves_latched_coincidence_until_reenable_recomputes_stat() {
-        const STAT_STABLE_MASK: u8 = 0xFF & (0x80 | 0x78 | STAT_LYC_EQUAL_BIT | STAT_MODE_MASK);
+        const STAT_STABLE_MASK: u8 = 0x80 | 0x78 | STAT_LYC_EQUAL_BIT | STAT_MODE_MASK;
 
         let mut ppu = Ppu::default();
         ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
