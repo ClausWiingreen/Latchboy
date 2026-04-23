@@ -56,6 +56,35 @@ impl Default for Emulator {
 }
 
 impl Emulator {
+    fn emit_watch_io_events<O: EmulatorObserver>(
+        observer: &mut O,
+        watch_io_events: Vec<bus::BusWatchIoEvent>,
+        step_start_cycle: u64,
+        pc: u16,
+        opcode_hint: Option<u8>,
+    ) -> bool {
+        for watch_event in watch_io_events {
+            observer.on_event(EmulatorEvent::WatchIo(WatchIoObservation {
+                step_start_cycle,
+                pc,
+                opcode_hint,
+                access_type: match watch_event.access_type {
+                    BusWatchIoAccessType::Read => WatchIoAccessType::Read,
+                    BusWatchIoAccessType::Write => WatchIoAccessType::Write,
+                },
+                address: watch_event.address,
+                value: watch_event.value,
+                ppu_mode: watch_event.ppu_stat_after & 0x03,
+                ppu_coincidence: (watch_event.ppu_stat_after & 0x04) != 0,
+            }));
+            if observer.should_stop() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     fn next_tick_chunk_size(cycles: u64) -> u32 {
         cycles.min(u64::from(u32::MAX)) as u32
     }
@@ -151,6 +180,20 @@ impl Emulator {
         let mut stopped_early = observer.should_stop();
 
         while !stopped_early && available < target {
+            let pending_watch_io_events = self.bus.take_watch_io_events();
+            let pending_watch_cycle = self.total_cycles.wrapping_add(available);
+            let pending_watch_pc = self.cpu.pc();
+            if Self::emit_watch_io_events(
+                observer,
+                pending_watch_io_events,
+                pending_watch_cycle,
+                pending_watch_pc,
+                None,
+            ) {
+                stopped_early = true;
+                break;
+            }
+
             if self.cpu.halted() {
                 let pending_interrupts =
                     self.bus.interrupt_flag() & self.bus.interrupt_enable() & interrupt_regs::MASK;
@@ -207,26 +250,14 @@ impl Emulator {
             self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
 
-            for watch_event in watch_io_events {
-                observer.on_event(EmulatorEvent::WatchIo(WatchIoObservation {
-                    step_start_cycle: start_cycle,
-                    pc: pc_before,
-                    opcode_hint,
-                    access_type: match watch_event.access_type {
-                        BusWatchIoAccessType::Read => WatchIoAccessType::Read,
-                        BusWatchIoAccessType::Write => WatchIoAccessType::Write,
-                    },
-                    address: watch_event.address,
-                    value: watch_event.value,
-                    ppu_mode: watch_event.ppu_stat_after & 0x03,
-                    ppu_coincidence: (watch_event.ppu_stat_after & 0x04) != 0,
-                }));
-                if observer.should_stop() {
-                    stopped_early = true;
-                    break;
-                }
-            }
-            if stopped_early {
+            if Self::emit_watch_io_events(
+                observer,
+                watch_io_events,
+                start_cycle,
+                pc_before,
+                opcode_hint,
+            ) {
+                stopped_early = true;
                 break;
             }
 
