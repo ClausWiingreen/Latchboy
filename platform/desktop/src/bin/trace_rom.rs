@@ -11,6 +11,7 @@ use latchboy_core::{
     interrupts,
     observability::{
         CpuStepObservation, EmulatorEvent, EmulatorObserver, HaltedFastForwardObservation,
+        WatchIoAccessType, WatchIoObservation,
     },
     Emulator,
 };
@@ -37,6 +38,7 @@ struct CliConfig {
     max_cycles: Option<u64>,
     exit_on_jr_fe: bool,
     exit_on_unimplemented: bool,
+    watch_io: bool,
 }
 
 enum CliParseResult {
@@ -142,6 +144,11 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
                     }
                 }
             }
+            EmulatorEvent::WatchIo(observation) => {
+                if let Err(error) = write_watch_io_line(self.writer, &observation) {
+                    self.io_error = Some(error);
+                }
+            }
         }
     }
 
@@ -185,6 +192,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
     let mut max_cycles = None;
     let mut exit_on_jr_fe = true;
     let mut exit_on_unimplemented = true;
+    let mut watch_io = false;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -215,6 +223,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
             "--no-exit-on-jr-fe" => exit_on_jr_fe = false,
             "--exit-on-unimplemented" => exit_on_unimplemented = true,
             "--no-exit-on-unimplemented" => exit_on_unimplemented = false,
+            "--watch-io" => watch_io = true,
             "-h" | "--help" => {
                 return Ok(CliParseResult::Help);
             }
@@ -235,11 +244,12 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         max_cycles,
         exit_on_jr_fe,
         exit_on_unimplemented,
+        watch_io,
     }))
 }
 
 fn usage() -> String {
-    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]".to_string()
+    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]".to_string()
 }
 
 fn load_emulator(rom_path: &PathBuf) -> Result<Emulator, String> {
@@ -322,6 +332,33 @@ fn write_halted_fast_forward_line(
     )
 }
 
+fn write_watch_io_line(
+    writer: &mut BufWriter<fs::File>,
+    observation: &WatchIoObservation,
+) -> io::Result<()> {
+    let opcode = observation
+        .opcode_hint
+        .map(|opcode| format!("{opcode:02X}"))
+        .unwrap_or_else(|| "--".to_string());
+    let access = match observation.access_type {
+        WatchIoAccessType::Read => "read",
+        WatchIoAccessType::Write => "write",
+    };
+
+    writeln!(
+        writer,
+        "watch-io cycle={} pc={:04X} opcode={} type={} addr={:04X} value={:02X} ppu_mode={} ppu_coincidence={}",
+        observation.step_start_cycle,
+        observation.pc,
+        opcode,
+        access,
+        observation.address,
+        observation.value,
+        observation.ppu_mode,
+        observation.ppu_coincidence,
+    )
+}
+
 fn exit_reason_from_step(
     config: &CliConfig,
     observation: &CpuStepObservation,
@@ -386,6 +423,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    emulator.set_watch_io_enabled(config.watch_io);
 
     let trace_file = match fs::File::create(&config.output_path) {
         Ok(file) => file,

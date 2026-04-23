@@ -7,6 +7,7 @@ use crate::cpu::Registers;
 pub enum EmulatorEvent {
     CpuStep(CpuStepObservation),
     HaltedFastForward(HaltedFastForwardObservation),
+    WatchIo(WatchIoObservation),
 }
 
 /// Per-instruction observation with pre/post CPU state.
@@ -57,6 +58,26 @@ pub struct HaltedFastForwardObservation {
     pub cycles: u64,
     pub interrupt_flag: u8,
     pub interrupt_enable: u8,
+}
+
+/// Access type for watchpointed I/O interactions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WatchIoAccessType {
+    Read,
+    Write,
+}
+
+/// Observation emitted for watchpointed MMIO accesses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchIoObservation {
+    pub step_start_cycle: u64,
+    pub pc: u16,
+    pub opcode_hint: Option<u8>,
+    pub access_type: WatchIoAccessType,
+    pub address: u16,
+    pub value: u8,
+    pub ppu_mode: u8,
+    pub ppu_coincidence: bool,
 }
 
 /// Event sink for emulator execution observability.
@@ -148,6 +169,7 @@ mod tests {
         let mut cycles = trace.iter().map(|event| match event {
             EmulatorEvent::HaltedFastForward(observation) => observation.end_cycle,
             EmulatorEvent::CpuStep(_) => 0,
+            EmulatorEvent::WatchIo(_) => 0,
         });
         assert_eq!(cycles.next(), Some(8));
         assert_eq!(cycles.next(), Some(12));

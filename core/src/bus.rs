@@ -1,3 +1,6 @@
+use std::cell::{Cell, RefCell};
+use std::hash::{Hash, Hasher};
+
 use crate::cartridge::Cartridge;
 use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
@@ -19,6 +22,14 @@ const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
 const HRAM_START: u16 = 0xFF80;
 const HRAM_END: u16 = 0xFFFE;
 const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
+const WATCHED_IO_ADDRESSES: [u16; 6] = [
+    crate::ppu::LCDC_REGISTER,
+    crate::ppu::STAT_REGISTER,
+    crate::ppu::LY_REGISTER,
+    crate::ppu::LYC_REGISTER,
+    crate::interrupts::FLAG_REGISTER,
+    crate::interrupts::ENABLE_REGISTER,
+];
 
 const WRAM_SIZE: usize = 0x2000;
 const IO_REGISTERS_SIZE: usize = 0x80;
@@ -60,7 +71,7 @@ const NO_BOOT_DEFAULTS: &[(u16, u8)] = &[
 ];
 
 /// DMG address bus with full address-range mapping and WRAM echo behavior.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bus {
     cartridge: Cartridge,
     boot_rom: Option<Vec<u8>>,
@@ -73,6 +84,40 @@ pub struct Bus {
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
     oam_dma_cycles_remaining: u16,
+    watch_io_enabled: Cell<bool>,
+    watch_io_events: RefCell<Vec<BusWatchIoEvent>>,
+}
+
+impl Hash for Bus {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.cartridge.hash(state);
+        self.boot_rom.hash(state);
+        self.boot_rom_enabled.hash(state);
+        self.boot_rom_disable_value.hash(state);
+        self.ppu.hash(state);
+        self.wram.hash(state);
+        self.io_registers.hash(state);
+        self.timer.hash(state);
+        self.hram.hash(state);
+        self.interrupt_enable.hash(state);
+        self.oam_dma_cycles_remaining.hash(state);
+        self.watch_io_enabled.get().hash(state);
+        self.watch_io_events.borrow().hash(state);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BusWatchIoAccessType {
+    Read,
+    Write,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BusWatchIoEvent {
+    pub access_type: BusWatchIoAccessType,
+    pub address: u16,
+    pub value: u8,
+    pub ppu_stat_after: u8,
 }
 
 impl Bus {
@@ -95,6 +140,8 @@ impl Bus {
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
             oam_dma_cycles_remaining: 0,
+            watch_io_enabled: Cell::new(false),
+            watch_io_events: RefCell::new(Vec::new()),
         }
     }
 
@@ -110,46 +157,48 @@ impl Bus {
     }
 
     pub fn read8(&self, address: u16) -> u8 {
-        if self.is_cpu_bus_access_blocked_by_oam_dma(address) {
-            return 0xFF;
-        }
-
-        match address {
-            0x0000..=0x7FFF => {
-                if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
-                    return self
-                        .boot_rom
-                        .as_ref()
-                        .and_then(|rom| rom.get(address as usize))
-                        .copied()
-                        .unwrap_or(0xFF);
+        let value = if self.is_cpu_bus_access_blocked_by_oam_dma(address) {
+            0xFF
+        } else {
+            match address {
+                0x0000..=0x7FFF => {
+                    if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
+                        self.boot_rom
+                            .as_ref()
+                            .and_then(|rom| rom.get(address as usize))
+                            .copied()
+                            .unwrap_or(0xFF)
+                    } else {
+                        self.cartridge.read(address)
+                    }
                 }
-
-                self.cartridge.read(address)
-            }
-            VRAM_START..=0x9FFF => self.ppu.read_vram(address),
-            EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
-            WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
-            WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
-            OAM_START..=OAM_END => self.ppu.read_oam(address),
-            UNUSABLE_START..=UNUSABLE_END => 0xFF,
-            IO_REGISTERS_START..=IO_REGISTERS_END => {
-                if address == BOOT_ROM_DISABLE_REGISTER {
-                    self.boot_rom_disable_value
-                } else if matches!(
-                    address,
-                    DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
-                ) {
-                    self.timer.read(address)
-                } else if let Some(value) = self.ppu.read_register(address) {
-                    value
-                } else {
-                    self.io_registers[(address - IO_REGISTERS_START) as usize]
+                VRAM_START..=0x9FFF => self.ppu.read_vram(address),
+                EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
+                WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
+                WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
+                OAM_START..=OAM_END => self.ppu.read_oam(address),
+                UNUSABLE_START..=UNUSABLE_END => 0xFF,
+                IO_REGISTERS_START..=IO_REGISTERS_END => {
+                    if address == BOOT_ROM_DISABLE_REGISTER {
+                        self.boot_rom_disable_value
+                    } else if matches!(
+                        address,
+                        DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
+                    ) {
+                        self.timer.read(address)
+                    } else if let Some(value) = self.ppu.read_register(address) {
+                        value
+                    } else {
+                        self.io_registers[(address - IO_REGISTERS_START) as usize]
+                    }
                 }
+                HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize],
+                INTERRUPT_ENABLE_REGISTER => self.interrupt_enable,
             }
-            HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize],
-            INTERRUPT_ENABLE_REGISTER => self.interrupt_enable,
-        }
+        };
+
+        self.record_watch_io_event(BusWatchIoAccessType::Read, address, value);
+        value
     }
 
     pub fn reset(&mut self) {
@@ -164,6 +213,7 @@ impl Bus {
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
         self.oam_dma_cycles_remaining = 0;
+        self.watch_io_events.borrow_mut().clear();
     }
 
     pub fn apply_dmg_no_boot_defaults(&mut self) {
@@ -174,6 +224,7 @@ impl Bus {
 
     pub fn write8(&mut self, address: u16, value: u8) {
         if self.is_cpu_bus_access_blocked_by_oam_dma(address) {
+            self.record_watch_io_write(address, value);
             return;
         }
 
@@ -214,6 +265,8 @@ impl Bus {
             HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize] = value,
             INTERRUPT_ENABLE_REGISTER => self.interrupt_enable = value,
         }
+
+        self.record_watch_io_write(address, value);
     }
 
     fn read8_for_dma_source(&self, address: u16) -> u8 {
@@ -349,6 +402,38 @@ impl Bus {
     /// Returns mutable access to the loaded cartridge backing this bus.
     pub fn cartridge_mut(&mut self) -> &mut Cartridge {
         &mut self.cartridge
+    }
+
+    pub fn set_watch_io_enabled(&mut self, enabled: bool) {
+        self.watch_io_enabled.set(enabled);
+        if !enabled {
+            self.watch_io_events.borrow_mut().clear();
+        }
+    }
+
+    pub fn take_watch_io_events(&mut self) -> Vec<BusWatchIoEvent> {
+        std::mem::take(&mut self.watch_io_events.borrow_mut())
+    }
+
+    fn record_watch_io_write(&self, address: u16, value: u8) {
+        self.record_watch_io_event(BusWatchIoAccessType::Write, address, value);
+    }
+
+    fn record_watch_io_event(&self, access_type: BusWatchIoAccessType, address: u16, value: u8) {
+        if !self.watch_io_enabled.get() || !WATCHED_IO_ADDRESSES.contains(&address) {
+            return;
+        }
+
+        let ppu_stat_after = self
+            .ppu
+            .read_register(crate::ppu::STAT_REGISTER)
+            .unwrap_or(0);
+        self.watch_io_events.borrow_mut().push(BusWatchIoEvent {
+            access_type,
+            address,
+            value,
+            ppu_stat_after,
+        });
     }
 }
 
@@ -669,5 +754,24 @@ mod tests {
         bus.tick(640);
         assert_eq!(bus.read8(crate::interrupts::FLAG_REGISTER), 0x12);
         assert_eq!(bus.read8(crate::interrupts::ENABLE_REGISTER), 0x1F);
+    }
+
+    #[test]
+    fn watch_io_records_reads_and_writes_for_selected_registers() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.set_watch_io_enabled(true);
+
+        bus.write8(crate::interrupts::ENABLE_REGISTER, 0x1F);
+        let _ = bus.read8(crate::interrupts::ENABLE_REGISTER);
+
+        let events = bus.take_watch_io_events();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].access_type, BusWatchIoAccessType::Write);
+        assert_eq!(events[0].address, crate::interrupts::ENABLE_REGISTER);
+        assert_eq!(events[0].value, 0x1F);
+        assert_eq!(events[1].access_type, BusWatchIoAccessType::Read);
+        assert_eq!(events[1].address, crate::interrupts::ENABLE_REGISTER);
+        assert_eq!(events[1].value, 0x1F);
     }
 }
