@@ -550,7 +550,13 @@ def validate_format(value, fmt):
         raise AssertionError(f'unsupported format keyword: {fmt}')
     if not isinstance(value, str):
         return False
-    normalized = value.replace('Z', '+00:00')
+    # Enforce RFC3339 timestamp profile used by JSON Schema `format: date-time`.
+    # This intentionally rejects permissive ISO variants (for example, space-separated
+    # date/time values) that `datetime.fromisoformat` would otherwise accept.
+    rfc3339_pattern = r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$'
+    if re.match(rfc3339_pattern, value) is None:
+        return False
+    normalized = value[:-1] + '+00:00' if value.endswith('Z') else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:
