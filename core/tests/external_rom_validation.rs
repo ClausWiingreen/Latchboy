@@ -2,6 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
 use latchboy_core::{
@@ -12,6 +13,8 @@ use latchboy_core::{
 
 const CYCLES_PER_FRAME: u32 = 70_224;
 const ROM_MANIFEST_PATH: &str = "../tests/rom_manifest.toml";
+const MILESTONE4_SMOKE_SCHEMA_PATH: &str = "../tests/artifacts/milestone4-smoke-summary.schema.json";
+const MILESTONE4_SMOKE_SUMMARY_PATH: &str = "../tests/artifacts/milestone4-smoke-summary.json";
 const ROM_ROOT_ENV: &str = "LATCHBOY_ROM_ROOT";
 const TRACE_EVENTS_ON_FAILURE: usize = 64;
 
@@ -514,6 +517,81 @@ fn rom_manifest_registers_required_milestone_4_ppu_suites() {
             );
         }
     }
+}
+
+#[test]
+fn milestone4_committed_smoke_summary_matches_schema() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let schema_path = manifest_dir.join(MILESTONE4_SMOKE_SCHEMA_PATH);
+    let summary_path = manifest_dir.join(MILESTONE4_SMOKE_SUMMARY_PATH);
+
+    let validation_script = r#"
+import json
+import sys
+
+schema_path, summary_path = sys.argv[1], sys.argv[2]
+with open(schema_path, 'r', encoding='utf-8') as f:
+    schema = json.load(f)
+with open(summary_path, 'r', encoding='utf-8') as f:
+    summary = json.load(f)
+
+assert schema.get('$id') == 'tests/artifacts/milestone4-smoke-summary.schema.json'
+assert summary.get('milestone') == 4
+assert isinstance(summary.get('generated_at_utc'), str) and summary['generated_at_utc']
+assert isinstance(summary.get('schema_version'), str) and summary['schema_version']
+titles = summary.get('titles')
+assert isinstance(titles, dict), 'titles must be an object map'
+assert 2 <= len(titles) <= 3, 'titles must include 2-3 entries'
+allowed_title_ids = {
+    'tetris-world',
+    'super-mario-land-world',
+    'legend-of-zelda-links-awakening-world',
+}
+assert set(titles.keys()).issubset(allowed_title_ids), 'titles contains unknown title_id key'
+
+for title_id, evidence in titles.items():
+    assert isinstance(evidence, dict), f'{title_id} evidence must be object'
+    run = evidence['run.json']
+    summary_meta = evidence['summary.json']
+    hash_window = evidence['hash_window']
+    assert evidence['copyrighted_assets_committed'] is False
+
+    assert isinstance(run['commit_sha'], str) and 7 <= len(run['commit_sha']) <= 40
+    assert all(c in '0123456789abcdef' for c in run['commit_sha']), 'commit_sha must be lowercase hex'
+    assert isinstance(run['rom_id'], str) and run['rom_id']
+    assert isinstance(run['runner_command'], str) and run['runner_command']
+    assert isinstance(run['frame_limit'], int) and run['frame_limit'] > 0
+    assert isinstance(run['wall_time_limit_ms'], int) and run['wall_time_limit_ms'] > 0
+
+    assert summary_meta['status'] in {'PASS', 'FAIL'}
+    assert isinstance(summary_meta['checkpoint_frame_index'], int) and summary_meta['checkpoint_frame_index'] >= 0
+    assert isinstance(summary_meta['pass_fail_reason'], str) and summary_meta['pass_fail_reason']
+
+    assert isinstance(hash_window['algorithm'], str) and hash_window['algorithm']
+    assert isinstance(hash_window['start_frame'], int) and hash_window['start_frame'] >= 0
+    assert isinstance(hash_window['frame_count'], int) and hash_window['frame_count'] > 0
+    assert isinstance(hash_window['sample_stride'], int) and hash_window['sample_stride'] > 0
+    hashes = hash_window['hashes']
+    assert isinstance(hashes, list) and hashes, 'hashes must include at least one entry'
+    for entry in hashes:
+        assert isinstance(entry['frame_index'], int) and entry['frame_index'] >= 0
+        assert isinstance(entry['hash'], str) and entry['hash']
+"#;
+
+    let validation = Command::new("python3")
+        .arg("-c")
+        .arg(validation_script)
+        .arg(&schema_path)
+        .arg(&summary_path)
+        .output()
+        .expect("python3 must be available to validate milestone 4 smoke summary schema contract");
+
+    let stderr = String::from_utf8_lossy(&validation.stderr);
+    assert!(
+        validation.status.success(),
+        "committed milestone 4 smoke summary failed schema contract checks:\n{}",
+        stderr.trim()
+    );
 }
 
 #[test]

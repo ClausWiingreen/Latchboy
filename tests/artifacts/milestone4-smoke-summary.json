@@ -1,0 +1,62 @@
+{
+  "milestone": 4,
+  "generated_at_utc": "2026-04-26T00:00:00Z",
+  "schema_version": "1.0.0",
+  "notes": "Schema-conformant placeholder smoke evidence. Replace with fixture-backed milestone runs for closure sign-off.",
+  "titles": {
+    "tetris-world": {
+      "run.json": {
+        "commit_sha": "0000000",
+        "rom_id": "tetris-world-local",
+        "runner_command": "cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <local-rom-path> --rom-id tetris-world-local --title-id tetris-world --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/tetris-world",
+        "frame_limit": 420,
+        "wall_time_limit_ms": 10000
+      },
+      "summary.json": {
+        "status": "FAIL",
+        "checkpoint_frame_index": 0,
+        "pass_fail_reason": "Placeholder entry committed for schema gating; replace with fixture-backed smoke evidence."
+      },
+      "hash_window": {
+        "algorithm": "fnv1a64",
+        "start_frame": 0,
+        "frame_count": 1,
+        "sample_stride": 1,
+        "hashes": [
+          {
+            "frame_index": 0,
+            "hash": "0000000000000000"
+          }
+        ]
+      },
+      "copyrighted_assets_committed": false
+    },
+    "super-mario-land-world": {
+      "run.json": {
+        "commit_sha": "0000000",
+        "rom_id": "super-mario-land-world-local",
+        "runner_command": "cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <local-rom-path> --rom-id super-mario-land-world-local --title-id super-mario-land-world --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/super-mario-land-world",
+        "frame_limit": 540,
+        "wall_time_limit_ms": 12000
+      },
+      "summary.json": {
+        "status": "FAIL",
+        "checkpoint_frame_index": 0,
+        "pass_fail_reason": "Placeholder entry committed for schema gating; replace with fixture-backed smoke evidence."
+      },
+      "hash_window": {
+        "algorithm": "fnv1a64",
+        "start_frame": 0,
+        "frame_count": 1,
+        "sample_stride": 1,
+        "hashes": [
+          {
+            "frame_index": 0,
+            "hash": "0000000000000000"
+          }
+        ]
+      },
+      "copyrighted_assets_committed": false
+    }
+  }
+}
