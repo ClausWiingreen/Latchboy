@@ -527,7 +527,9 @@ fn milestone4_committed_smoke_summary_matches_schema() {
 
     let validation_script = r#"
 import json
+import re
 import sys
+from datetime import datetime, timezone
 
 schema_path, summary_path = sys.argv[1], sys.argv[2]
 with open(schema_path, 'r', encoding='utf-8') as f:
@@ -535,47 +537,105 @@ with open(schema_path, 'r', encoding='utf-8') as f:
 with open(summary_path, 'r', encoding='utf-8') as f:
     summary = json.load(f)
 
-assert schema.get('$id') == 'tests/artifacts/milestone4-smoke-summary.schema.json'
-assert summary.get('milestone') == 4
-assert isinstance(summary.get('generated_at_utc'), str) and summary['generated_at_utc']
-assert isinstance(summary.get('schema_version'), str) and summary['schema_version']
-titles = summary.get('titles')
-assert isinstance(titles, dict), 'titles must be an object map'
-assert 2 <= len(titles) <= 3, 'titles must include 2-3 entries'
-allowed_title_ids = {
-    'tetris-world',
-    'super-mario-land-world',
-    'legend-of-zelda-links-awakening-world',
-}
-assert set(titles.keys()).issubset(allowed_title_ids), 'titles contains unknown title_id key'
+def resolve_ref(root_schema, ref):
+    if not ref.startswith('#/'):
+        raise AssertionError(f'unsupported $ref target: {ref}')
+    node = root_schema
+    for part in ref[2:].split('/'):
+        node = node[part]
+    return node
 
-for title_id, evidence in titles.items():
-    assert isinstance(evidence, dict), f'{title_id} evidence must be object'
-    run = evidence['run.json']
-    summary_meta = evidence['summary.json']
-    hash_window = evidence['hash_window']
-    assert evidence['copyrighted_assets_committed'] is False
+def validate_format(value, fmt):
+    if fmt != 'date-time':
+        raise AssertionError(f'unsupported format keyword: {fmt}')
+    if not isinstance(value, str):
+        return False
+    normalized = value.replace('Z', '+00:00')
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
-    assert isinstance(run['commit_sha'], str) and 7 <= len(run['commit_sha']) <= 40
-    assert all(c in '0123456789abcdef' for c in run['commit_sha']), 'commit_sha must be lowercase hex'
-    assert isinstance(run['rom_id'], str) and run['rom_id']
-    assert isinstance(run['runner_command'], str) and run['runner_command']
-    assert isinstance(run['frame_limit'], int) and run['frame_limit'] > 0
-    assert isinstance(run['wall_time_limit_ms'], int) and run['wall_time_limit_ms'] > 0
+def expect(condition, message):
+    if not condition:
+        raise AssertionError(message)
 
-    assert summary_meta['status'] in {'PASS', 'FAIL'}
-    assert isinstance(summary_meta['checkpoint_frame_index'], int) and summary_meta['checkpoint_frame_index'] >= 0
-    assert isinstance(summary_meta['pass_fail_reason'], str) and summary_meta['pass_fail_reason']
+def is_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool)
 
-    assert isinstance(hash_window['algorithm'], str) and hash_window['algorithm']
-    assert isinstance(hash_window['start_frame'], int) and hash_window['start_frame'] >= 0
-    assert isinstance(hash_window['frame_count'], int) and hash_window['frame_count'] > 0
-    assert isinstance(hash_window['sample_stride'], int) and hash_window['sample_stride'] > 0
-    hashes = hash_window['hashes']
-    assert isinstance(hashes, list) and hashes, 'hashes must include at least one entry'
-    for entry in hashes:
-        assert isinstance(entry['frame_index'], int) and entry['frame_index'] >= 0
-        assert isinstance(entry['hash'], str) and entry['hash']
+def validate(instance, schema_node, root_schema, path='$'):
+    if '$ref' in schema_node:
+        return validate(instance, resolve_ref(root_schema, schema_node['$ref']), root_schema, path)
+
+    if 'const' in schema_node:
+        expect(instance == schema_node['const'], f'{path}: expected const {schema_node["const"]!r}, got {instance!r}')
+    if 'enum' in schema_node:
+        expect(instance in schema_node['enum'], f'{path}: value {instance!r} not in enum {schema_node["enum"]!r}')
+
+    schema_type = schema_node.get('type')
+    if schema_type == 'object':
+        expect(isinstance(instance, dict), f'{path}: expected object')
+    elif schema_type == 'array':
+        expect(isinstance(instance, list), f'{path}: expected array')
+    elif schema_type == 'string':
+        expect(isinstance(instance, str), f'{path}: expected string')
+    elif schema_type == 'integer':
+        expect(is_integer(instance), f'{path}: expected integer')
+    elif schema_type == 'boolean':
+        expect(isinstance(instance, bool), f'{path}: expected boolean')
+    elif schema_type is not None:
+        raise AssertionError(f'{path}: unsupported schema type {schema_type!r}')
+
+    if schema_type == 'string':
+        if 'minLength' in schema_node:
+            expect(len(instance) >= schema_node['minLength'], f'{path}: minLength violation')
+        if 'pattern' in schema_node:
+            expect(re.match(schema_node['pattern'], instance) is not None, f'{path}: pattern violation')
+        if 'format' in schema_node:
+            expect(validate_format(instance, schema_node['format']), f'{path}: format {schema_node["format"]!r} violation')
+
+    if schema_type == 'integer':
+        if 'minimum' in schema_node:
+            expect(instance >= schema_node['minimum'], f'{path}: minimum violation')
+
+    if schema_type == 'array':
+        if 'minItems' in schema_node:
+            expect(len(instance) >= schema_node['minItems'], f'{path}: minItems violation')
+        if 'items' in schema_node:
+            for index, item in enumerate(instance):
+                validate(item, schema_node['items'], root_schema, f'{path}[{index}]')
+
+    if schema_type == 'object':
+        required = schema_node.get('required', [])
+        for key in required:
+            expect(key in instance, f'{path}: missing required property {key!r}')
+
+        if 'minProperties' in schema_node:
+            expect(len(instance) >= schema_node['minProperties'], f'{path}: minProperties violation')
+        if 'maxProperties' in schema_node:
+            expect(len(instance) <= schema_node['maxProperties'], f'{path}: maxProperties violation')
+
+        property_names_schema = schema_node.get('propertyNames')
+        if property_names_schema is not None:
+            for key in instance.keys():
+                validate(key, property_names_schema, root_schema, f'{path}<propertyName>')
+
+        properties = schema_node.get('properties', {})
+        for key, property_schema in properties.items():
+            if key in instance:
+                validate(instance[key], property_schema, root_schema, f'{path}.{key}')
+
+        additional = schema_node.get('additionalProperties', True)
+        for key, value in instance.items():
+            if key in properties:
+                continue
+            if additional is False:
+                raise AssertionError(f'{path}: additional property {key!r} is not allowed')
+            if isinstance(additional, dict):
+                validate(value, additional, root_schema, f'{path}.{key}')
+
+validate(summary, schema, schema)
 "#;
 
     let validation = Command::new("python3")
