@@ -13,7 +13,8 @@ use latchboy_core::{
 
 const CYCLES_PER_FRAME: u32 = 70_224;
 const ROM_MANIFEST_PATH: &str = "../tests/rom_manifest.toml";
-const MILESTONE4_SMOKE_SCHEMA_PATH: &str = "../tests/artifacts/milestone4-smoke-summary.schema.json";
+const MILESTONE4_SMOKE_SCHEMA_PATH: &str = 
+    "../tests/artifacts/milestone4-smoke-summary.schema.json";
 const MILESTONE4_SMOKE_SUMMARY_PATH: &str = "../tests/artifacts/milestone4-smoke-summary.json";
 const ROM_ROOT_ENV: &str = "LATCHBOY_ROM_ROOT";
 const TRACE_EVENTS_ON_FAILURE: usize = 64;
