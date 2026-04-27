@@ -1,9 +1,9 @@
 pub mod savefile;
 
 use std::error::Error;
-use std::fmt;
 
 use latchboy_core::{Emulator, FRAMEBUFFER_LEN};
+use thiserror::Error;
 
 const DMG_FRAME_CYCLES: u32 = 70_224;
 // `Emulator::step_cycles` advances by at least the requested cycles and can overshoot by
@@ -15,32 +15,13 @@ const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTI
 /// Stable DMG palette in RGB888 (0x00RRGGBB), darkest shade last.
 pub const DMG_PALETTE_RGB: [u32; 4] = [0x00E0F8D0, 0x0088C070, 0x00346856, 0x00081820];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum FrameBlitError {
+    #[error("framebuffer length mismatch: expected {expected}, got {actual}")]
     FramebufferSizeMismatch { expected: usize, actual: usize },
+    #[error("surface length mismatch: expected {expected}, got {actual}")]
     SurfaceSizeMismatch { expected: usize, actual: usize },
 }
-
-impl fmt::Display for FrameBlitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::FramebufferSizeMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "framebuffer length mismatch: expected {expected}, got {actual}"
-                )
-            }
-            Self::SurfaceSizeMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "surface length mismatch: expected {expected}, got {actual}"
-                )
-            }
-        }
-    }
-}
-
-impl Error for FrameBlitError {}
 
 /// Converts DMG shade-index framebuffer bytes (`0..=3`) into RGB pixels.
 pub fn blit_dmg_framebuffer_to_rgb_surface(
@@ -77,24 +58,15 @@ pub trait FramePresenter {
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
+    #[error("cycle_step must be greater than zero")]
     InvalidCycleStep,
+    #[error("{0}")]
     FrameBlit(FrameBlitError),
+    #[error("frame presentation failed: {0}")]
     Present(E),
 }
-
-impl<E: Error + Send + Sync + 'static> fmt::Display for EmulationRunError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidCycleStep => write!(f, "cycle_step must be greater than zero"),
-            Self::FrameBlit(error) => write!(f, "{error}"),
-            Self::Present(error) => write!(f, "frame presentation failed: {error}"),
-        }
-    }
-}
-
-impl<E: Error + Send + Sync + 'static> Error for EmulationRunError<E> {}
 
 /// Runs a basic emulation loop and presents frames whenever VBlank marks a complete frame.
 ///
