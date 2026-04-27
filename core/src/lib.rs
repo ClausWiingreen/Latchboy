@@ -9,6 +9,7 @@ pub mod observability;
 pub mod ppu;
 pub mod serial;
 pub mod timer;
+pub use crate::input::JoypadButton;
 pub use ppu::{FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH};
 
 use bus::{Bus, BusWatchIoAccessType};
@@ -167,6 +168,11 @@ impl Emulator {
     /// Enables or disables MMIO watchpoint collection for observability streams.
     pub fn set_watch_io_enabled(&mut self, enabled: bool) {
         self.bus.set_watch_io_enabled(enabled);
+    }
+
+    /// Updates a joypad button pressed state used by the `FF00` input matrix.
+    pub fn set_button_pressed(&mut self, button: JoypadButton, pressed: bool) {
+        self.bus.set_button_pressed(button, pressed);
     }
 
     /// Advances execution by at least `cycles` machine cycles and emits detailed execution events.
