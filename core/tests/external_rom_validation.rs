@@ -754,6 +754,58 @@ fn required_milestone_2_and_3_roms_pass_under_external_validation_flow() {
 }
 
 #[test]
+fn required_milestone_3_roms_pass_under_external_validation_flow() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    let Some(rom_root) = rom_root_from_env() else {
+        eprintln!(
+            "skipping required ROM run: set {ROM_ROOT_ENV} to execute external ROM validation"
+        );
+        return;
+    };
+
+    assert!(
+        rom_root.is_dir(),
+        "{ROM_ROOT_ENV} must point to a directory, got {}",
+        rom_root.display()
+    );
+
+    let required_m3_roms: Vec<&RomEntry> = manifest
+        .roms
+        .iter()
+        .filter(|rom| rom.required && rom.milestone == 3)
+        .collect();
+
+    assert!(
+        !required_m3_roms.is_empty(),
+        "manifest must define required milestone 3 ROM cases"
+    );
+
+    for rom in &required_m3_roms {
+        assert!(
+            !is_noop_pass_condition(rom.pass_condition),
+            "{} is required for milestone {} and must not use pass_condition = \"none\"",
+            rom.id,
+            rom.milestone
+        );
+    }
+
+    let mut failures = Vec::new();
+    for rom in required_m3_roms {
+        if let Err(error) = run_rom(&rom_root, rom) {
+            failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "required milestone 3 ROM validation failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn required_milestone_2_and_3_rom_runs_are_deterministic() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
