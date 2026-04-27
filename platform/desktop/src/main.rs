@@ -14,7 +14,7 @@ use latchboy_desktop::savefile::{
     load_save_data_if_available, persist_save_data, save_path_from_rom_path,
     should_persist_after_load,
 };
-use latchboy_desktop::{run_emulation_loop, FramePresenter};
+use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresenter};
 use thiserror::Error;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -36,6 +36,9 @@ struct DesktopArgs {
     /// CPU cycle step used for each emulation loop iteration.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), default_value_t = 1_024)]
     cycle_step: u32,
+    /// Optional directory to dump each presented frame as PNG while running headless.
+    #[arg(long)]
+    frame_output_dir: Option<PathBuf>,
 }
 
 impl Drop for SaveOnDrop {
@@ -47,8 +50,12 @@ impl Drop for SaveOnDrop {
 }
 
 #[derive(Debug, Error)]
-#[error("surface update failed")]
-struct SurfaceError;
+enum SurfaceError {
+    #[error("surface update failed")]
+    InvalidSurfaceLength,
+    #[error("failed to write frame image: {0}")]
+    FrameImageWrite(String),
+}
 
 /// Minimal headless-friendly window surface buffer.
 struct WindowSurface {
@@ -57,10 +64,11 @@ struct WindowSurface {
     max_frames: u64,
     close_requested: bool,
     input_events: Receiver<String>,
+    frame_output_dir: Option<PathBuf>,
 }
 
 impl WindowSurface {
-    fn new(max_frames: u64) -> Self {
+    fn new(max_frames: u64, frame_output_dir: Option<PathBuf>) -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let stdin = io::stdin();
@@ -76,13 +84,18 @@ impl WindowSurface {
             }
         });
 
-        Self {
+        if let Some(dir) = &frame_output_dir {
+            fs::create_dir_all(dir)?;
+        }
+
+        Ok(Self {
             buffer: vec![0; FRAMEBUFFER_LEN],
             presented_frames: 0,
             max_frames,
             close_requested: false,
             input_events: rx,
-        }
+            frame_output_dir,
+        })
     }
 }
 
@@ -105,9 +118,20 @@ impl FramePresenter for WindowSurface {
 
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
         if surface.len() != FRAMEBUFFER_LEN {
-            return Err(SurfaceError);
+            return Err(SurfaceError::InvalidSurfaceLength);
         }
         self.buffer.copy_from_slice(surface);
+        let frame_index = self.presented_frames + 1;
+        if let Some(dir) = &self.frame_output_dir {
+            let frame_path = dir.join(format!("frame-{frame_index:06}.png"));
+            write_rgb_surface_to_png(
+                &frame_path,
+                &self.buffer,
+                FRAMEBUFFER_WIDTH as u32,
+                FRAMEBUFFER_HEIGHT as u32,
+            )
+            .map_err(|error| SurfaceError::FrameImageWrite(error.to_string()))?;
+        }
         self.presented_frames += 1;
         if self.presented_frames.is_multiple_of(60) {
             println!(
@@ -196,7 +220,13 @@ fn main() -> ExitCode {
         cycle_step = args.cycle_step,
         "computed run budgets"
     );
-    let mut surface = WindowSurface::new(frame_budget);
+    let mut surface = match WindowSurface::new(frame_budget, args.frame_output_dir) {
+        Ok(surface) => surface,
+        Err(error) => {
+            eprintln!("error: failed to initialize output surface: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     let frame_loop_span = info_span!("frame_loop");
     let _frame_loop_guard = frame_loop_span.enter();

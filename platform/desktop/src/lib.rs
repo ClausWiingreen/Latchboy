@@ -1,8 +1,12 @@
 pub mod savefile;
 
 use std::error::Error;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::Path;
 
 use latchboy_core::{Emulator, FRAMEBUFFER_LEN};
+use png::{BitDepth, ColorType, Encoder};
 use thiserror::Error;
 
 const DMG_FRAME_CYCLES: u32 = 70_224;
@@ -21,6 +25,29 @@ pub enum FrameBlitError {
     FramebufferSizeMismatch { expected: usize, actual: usize },
     #[error("surface length mismatch: expected {expected}, got {actual}")]
     SurfaceSizeMismatch { expected: usize, actual: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum SurfaceImageWriteError {
+    #[error("surface length mismatch for {width}x{height}: expected {expected}, got {actual}")]
+    SurfaceSizeMismatch {
+        width: u32,
+        height: u32,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("failed to write png at '{path}': {source}")]
+    Io {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to encode png at '{path}': {source}")]
+    Encode {
+        path: String,
+        #[source]
+        source: png::EncodingError,
+    },
 }
 
 /// Converts DMG shade-index framebuffer bytes (`0..=3`) into RGB pixels.
@@ -47,6 +74,56 @@ pub fn blit_dmg_framebuffer_to_rgb_surface(
         *dst = DMG_PALETTE_RGB[palette_index];
     }
 
+    Ok(())
+}
+
+/// Writes an RGB888 surface (`0x00RRGGBB` pixels) to a PNG image on disk.
+pub fn write_rgb_surface_to_png(
+    path: &Path,
+    surface: &[u32],
+    width: u32,
+    height: u32,
+) -> Result<(), SurfaceImageWriteError> {
+    let expected_len = (width as usize).saturating_mul(height as usize);
+    if surface.len() != expected_len {
+        return Err(SurfaceImageWriteError::SurfaceSizeMismatch {
+            width,
+            height,
+            expected: expected_len,
+            actual: surface.len(),
+        });
+    }
+
+    let file = File::create(path).map_err(|source| SurfaceImageWriteError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let writer = BufWriter::new(file);
+
+    let mut encoder = Encoder::new(writer, width, height);
+    encoder.set_color(ColorType::Rgb);
+    encoder.set_depth(BitDepth::Eight);
+    let mut png_writer =
+        encoder
+            .write_header()
+            .map_err(|source| SurfaceImageWriteError::Encode {
+                path: path.display().to_string(),
+                source,
+            })?;
+
+    let mut pixels = Vec::with_capacity(surface.len().saturating_mul(3));
+    for &pixel in surface {
+        pixels.push(((pixel >> 16) & 0xFF) as u8);
+        pixels.push(((pixel >> 8) & 0xFF) as u8);
+        pixels.push((pixel & 0xFF) as u8);
+    }
+
+    png_writer
+        .write_image_data(&pixels)
+        .map_err(|source| SurfaceImageWriteError::Encode {
+            path: path.display().to_string(),
+            source,
+        })?;
     Ok(())
 }
 

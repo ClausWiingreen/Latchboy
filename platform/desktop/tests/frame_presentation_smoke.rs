@@ -1,10 +1,13 @@
 use std::convert::Infallible;
 use std::error::Error;
 use std::fmt;
+use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use latchboy_core::Emulator;
 use latchboy_desktop::{
-    blit_dmg_framebuffer_to_rgb_surface, run_emulation_loop, FramePresenter, DMG_PALETTE_RGB,
+    blit_dmg_framebuffer_to_rgb_surface, run_emulation_loop, write_rgb_surface_to_png,
+    FramePresenter, SurfaceImageWriteError, DMG_PALETTE_RGB,
 };
 
 struct HeadlessPresenter {
@@ -256,4 +259,37 @@ fn emulation_loop_honors_frame_limit_before_polling_again() {
         .expect("frame-limit completion should return before next poll_events call");
 
     assert_eq!(frames, 1);
+}
+
+#[test]
+fn write_rgb_surface_to_png_persists_image_to_disk() {
+    let mut surface = vec![DMG_PALETTE_RGB[0]; latchboy_core::FRAMEBUFFER_LEN];
+    surface[0] = DMG_PALETTE_RGB[3];
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock should be after unix epoch")
+        .as_nanos();
+    let output_dir = std::env::temp_dir().join(format!("latchboy-frame-output-{unique}"));
+    fs::create_dir_all(&output_dir).expect("temp output directory should be creatable");
+    let output_path = output_dir.join("frame-000001.png");
+
+    write_rgb_surface_to_png(&output_path, &surface, 160, 144)
+        .expect("surface should encode into png");
+    let metadata = fs::metadata(&output_path).expect("png should be written");
+    assert!(metadata.len() > 0, "written png should have non-zero bytes");
+
+    let _ = fs::remove_file(&output_path);
+    let _ = fs::remove_dir(&output_dir);
+}
+
+#[test]
+fn write_rgb_surface_to_png_rejects_wrong_surface_length() {
+    let err = write_rgb_surface_to_png("invalid.png".as_ref(), &[0u32; 8], 160, 144)
+        .expect_err("surface length mismatch should be rejected");
+
+    assert!(matches!(
+        err,
+        SurfaceImageWriteError::SurfaceSizeMismatch { .. }
+    ));
 }
