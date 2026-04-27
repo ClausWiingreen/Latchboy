@@ -1,6 +1,4 @@
 use std::env;
-use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::PathBuf;
@@ -17,6 +15,7 @@ use latchboy_desktop::savefile::{
     should_persist_after_load,
 };
 use latchboy_desktop::{run_emulation_loop, FramePresenter};
+use thiserror::Error;
 
 struct SaveOnDrop {
     emulator: Emulator,
@@ -45,16 +44,9 @@ impl Drop for SaveOnDrop {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("surface update failed")]
 struct SurfaceError;
-
-impl fmt::Display for SurfaceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "surface update failed")
-    }
-}
-
-impl Error for SurfaceError {}
 
 /// Minimal headless-friendly window surface buffer.
 struct WindowSurface {
