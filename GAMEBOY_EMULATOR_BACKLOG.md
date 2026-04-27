@@ -182,23 +182,23 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 
 ## Milestone 4 — PPU (Graphics Pipeline)
 
-- [ ] **VRAM/OAM and LCD registers**
+- [x] **VRAM/OAM and LCD registers**
   - [x] Implement FF40–FF4B behavior.
   - [x] Enforce mode-based access restrictions where needed.
-- [ ] **PPU modes and scanline timing**
+- [x] **PPU modes and scanline timing**
   - [x] Mode 2 (OAM search), Mode 3 (drawing), Mode 0 (HBlank), Mode 1 (VBlank).
   - [x] LY/LYC compare and STAT interrupt triggers.
-- [ ] **Background/window rendering**
+- [x] **Background/window rendering**
   - [x] Tile fetching and map addressing.
   - [x] Scroll/window positioning rules.
-- [ ] **Sprite rendering**
+- [x] **Sprite rendering**
   - [x] OAM priority, X/Y offsets, flipping, palette selection.
   - [x] 8x8 and 8x16 object modes.
-- [ ] **OAM DMA dependency (moved earlier from Milestone 5)**
+- [x] **OAM DMA dependency (moved earlier from Milestone 5)**
   - [x] Implement DMA transfer register `FF46`.
   - [x] Model CPU bus contention/timing impact during DMA.
   - [x] Add targeted tests for sprite fetch correctness under DMA activity.
-- [ ] **Framebuffer output**
+- [x] **Framebuffer output**
   - [x] DMG 4-shade palette mapping.
   - [x] VBlank frame-ready signal to frontend.
 
