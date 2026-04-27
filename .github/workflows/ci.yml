@@ -30,6 +30,31 @@ jobs:
       - name: Lint with clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Fetch test roms
+        env:
+          LATCHBOY_ROM_ROOT: ${{ runner.temp }}/latchboy
+          TEMP_DIR: ${{ runner.temp }}/download
+        run: |
+          mkdir -p "$LATCHBOY_ROM_ROOT"
+          mkdir -p "$TEMP_DIR"
+          
+          wget --directory-prefix="$TEMP_DIR" \
+            https://gbdev.gg8.se/files/roms/blargg-gb-tests/cpu_instrs.zip \
+            https://gbdev.gg8.se/files/roms/blargg-gb-tests/instr_timing.zip \
+            https://gekkio.fi/files/mooneye-test-suite/mts-20240926-1737-443f6e1/mts-20240926-1737-443f6e1.zip
+          
+          unzip -d "$LATCHBOY_ROM_ROOT/blargg" "$TEMP_DIR/cpu_instrs.zip"
+          unzip -d "$LATCHBOY_ROM_ROOT/blargg" "$TEMP_DIR/instr_timing.zip"
+          unzip -d "$LATCHBOY_ROM_ROOT" "$TEMP_DIR/mts-20240926-1737-443f6e1.zip"
+          mv "$LATCHBOY_ROM_ROOT/mts-20240926-1737-443f6e1" "$LATCHBOY_ROM_ROOT/mooneye"
       - name: Run tests
+        env:
+          LATCHBOY_ROM_ROOT: ${{ runner.temp }}/latchboy
         run: cargo test --workspace --all-targets
 
+      - name: Milestone 4 required ROM gate
+        env:
+          LATCHBOY_ROM_ROOT: ${{ runner.temp }}/latchboy
+        run: |
+          cargo test -p latchboy-core --test external_rom_validation \
+            required_milestone_4_roms_pass_under_external_validation_flow -- --exact
