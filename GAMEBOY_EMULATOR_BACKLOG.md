@@ -249,7 +249,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 - [ ] **Joypad input (FF00)**
   - [x] Button matrix selection and polling.
-  - [ ] Joypad interrupt generation.
+  - [x] Joypad interrupt generation.
 
 **Acceptance criteria**
 - Input works consistently in at least 3 games.

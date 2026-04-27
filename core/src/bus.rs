@@ -24,6 +24,7 @@ const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
 const HRAM_START: u16 = 0xFF80;
 const HRAM_END: u16 = 0xFFFE;
 const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
+const JOYPAD_INTERRUPT_MASK: u8 = 0x10;
 const WATCHED_IO_ADDRESSES: [u16; 6] = [
     crate::ppu::LCDC_REGISTER,
     crate::ppu::STAT_REGISTER,
@@ -261,7 +262,10 @@ impl Bus {
                 ) {
                     self.timer.write(address, value);
                 } else if address == JOYP_REGISTER {
-                    self.joypad.write_p1(value);
+                    let requested_interrupt = self.joypad.write_p1(value);
+                    if requested_interrupt {
+                        self.request_joypad_interrupt();
+                    }
                 } else if self.ppu.write_register(address, value) {
                     if self.ppu.take_stat_irq_pending() {
                         let interrupt_flag_index =
@@ -417,7 +421,9 @@ impl Bus {
     }
 
     pub fn set_button_pressed(&mut self, button: JoypadButton, pressed: bool) {
-        self.joypad.set_button_pressed(button, pressed);
+        if self.joypad.set_button_pressed(button, pressed) {
+            self.request_joypad_interrupt();
+        }
     }
 
     pub fn set_watch_io_enabled(&mut self, enabled: bool) {
@@ -433,6 +439,11 @@ impl Bus {
 
     fn record_watch_io_write(&self, address: u16, value: u8) {
         self.record_watch_io_event(BusWatchIoAccessType::Write, address, value);
+    }
+
+    fn request_joypad_interrupt(&mut self) {
+        let interrupt_flag_index = (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+        self.io_registers[interrupt_flag_index] |= JOYPAD_INTERRUPT_MASK;
     }
 
     fn record_watch_io_event(&self, access_type: BusWatchIoAccessType, address: u16, value: u8) {
@@ -609,6 +620,32 @@ mod tests {
         bus.write8(0xFF00, 0x20);
 
         assert_eq!(bus.read8(0xFF00) & 0x0F, 0b1010);
+    }
+
+    #[test]
+    fn joypad_interrupt_flag_is_set_when_pressed_button_transitions_selected_line_low() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::interrupts::FLAG_REGISTER, 0x00);
+        bus.write8(0xFF00, 0x10);
+
+        bus.set_button_pressed(JoypadButton::A, true);
+
+        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & JOYPAD_INTERRUPT_MASK, 0);
+    }
+
+    #[test]
+    fn joypad_interrupt_flag_is_set_when_row_selection_exposes_pressed_button() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(crate::interrupts::FLAG_REGISTER, 0x00);
+        bus.write8(0xFF00, 0x30);
+        bus.set_button_pressed(JoypadButton::A, true);
+        bus.write8(crate::interrupts::FLAG_REGISTER, 0x00);
+
+        bus.write8(0xFF00, 0x10);
+
+        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & JOYPAD_INTERRUPT_MASK, 0);
     }
 
     #[test]
