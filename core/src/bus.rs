@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 
 use crate::cartridge::Cartridge;
+use crate::input::{Joypad, JoypadButton};
 use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
 use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
@@ -18,6 +19,7 @@ const UNUSABLE_START: u16 = 0xFEA0;
 const UNUSABLE_END: u16 = 0xFEFF;
 const IO_REGISTERS_START: u16 = 0xFF00;
 const IO_REGISTERS_END: u16 = 0xFF7F;
+const JOYP_REGISTER: u16 = 0xFF00;
 const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
 const HRAM_START: u16 = 0xFF80;
 const HRAM_END: u16 = 0xFFFE;
@@ -80,6 +82,7 @@ pub struct Bus {
     ppu: Ppu,
     wram: [u8; WRAM_SIZE],
     io_registers: [u8; IO_REGISTERS_SIZE],
+    joypad: Joypad,
     timer: Timer,
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
@@ -97,6 +100,7 @@ impl Hash for Bus {
         self.ppu.hash(state);
         self.wram.hash(state);
         self.io_registers.hash(state);
+        self.joypad.hash(state);
         self.timer.hash(state);
         self.hram.hash(state);
         self.interrupt_enable.hash(state);
@@ -136,6 +140,7 @@ impl Bus {
             ppu: Ppu::default(),
             wram: [0; WRAM_SIZE],
             io_registers: [0; IO_REGISTERS_SIZE],
+            joypad: Joypad::default(),
             timer: Timer::default(),
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
@@ -181,6 +186,8 @@ impl Bus {
                 IO_REGISTERS_START..=IO_REGISTERS_END => {
                     if address == BOOT_ROM_DISABLE_REGISTER {
                         self.boot_rom_disable_value
+                    } else if address == JOYP_REGISTER {
+                        self.joypad.read_p1()
                     } else if matches!(
                         address,
                         DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
@@ -209,6 +216,7 @@ impl Bus {
         self.ppu = Ppu::default();
         self.wram = [0; WRAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
+        self.joypad = Joypad::default();
         self.timer = Timer::default();
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
@@ -252,6 +260,8 @@ impl Bus {
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
                 ) {
                     self.timer.write(address, value);
+                } else if address == JOYP_REGISTER {
+                    self.joypad.write_p1(value);
                 } else if self.ppu.write_register(address, value) {
                     if self.ppu.take_stat_irq_pending() {
                         let interrupt_flag_index =
@@ -292,6 +302,8 @@ impl Bus {
             IO_REGISTERS_START..=IO_REGISTERS_END => {
                 if address == BOOT_ROM_DISABLE_REGISTER {
                     self.boot_rom_disable_value
+                } else if address == JOYP_REGISTER {
+                    self.joypad.read_p1()
                 } else if matches!(
                     address,
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
@@ -402,6 +414,10 @@ impl Bus {
     /// Returns mutable access to the loaded cartridge backing this bus.
     pub fn cartridge_mut(&mut self) -> &mut Cartridge {
         &mut self.cartridge
+    }
+
+    pub fn set_button_pressed(&mut self, button: JoypadButton, pressed: bool) {
+        self.joypad.set_button_pressed(button, pressed);
     }
 
     pub fn set_watch_io_enabled(&mut self, enabled: bool) {
@@ -569,6 +585,30 @@ mod tests {
         bus.write8(0xA000, 0x77);
 
         assert_eq!(bus.read8(0xA000), 0x77);
+    }
+
+    #[test]
+    fn joyp_register_applies_selected_button_row_polling() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.set_button_pressed(JoypadButton::A, true);
+        bus.set_button_pressed(JoypadButton::Start, true);
+        bus.write8(0xFF00, 0x10);
+
+        assert_eq!(bus.read8(0xFF00) & 0x0F, 0b0110);
+    }
+
+    #[test]
+    fn joyp_register_applies_selected_direction_row_polling() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.set_button_pressed(JoypadButton::Right, true);
+        bus.set_button_pressed(JoypadButton::Up, true);
+        bus.write8(0xFF00, 0x20);
+
+        assert_eq!(bus.read8(0xFF00) & 0x0F, 0b1010);
     }
 
     #[test]

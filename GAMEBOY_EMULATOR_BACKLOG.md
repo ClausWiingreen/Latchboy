@@ -248,7 +248,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctness/timing depends on it._
 
 - [ ] **Joypad input (FF00)**
-  - [ ] Button matrix selection and polling.
+  - [x] Button matrix selection and polling.
   - [ ] Joypad interrupt generation.
 
 **Acceptance criteria**
