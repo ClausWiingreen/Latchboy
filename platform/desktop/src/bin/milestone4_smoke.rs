@@ -47,17 +47,20 @@ const MATRIX_PRESETS: [MatrixPreset; 3] = [
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum MatrixPresetId {
-    TetrisWorld,
-    SuperMarioLandWorld,
-    LegendOfZeldaLinksAwakeningWorld,
+    #[value(name = "tetris-world")]
+    Tetris,
+    #[value(name = "super-mario-land-world")]
+    SuperMarioLand,
+    #[value(name = "legend-of-zelda-links-awakening-world")]
+    LegendOfZeldaLinksAwakening,
 }
 
 impl MatrixPresetId {
     fn as_str(self) -> &'static str {
         match self {
-            Self::TetrisWorld => "tetris-world",
-            Self::SuperMarioLandWorld => "super-mario-land-world",
-            Self::LegendOfZeldaLinksAwakeningWorld => "legend-of-zelda-links-awakening-world",
+            Self::Tetris => "tetris-world",
+            Self::SuperMarioLand => "super-mario-land-world",
+            Self::LegendOfZeldaLinksAwakening => "legend-of-zelda-links-awakening-world",
         }
     }
 
