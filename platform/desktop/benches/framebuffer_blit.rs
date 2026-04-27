@@ -17,7 +17,7 @@ fn bench_framebuffer_blit(c: &mut Criterion) {
                 blit_dmg_framebuffer_to_rgb_surface(&framebuffer, &mut surface)
                     .expect("benchmark framebuffer sizes should match");
             },
-            BatchSize::SmallInput,
+            BatchSize::LargeInput,
         )
     });
 }

@@ -2,13 +2,14 @@ mod common;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
-use common::emulator_from_program;
+use common::cartridge_with_program;
+use latchboy_core::Emulator;
 
 fn bench_instruction_heavy_stepping(c: &mut Criterion) {
     c.bench_function("instruction_heavy_step_loops", |b| {
         b.iter_batched(
             || {
-                emulator_from_program(
+                Emulator::from_cartridge(cartridge_with_program(
                     &[
                         (0x0100, 0x3E), // LD A, d8
                         (0x0101, 0x10),
@@ -24,7 +25,7 @@ fn bench_instruction_heavy_stepping(c: &mut Criterion) {
                         (0x010B, 0xF8), // back to 0x0104
                     ],
                     b"INST",
-                )
+                ))
             },
             |mut emulator| {
                 for _ in 0..8 {

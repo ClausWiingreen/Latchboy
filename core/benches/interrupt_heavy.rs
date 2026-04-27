@@ -2,13 +2,14 @@ mod common;
 
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
-use common::emulator_from_program;
+use common::cartridge_with_program;
+use latchboy_core::Emulator;
 
 fn bench_interrupt_heavy_stepping(c: &mut Criterion) {
     c.bench_function("interrupt_heavy_timer_wakeup", |b| {
         b.iter_batched(
             || {
-                emulator_from_program(
+                Emulator::from_cartridge(cartridge_with_program(
                     &[
                         (0x0050, 0x3C), // Timer ISR: INC A
                         (0x0051, 0xD9), // RETI
@@ -35,7 +36,7 @@ fn bench_interrupt_heavy_stepping(c: &mut Criterion) {
                         (0x0114, 0xFD), // back to HALT
                     ],
                     b"INTR",
-                )
+                ))
             },
             |mut emulator| {
                 emulator.step_cycles(70_224);

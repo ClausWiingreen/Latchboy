@@ -1,15 +1,8 @@
-use latchboy_core::{
-    cartridge::{
-        compute_header_checksum, Cartridge, CartridgeType, DestinationCode, RamSize, RomSize,
-    },
-    Emulator,
+use latchboy_core::cartridge::{
+    compute_header_checksum, Cartridge, CartridgeType, DestinationCode, RamSize, RomSize,
 };
 
 const ROM_SIZE_BYTES: usize = 2 * 16 * 1024;
-
-pub fn emulator_from_program(program: &[(usize, u8)], title: &[u8; 4]) -> Emulator {
-    Emulator::from_cartridge(cartridge_with_program(program, title))
-}
 
 pub fn cartridge_with_program(program: &[(usize, u8)], title: &[u8; 4]) -> Cartridge {
     let mut rom = vec![0u8; ROM_SIZE_BYTES];
