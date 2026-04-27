@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -9,6 +8,7 @@ use std::time::Instant;
 use clap::{Parser, ValueEnum};
 use latchboy_core::{cartridge::Cartridge, Emulator};
 use latchboy_desktop::{run_emulation_loop, FramePresenter};
+use serde::Serialize;
 
 const DEFAULT_CYCLE_STEP: u32 = 1_024;
 
@@ -133,6 +133,54 @@ struct CliConfig {
 struct SampledFrameHash {
     frame_index: u64,
     hash: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RunJson {
+    commit_sha: String,
+    rom_id: String,
+    runner_command: String,
+    frame_limit: u64,
+    wall_time_limit_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SummaryJson {
+    status: String,
+    checkpoint_frame_index: u64,
+    pass_fail_reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct HashWindowHashEntry {
+    frame_index: u64,
+    hash: String,
+}
+
+#[derive(Debug, Serialize)]
+struct HashWindowJson {
+    algorithm: String,
+    start_frame: u64,
+    frame_count: u64,
+    sample_stride: u64,
+    hashes: Vec<HashWindowHashEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct PassWindowJson {
+    start_frame: u64,
+    frame_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct TitleEvidenceJson {
+    #[serde(rename = "run.json")]
+    run_json: RunJson,
+    #[serde(rename = "summary.json")]
+    summary_json: SummaryJson,
+    hash_window: HashWindowJson,
+    pass_window: PassWindowJson,
+    copyrighted_assets_committed: bool,
 }
 
 #[derive(Debug)]
@@ -451,38 +499,6 @@ fn git_commit_sha() -> Result<String, Box<dyn Error>> {
     Ok(sha.to_ascii_lowercase())
 }
 
-fn escape_json(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            _ => escaped.push(ch),
-        }
-    }
-    escaped
-}
-
-fn json_object(fields: &BTreeMap<&str, String>) -> String {
-    let mut lines = Vec::with_capacity(fields.len() + 2);
-    lines.push("{".to_owned());
-
-    for (index, (key, value)) in fields.iter().enumerate() {
-        let comma = if index + 1 == fields.len() { "" } else { "," };
-        lines.push(format!("  \"{}\": {}{}", key, value, comma));
-    }
-
-    lines.push("}".to_owned());
-    lines.join("\n")
-}
-
-fn quoted(value: &str) -> String {
-    format!("\"{}\"", escape_json(value))
-}
-
 fn expected_hash_sample_count(config: &CliConfig) -> u64 {
     config
         .hash_frame_count
@@ -534,14 +550,17 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
 
     let commit_sha = git_commit_sha()?;
     let title_id_value = config.title_id.as_deref().unwrap_or("unscoped-local-run");
-    let mut run_fields = BTreeMap::new();
-    run_fields.insert("commit_sha", quoted(&commit_sha));
-    run_fields.insert("rom_id", quoted(&config.rom_id));
-    run_fields.insert("runner_command", quoted(&config.runner_command));
-    run_fields.insert("frame_limit", config.frame_limit.to_string());
-    run_fields.insert("wall_time_limit_ms", config.wall_time_limit_ms.to_string());
-    let run_json = json_object(&run_fields);
-    fs::write(config.output_dir.join("run.json"), &run_json)?;
+    let run_json = RunJson {
+        commit_sha,
+        rom_id: config.rom_id.clone(),
+        runner_command: config.runner_command.clone(),
+        frame_limit: config.frame_limit,
+        wall_time_limit_ms: config.wall_time_limit_ms,
+    };
+    fs::write(
+        config.output_dir.join("run.json"),
+        serde_json::to_string_pretty(&run_json)?,
+    )?;
 
     let checkpoint_frame_index = config
         .checkpoint_start_frame
@@ -611,12 +630,15 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         )
     };
 
-    let mut summary_fields = BTreeMap::new();
-    summary_fields.insert("status", quoted(status));
-    summary_fields.insert("checkpoint_frame_index", checkpoint_frame_index.to_string());
-    summary_fields.insert("pass_fail_reason", quoted(&pass_fail_reason));
-    let summary_json = json_object(&summary_fields);
-    fs::write(config.output_dir.join("summary.json"), &summary_json)?;
+    let summary_json = SummaryJson {
+        status: status.to_owned(),
+        checkpoint_frame_index,
+        pass_fail_reason,
+    };
+    fs::write(
+        config.output_dir.join("summary.json"),
+        serde_json::to_string_pretty(&summary_json)?,
+    )?;
 
     let hashes = if presenter.sampled_hashes.is_empty() {
         let placeholder_hash = if no_frames_presented {
@@ -624,56 +646,52 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         } else {
             "missing-hash-window-sample"
         };
-        vec![format!(
-            "    {{\"frame_index\": {}, \"hash\": {}}}",
-            config.hash_start_frame,
-            quoted(placeholder_hash)
-        )]
+        vec![HashWindowHashEntry {
+            frame_index: config.hash_start_frame,
+            hash: placeholder_hash.to_owned(),
+        }]
     } else {
         presenter
             .sampled_hashes
             .iter()
-            .map(|sample| {
-                format!(
-                    "    {{\"frame_index\": {}, \"hash\": {}}}",
-                    sample.frame_index,
-                    quoted(&sample.hash)
-                )
+            .map(|sample| HashWindowHashEntry {
+                frame_index: sample.frame_index,
+                hash: sample.hash.clone(),
             })
             .collect::<Vec<_>>()
     };
 
-    let hashes_json = if hashes.is_empty() {
-        "[]".to_owned()
-    } else {
-        format!("[\n{}\n  ]", hashes.join(",\n"))
+    let hash_window_json = HashWindowJson {
+        algorithm: "fnv1a64-rgb32le".to_owned(),
+        start_frame: config.hash_start_frame,
+        frame_count: config.hash_frame_count,
+        sample_stride: config.hash_sample_stride,
+        hashes,
     };
-
-    let hash_window_json = format!(
-        "{{\n  \"algorithm\": \"fnv1a64-rgb32le\",\n  \"start_frame\": {},\n  \"frame_count\": {},\n  \"sample_stride\": {},\n  \"hashes\": {}\n}}",
-        config.hash_start_frame, config.hash_frame_count, config.hash_sample_stride, hashes_json
-    );
     fs::write(
         config.output_dir.join("hash_window.json"),
-        &hash_window_json,
+        serde_json::to_string_pretty(&hash_window_json)?,
     )?;
 
-    let pass_window_json = format!(
-        "{{\n  \"start_frame\": {},\n  \"frame_count\": {}\n}}",
-        config.checkpoint_start_frame, config.checkpoint_frame_count
-    );
+    let pass_window_json = PassWindowJson {
+        start_frame: config.checkpoint_start_frame,
+        frame_count: config.checkpoint_frame_count,
+    };
     fs::write(
         config.output_dir.join("pass_window.json"),
-        &pass_window_json,
+        serde_json::to_string_pretty(&pass_window_json)?,
     )?;
 
-    let title_evidence_json = format!(
-        "{{\n  \"run.json\": {},\n  \"summary.json\": {},\n  \"hash_window\": {},\n  \"pass_window\": {},\n  \"copyrighted_assets_committed\": false\n}}",
-        run_json, summary_json, hash_window_json, pass_window_json,
-    );
+    let title_evidence_json = TitleEvidenceJson {
+        run_json,
+        summary_json,
+        hash_window: hash_window_json,
+        pass_window: pass_window_json,
+        copyrighted_assets_committed: false,
+    };
     fs::write(
         config.output_dir.join("title-evidence.json"),
-        title_evidence_json,
+        serde_json::to_string_pretty(&title_evidence_json)?,
     )?;
 
     let runner_log = format!(
