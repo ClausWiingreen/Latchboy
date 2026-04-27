@@ -222,7 +222,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 **Acceptance status review (2026-04-18, updated)**
 - ⚠️ `Required Milestone 4 PPU manifest entries pass 100%` remains **partially evidenced**. The gate test (`required_milestone_4_roms_pass_under_external_validation_flow`) is implemented and green in normal workspace test runs, but it intentionally skips when `LATCHBOY_ROM_ROOT` is unset/empty; therefore, a green run without fixtures is not sufficient sign-off evidence.
 - ⚠️ `3/3 curated titles reach named menu checkpoints within fixed budgets` is **still open**. The smoke harness (`milestone4_smoke`) and schema file are present, but no committed `tests/artifacts/milestone4-smoke-summary.json` evidence file currently exists.
-- ⚠️ Schema enforcement for smoke evidence is **still open**. The schema exists, but there is no dedicated automated validation test that fails when a committed milestone summary drifts from `tests/artifacts/milestone4-smoke-summary.schema.json`.
+- ✅ Schema enforcement for smoke evidence is now wired in automated tests: `core/tests/external_rom_validation.rs` validates `tests/artifacts/milestone4-smoke-summary.json` against `tests/artifacts/milestone4-smoke-summary.schema.json`.
 - 🔧 Remaining Milestone 4 closure items:
   - Enforce fixture-backed execution of `required_milestone_4_roms_pass_under_external_validation_flow` in CI for target commits (no skipped external ROM runs).
   - Add and maintain committed smoke evidence at `tests/artifacts/milestone4-smoke-summary.json` (schema-conformant) for curated title IDs (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) (per title: `run.json` fields `commit_sha`/`rom_id`/`runner_command`/`frame_limit`/`wall_time_limit_ms`; `summary.json` fields `status`/`checkpoint_frame_index`/`pass_fail_reason`; plus `hash_window` fields `algorithm`/`start_frame`/`frame_count`/`sample_stride`/`hashes`) for Milestone 4 closure.
@@ -235,10 +235,9 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - ⚠️ Milestone 4 closure acceptance remains **not yet satisfied** end-to-end because closure evidence is still missing/enforcement-incomplete:
   - Required ROM gate test can pass via skip when `LATCHBOY_ROM_ROOT` is unset (not a true fixture-backed closure signal).
   - Committed smoke evidence file (`tests/artifacts/milestone4-smoke-summary.json`) is still missing.
-  - No dedicated schema-validation test currently blocks drift between committed evidence and `tests/artifacts/milestone4-smoke-summary.schema.json`.
+  - Schema drift is now gated by `milestone4_committed_smoke_summary_matches_schema`; keep committed summary evidence up to date with fixture-backed runs.
 - 🔧 Missing Milestone 4 features to add before closure:
   - CI hard-fail behavior for missing/empty `LATCHBOY_ROM_ROOT` in milestone-gating jobs.
-  - Schema-validation test for the committed smoke summary artifact.
   - Committed metadata+hash summary artifact covering all curated title IDs used by milestone closure.
   - A single wording contract across docs/backlog for smoke coverage thresholds (see refinement items below).
 

@@ -2,6 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Instant;
 
 use latchboy_core::{
@@ -12,6 +13,9 @@ use latchboy_core::{
 
 const CYCLES_PER_FRAME: u32 = 70_224;
 const ROM_MANIFEST_PATH: &str = "../tests/rom_manifest.toml";
+const MILESTONE4_SMOKE_SCHEMA_PATH: &str =
+    "../tests/artifacts/milestone4-smoke-summary.schema.json";
+const MILESTONE4_SMOKE_SUMMARY_PATH: &str = "../tests/artifacts/milestone4-smoke-summary.json";
 const ROM_ROOT_ENV: &str = "LATCHBOY_ROM_ROOT";
 const TRACE_EVENTS_ON_FAILURE: usize = 64;
 
@@ -514,6 +518,147 @@ fn rom_manifest_registers_required_milestone_4_ppu_suites() {
             );
         }
     }
+}
+
+#[test]
+fn milestone4_committed_smoke_summary_matches_schema() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let schema_path = manifest_dir.join(MILESTONE4_SMOKE_SCHEMA_PATH);
+    let summary_path = manifest_dir.join(MILESTONE4_SMOKE_SUMMARY_PATH);
+
+    let validation_script = r#"
+import json
+import re
+import sys
+from datetime import datetime, timezone
+
+schema_path, summary_path = sys.argv[1], sys.argv[2]
+with open(schema_path, 'r', encoding='utf-8') as f:
+    schema = json.load(f)
+with open(summary_path, 'r', encoding='utf-8') as f:
+    summary = json.load(f)
+
+def resolve_ref(root_schema, ref):
+    if not ref.startswith('#/'):
+        raise AssertionError(f'unsupported $ref target: {ref}')
+    node = root_schema
+    for part in ref[2:].split('/'):
+        node = node[part]
+    return node
+
+def validate_format(value, fmt):
+    if fmt != 'date-time':
+        raise AssertionError(f'unsupported format keyword: {fmt}')
+    if not isinstance(value, str):
+        return False
+    # Enforce RFC3339 timestamp profile used by JSON Schema `format: date-time`.
+    # This intentionally rejects permissive ISO variants (for example, space-separated
+    # date/time values) that `datetime.fromisoformat` would otherwise accept.
+    rfc3339_pattern = r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$'
+    if re.match(rfc3339_pattern, value) is None:
+        return False
+    normalized = value[:-1] + '+00:00' if value.endswith('Z') else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+def expect(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+def is_integer(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+def validate(instance, schema_node, root_schema, path='$'):
+    if '$ref' in schema_node:
+        return validate(instance, resolve_ref(root_schema, schema_node['$ref']), root_schema, path)
+
+    if 'const' in schema_node:
+        expect(instance == schema_node['const'], f'{path}: expected const {schema_node["const"]!r}, got {instance!r}')
+    if 'enum' in schema_node:
+        expect(instance in schema_node['enum'], f'{path}: value {instance!r} not in enum {schema_node["enum"]!r}')
+
+    schema_type = schema_node.get('type')
+    if schema_type == 'object':
+        expect(isinstance(instance, dict), f'{path}: expected object')
+    elif schema_type == 'array':
+        expect(isinstance(instance, list), f'{path}: expected array')
+    elif schema_type == 'string':
+        expect(isinstance(instance, str), f'{path}: expected string')
+    elif schema_type == 'integer':
+        expect(is_integer(instance), f'{path}: expected integer')
+    elif schema_type == 'boolean':
+        expect(isinstance(instance, bool), f'{path}: expected boolean')
+    elif schema_type is not None:
+        raise AssertionError(f'{path}: unsupported schema type {schema_type!r}')
+
+    if schema_type == 'string':
+        if 'minLength' in schema_node:
+            expect(len(instance) >= schema_node['minLength'], f'{path}: minLength violation')
+        if 'pattern' in schema_node:
+            expect(re.match(schema_node['pattern'], instance) is not None, f'{path}: pattern violation')
+        if 'format' in schema_node:
+            expect(validate_format(instance, schema_node['format']), f'{path}: format {schema_node["format"]!r} violation')
+
+    if schema_type == 'integer':
+        if 'minimum' in schema_node:
+            expect(instance >= schema_node['minimum'], f'{path}: minimum violation')
+
+    if schema_type == 'array':
+        if 'minItems' in schema_node:
+            expect(len(instance) >= schema_node['minItems'], f'{path}: minItems violation')
+        if 'items' in schema_node:
+            for index, item in enumerate(instance):
+                validate(item, schema_node['items'], root_schema, f'{path}[{index}]')
+
+    if schema_type == 'object':
+        required = schema_node.get('required', [])
+        for key in required:
+            expect(key in instance, f'{path}: missing required property {key!r}')
+
+        if 'minProperties' in schema_node:
+            expect(len(instance) >= schema_node['minProperties'], f'{path}: minProperties violation')
+        if 'maxProperties' in schema_node:
+            expect(len(instance) <= schema_node['maxProperties'], f'{path}: maxProperties violation')
+
+        property_names_schema = schema_node.get('propertyNames')
+        if property_names_schema is not None:
+            for key in instance.keys():
+                validate(key, property_names_schema, root_schema, f'{path}<propertyName>')
+
+        properties = schema_node.get('properties', {})
+        for key, property_schema in properties.items():
+            if key in instance:
+                validate(instance[key], property_schema, root_schema, f'{path}.{key}')
+
+        additional = schema_node.get('additionalProperties', True)
+        for key, value in instance.items():
+            if key in properties:
+                continue
+            if additional is False:
+                raise AssertionError(f'{path}: additional property {key!r} is not allowed')
+            if isinstance(additional, dict):
+                validate(value, additional, root_schema, f'{path}.{key}')
+
+validate(summary, schema, schema)
+"#;
+
+    let validation = Command::new("python3")
+        .arg("-c")
+        .arg(validation_script)
+        .arg(&schema_path)
+        .arg(&summary_path)
+        .output()
+        .expect("python3 must be available to validate milestone 4 smoke summary schema contract");
+
+    let stderr = String::from_utf8_lossy(&validation.stderr);
+    assert!(
+        validation.status.success(),
+        "committed milestone 4 smoke summary failed schema contract checks:\n{}",
+        stderr.trim()
+    );
 }
 
 #[test]
