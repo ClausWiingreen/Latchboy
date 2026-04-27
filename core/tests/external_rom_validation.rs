@@ -461,6 +461,12 @@ fn rom_manifest_registers_required_milestone_2_and_3_suites() {
         "manifest must include at least one required milestone 3 Mooneye timer ROM entry"
     );
     assert!(
+        manifest.roms.iter().any(|rom| rom.required
+            && rom.milestone == 3
+            && rom.suite == "mooneye_acceptance_boot"),
+        "manifest must include at least one required milestone 3 boot/startup ROM entry"
+    );
+    assert!(
         manifest
             .roms
             .iter()

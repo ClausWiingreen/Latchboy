@@ -276,7 +276,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 ## Backlog sequencing refinements (2026-04-20, review-driven updates)
 
 - [ ] **Priority 0: Close Milestone 3 objective evidence gap before expanding milestone scope**
-  - [ ] Add a required Milestone 3 boot/startup external validation case to `tests/rom_manifest.toml` (or an equivalent required deterministic external harness case) so startup acceptance is fixture-backed, not unit-only.
+  - [x] Add a required Milestone 3 boot/startup external validation case to `tests/rom_manifest.toml` (or an equivalent required deterministic external harness case) so startup acceptance is fixture-backed, not unit-only.
   - [ ] Add a dedicated Milestone 3 gate test in `core/tests/external_rom_validation.rs` (`required_milestone_3_roms_pass_under_external_validation_flow`) to avoid coupling Milestone 3 pass/fail status to Milestone 2 runs.
 - [ ] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
   - [ ] Add an explicit CI preflight check that fails when `LATCHBOY_ROM_ROOT` is unset/empty for milestone-gating jobs.

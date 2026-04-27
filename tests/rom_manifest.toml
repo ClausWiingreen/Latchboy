@@ -58,6 +58,17 @@ frame_limit = 240
 wall_time_limit_ms = 8_000
 pass_condition = "mooneye_registers"
 
+[[roms]]
+id = "mooneye-acceptance-boot-regs-dmgabc"
+suite = "mooneye_acceptance_boot"
+path = "mooneye/acceptance/boot_regs-dmgABC.gb"
+milestone = 3
+required = true
+cycle_limit = 8_000_000
+frame_limit = 180
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+
 # Required for Milestone 4 completion (PPU-targeted external ROM validation).
 
 [[roms]]
