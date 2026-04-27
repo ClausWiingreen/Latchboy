@@ -631,7 +631,10 @@ mod tests {
 
         bus.set_button_pressed(JoypadButton::A, true);
 
-        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & JOYPAD_INTERRUPT_MASK, 0);
+        assert_ne!(
+            bus.read8(crate::interrupts::FLAG_REGISTER) & JOYPAD_INTERRUPT_MASK,
+            0
+        );
     }
 
     #[test]
@@ -645,7 +648,10 @@ mod tests {
 
         bus.write8(0xFF00, 0x10);
 
-        assert_ne!(bus.read8(crate::interrupts::FLAG_REGISTER) & JOYPAD_INTERRUPT_MASK, 0);
+        assert_ne!(
+            bus.read8(crate::interrupts::FLAG_REGISTER) & JOYPAD_INTERRUPT_MASK,
+            0
+        );
     }
 
     #[test]
