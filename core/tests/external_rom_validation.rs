@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use serde::Deserialize;
+
 use latchboy_core::{
     cartridge::Cartridge,
     observability::{EmulatorEvent, TraceBuffer},
@@ -19,12 +21,14 @@ const MILESTONE4_SMOKE_SUMMARY_PATH: &str = "../tests/artifacts/milestone4-smoke
 const ROM_ROOT_ENV: &str = "LATCHBOY_ROM_ROOT";
 const TRACE_EVENTS_ON_FAILURE: usize = 64;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RomManifest {
     roms: Vec<RomEntry>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RomEntry {
     id: String,
     suite: String,
@@ -37,12 +41,16 @@ struct RomEntry {
     pass_condition: PassCondition,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
 enum PassCondition {
     #[default]
+    #[serde(rename = "none")]
     None,
+    #[serde(rename = "blargg_mem")]
     BlarggMem,
+    #[serde(rename = "blargg_registers")]
     BlarggRegisters,
+    #[serde(rename = "mooneye_registers")]
     MooneyeRegisters,
 }
 
@@ -68,129 +76,42 @@ fn parse_manifest(manifest_path: &Path) -> RomManifest {
         )
     });
 
-    let mut roms = Vec::new();
-    let mut current: Option<RomEntry> = None;
-
-    for (line_number, raw_line) in manifest_contents.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if line == "[[roms]]" {
-            if let Some(entry) = current.take() {
-                roms.push(entry);
-            }
-            current = Some(RomEntry::default());
-            continue;
-        }
-
-        let (key, value) = line.split_once('=').unwrap_or_else(|| {
-            panic!(
-                "invalid manifest syntax at {}:{}: expected key = value",
-                manifest_path.display(),
-                line_number + 1
-            )
-        });
-
-        let entry = current.as_mut().unwrap_or_else(|| {
-            panic!(
-                "manifest entry fields must be under [[roms]] heading at {}:{}",
-                manifest_path.display(),
-                line_number + 1
-            )
-        });
-
-        let key = key.trim();
-        let value = strip_inline_comment(value.trim());
-        match key {
-            "id" => entry.id = parse_string(value),
-            "suite" => entry.suite = parse_string(value),
-            "path" => entry.path = parse_string(value),
-            "milestone" => entry.milestone = parse_u64(value) as u8,
-            "required" => entry.required = parse_bool(value),
-            "cycle_limit" => entry.cycle_limit = parse_u64(value),
-            "frame_limit" => entry.frame_limit = parse_u64(value),
-            "wall_time_limit_ms" => entry.wall_time_limit_ms = parse_u64(value),
-            "pass_condition" => entry.pass_condition = parse_pass_condition(value),
-            _ => {
-                panic!(
-                    "unknown key '{key}' at {}:{}",
-                    manifest_path.display(),
-                    line_number + 1
-                );
-            }
-        }
-    }
-
-    if let Some(entry) = current.take() {
-        roms.push(entry);
-    }
+    let manifest: RomManifest = toml::from_str(&manifest_contents).unwrap_or_else(|error| {
+        panic!(
+            "failed to parse ROM manifest at {ROM_MANIFEST_PATH} ({}): {error}",
+            manifest_path.display()
+        )
+    });
 
     assert!(
-        !roms.is_empty(),
+        !manifest.roms.is_empty(),
         "ROM manifest at {} must define at least one [[roms]] entry",
         manifest_path.display()
     );
 
-    RomManifest { roms }
-}
-
-fn parse_string(value: &str) -> String {
-    value
-        .strip_prefix('"')
-        .and_then(|v| v.strip_suffix('"'))
-        .unwrap_or_else(|| panic!("expected quoted string, got '{value}'"))
-        .to_owned()
-}
-
-fn strip_inline_comment(value: &str) -> &str {
-    let mut in_string = false;
-    let mut escape_active = false;
-
-    for (index, ch) in value.char_indices() {
-        if ch == '"' && !escape_active {
-            in_string = !in_string;
-        }
-
-        if ch == '#' && !in_string {
-            return value[..index].trim_end();
-        }
-
-        escape_active = ch == '\\' && !escape_active;
-        if ch != '\\' {
-            escape_active = false;
-        }
+    for rom in &manifest.roms {
+        assert!(
+            !rom.id.trim().is_empty(),
+            "manifest rom id must be non-empty"
+        );
+        assert!(
+            !rom.suite.trim().is_empty(),
+            "manifest rom suite must be non-empty for {}",
+            rom.id
+        );
+        assert!(
+            !rom.path.trim().is_empty(),
+            "manifest rom path must be non-empty for {}",
+            rom.id
+        );
+        assert!(
+            (2..=4).contains(&rom.milestone),
+            "{} milestone must be between 2 and 4",
+            rom.id
+        );
     }
 
-    value.trim_end()
-}
-
-fn parse_u64(value: &str) -> u64 {
-    value
-        .replace('_', "")
-        .parse::<u64>()
-        .unwrap_or_else(|_| panic!("expected positive integer, got '{value}'"))
-}
-
-fn parse_bool(value: &str) -> bool {
-    match value {
-        "true" => true,
-        "false" => false,
-        _ => panic!("expected boolean true/false, got '{value}'"),
-    }
-}
-
-fn parse_pass_condition(value: &str) -> PassCondition {
-    match parse_string(value).as_str() {
-        "none" => PassCondition::None,
-        "blargg_mem" => PassCondition::BlarggMem,
-        "blargg_registers" => PassCondition::BlarggRegisters,
-        "mooneye_registers" => PassCondition::MooneyeRegisters,
-        other => panic!(
-            "unknown pass_condition '{other}', expected one of: none, blargg_mem, blargg_registers, mooneye_registers"
-        ),
-    }
+    manifest
 }
 
 fn rom_root_from_env() -> Option<PathBuf> {
