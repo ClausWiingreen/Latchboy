@@ -16,6 +16,8 @@ use latchboy_desktop::savefile::{
 };
 use latchboy_desktop::{run_emulation_loop, FramePresenter};
 use thiserror::Error;
+use tracing::{debug, info, info_span};
+use tracing_subscriber::{fmt, EnvFilter};
 
 struct SaveOnDrop {
     emulator: Emulator,
@@ -132,10 +134,23 @@ fn frame_budget_from_env() -> u64 {
         .unwrap_or(300)
 }
 
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = fmt()
+        .with_env_filter(env_filter)
+        .compact()
+        .with_target(false)
+        .try_init();
+}
+
 fn main() -> ExitCode {
+    init_tracing();
     let args = DesktopArgs::parse();
     let rom_path = args.rom_path;
+    info!("desktop runner starting");
 
+    let rom_load_span = info_span!("rom_load", rom_path = %rom_path.display());
+    let _rom_load_guard = rom_load_span.enter();
     let rom_data = match fs::read(&rom_path) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -146,7 +161,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    info!(rom_size = rom_data.len(), "rom loaded");
+    drop(_rom_load_guard);
 
+    let cartridge_span = info_span!("cartridge_parse", rom_path = %rom_path.display());
+    let _cartridge_guard = cartridge_span.enter();
     let mut cartridge = match Cartridge::from_rom(rom_data) {
         Ok(cartridge) => cartridge,
         Err(error) => {
@@ -157,6 +176,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    info!("cartridge parsed");
+    drop(_cartridge_guard);
 
     let save_path = save_path_from_rom_path(&rom_path);
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
@@ -169,8 +190,17 @@ fn main() -> ExitCode {
     };
     let frame_budget = args.max_frames.unwrap_or_else(frame_budget_from_env);
     let iteration_budget = iteration_budget_for_frames(frame_budget, args.cycle_step);
+    debug!(
+        frame_budget,
+        iteration_budget,
+        cycle_step = args.cycle_step,
+        "computed run budgets"
+    );
     let mut surface = WindowSurface::new(frame_budget);
 
+    let frame_loop_span = info_span!("frame_loop");
+    let _frame_loop_guard = frame_loop_span.enter();
+    info!("frame loop starting");
     let frames_presented = match run_emulation_loop(
         &mut runtime.emulator,
         &mut surface,
@@ -184,6 +214,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    info!(frames_presented, "frame loop ended");
+    if frames_presented >= frame_budget {
+        debug!(frames_presented, frame_budget, "frame budget exhaustion");
+    }
+    debug!(iteration_budget, "iteration budget configured");
 
     println!(
         "Latchboy desktop frame loop completed: rendered {} frames into {}x{} surface",

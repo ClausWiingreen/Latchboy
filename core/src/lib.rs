@@ -23,6 +23,7 @@ use observability::{
     WatchIoAccessType, WatchIoObservation,
 };
 use std::hash::{Hash, Hasher};
+use tracing::{debug, trace, Level};
 
 /// Top-level emulator state container for subsystem wiring.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,7 +65,19 @@ impl Emulator {
         pc: u16,
         opcode_hint: Option<u8>,
     ) -> bool {
+        let trace_watch_io = tracing::enabled!(Level::TRACE);
         for watch_event in watch_io_events {
+            if trace_watch_io {
+                trace!(
+                    step_start_cycle,
+                    pc,
+                    opcode_hint,
+                    address = watch_event.address,
+                    value = watch_event.value,
+                    access_type = ?watch_event.access_type,
+                    "emitting watch-io observation"
+                );
+            }
             observer.on_event(EmulatorEvent::WatchIo(WatchIoObservation {
                 step_start_cycle,
                 pc,
@@ -181,9 +194,18 @@ impl Emulator {
         cycles: u32,
         observer: &mut O,
     ) {
+        let debug_step_boundaries = tracing::enabled!(Level::DEBUG);
         let target = cycles as u64;
         let mut available = self.cycle_carry as u64;
         let mut stopped_early = observer.should_stop();
+        if debug_step_boundaries {
+            debug!(
+                requested_cycles = cycles,
+                total_cycles_before = self.total_cycles,
+                cycle_carry_before = self.cycle_carry,
+                "step_cycles_with_observer begin"
+            );
+        }
 
         while !stopped_early && available < target {
             let pending_watch_io_events = self.bus.take_watch_io_events();
@@ -255,6 +277,15 @@ impl Emulator {
             let watch_io_events = self.bus.take_watch_io_events();
             self.tick_bus_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
+            if debug_step_boundaries {
+                debug!(
+                    start_cycle,
+                    cycles_taken,
+                    pc_before,
+                    pc_after = self.cpu.pc(),
+                    "cpu step boundary"
+                );
+            }
 
             if Self::emit_watch_io_events(
                 observer,
@@ -301,6 +332,17 @@ impl Emulator {
         let consumed = if stopped_early { available } else { target };
         self.cycle_carry = (available - consumed) as u32;
         self.total_cycles = self.total_cycles.wrapping_add(consumed);
+        if debug_step_boundaries {
+            debug!(
+                requested_cycles = cycles,
+                consumed_cycles = consumed,
+                available_cycles = available,
+                total_cycles_after = self.total_cycles,
+                cycle_carry_after = self.cycle_carry,
+                stopped_early,
+                "step_cycles_with_observer end"
+            );
+        }
     }
 
     pub const fn cpu(&self) -> &Cpu {

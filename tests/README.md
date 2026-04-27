@@ -157,6 +157,23 @@ Practical verification in CI logs:
 - Confirm there is no skip message indicating `LATCHBOY_ROM_ROOT` is unset/empty.
 - Confirm required Milestone 2/3/4 cases execute and report pass within configured budgets.
 
+## Runtime diagnostics via `RUST_LOG`
+
+Desktop entrypoints now use `tracing_subscriber` with an env-filter and compact formatter.
+Set `RUST_LOG` to control lifecycle and deep emulator traces:
+
+- `RUST_LOG=info`: default lifecycle events (ROM load/parse, frame loop start/end, artifact writes).
+- `RUST_LOG=debug`: includes run budget details and budget-exhaustion diagnostics.
+- `RUST_LOG=trace`: includes verbose core step/watch-IO event traces.
+
+Examples:
+
+```bash
+RUST_LOG=info cargo run -p latchboy-desktop -- /path/to/rom.gb
+RUST_LOG=debug cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom /path/to/rom.gb --output-dir /tmp/smoke
+RUST_LOG='latchboy_core=trace,latchboy_desktop=debug' cargo test -p latchboy-core --test headless_harness
+```
+
 ## Milestone 2 acceptance checklist → jobs/artifacts
 
 - [ ] **Backlog bullet: “Passes CPU instruction correctness test ROMs.”**  

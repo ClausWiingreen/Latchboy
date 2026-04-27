@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use crate::cpu::Registers;
+use tracing::{trace, Level};
 
 /// Execution event emitted by the emulator while stepping.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +121,9 @@ impl TraceBuffer {
 
 impl EmulatorObserver for TraceBuffer {
     fn on_event(&mut self, event: EmulatorEvent) {
+        if tracing::enabled!(Level::TRACE) {
+            trace!(event = ?event, "trace buffer received emulator event");
+        }
         if self.events.len() == self.capacity {
             self.events.pop_front();
         }

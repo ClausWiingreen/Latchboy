@@ -9,6 +9,8 @@ use clap::{Parser, ValueEnum};
 use latchboy_core::{cartridge::Cartridge, Emulator};
 use latchboy_desktop::{run_emulation_loop, FramePresenter};
 use serde::Serialize;
+use tracing::{debug, info, info_span};
+use tracing_subscriber::{fmt, EnvFilter};
 
 const DEFAULT_CYCLE_STEP: u32 = 1_024;
 
@@ -197,6 +199,8 @@ struct SmokePresenter {
     sampled_hashes: Vec<SampledFrameHash>,
     first_presented_hash: Option<SampledFrameHash>,
     timed_out: bool,
+    logged_frame_budget_exhausted: bool,
+    logged_time_budget_exhausted: bool,
 }
 
 impl SmokePresenter {
@@ -218,6 +222,8 @@ impl SmokePresenter {
             sampled_hashes: Vec::new(),
             first_presented_hash: None,
             timed_out: false,
+            logged_frame_budget_exhausted: false,
+            logged_time_budget_exhausted: false,
         }
     }
 
@@ -237,10 +243,8 @@ impl FramePresenter for SmokePresenter {
     type Error = std::io::Error;
 
     fn is_open(&self) -> bool {
-        if self.frames_presented >= self.frame_limit {
-            return false;
-        }
-        self.elapsed_ms() <= u128::from(self.wall_time_limit_ms)
+        self.frames_presented < self.frame_limit
+            && self.elapsed_ms() <= u128::from(self.wall_time_limit_ms)
     }
 
     fn poll_events(&mut self) -> Result<(), Self::Error> {
@@ -270,9 +274,34 @@ impl FramePresenter for SmokePresenter {
         self.frames_presented = self.frames_presented.saturating_add(1);
         if self.elapsed_ms() > u128::from(self.wall_time_limit_ms) {
             self.timed_out = true;
+            if !self.logged_time_budget_exhausted {
+                self.logged_time_budget_exhausted = true;
+                debug!(
+                    elapsed_ms = self.elapsed_ms(),
+                    wall_time_limit_ms = self.wall_time_limit_ms,
+                    "time budget exhaustion"
+                );
+            }
+        }
+        if self.frames_presented >= self.frame_limit && !self.logged_frame_budget_exhausted {
+            self.logged_frame_budget_exhausted = true;
+            debug!(
+                frames_presented = self.frames_presented,
+                frame_limit = self.frame_limit,
+                "frame budget exhaustion"
+            );
         }
         Ok(())
     }
+}
+
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = fmt()
+        .with_env_filter(env_filter)
+        .compact()
+        .with_target(false)
+        .try_init();
 }
 
 fn fnv1a64_surface_hash(surface: &[u32]) -> u64 {
@@ -546,6 +575,8 @@ fn title_signal_matches(config: &CliConfig, presenter: &SmokePresenter) -> Resul
 }
 
 fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), Box<dyn Error>> {
+    let _artifact_span =
+        info_span!("artifact_write", output_dir = %config.output_dir.display()).entered();
     fs::create_dir_all(&config.output_dir)?;
 
     let commit_sha = git_commit_sha()?;
@@ -561,6 +592,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.output_dir.join("run.json"),
         serde_json::to_string_pretty(&run_json)?,
     )?;
+    debug!(path = %config.output_dir.join("run.json").display(), "artifact written");
 
     let checkpoint_frame_index = config
         .checkpoint_start_frame
@@ -639,6 +671,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.output_dir.join("summary.json"),
         serde_json::to_string_pretty(&summary_json)?,
     )?;
+    debug!(path = %config.output_dir.join("summary.json").display(), "artifact written");
 
     let hashes = if presenter.sampled_hashes.is_empty() {
         let placeholder_hash = if no_frames_presented {
@@ -672,6 +705,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.output_dir.join("hash_window.json"),
         serde_json::to_string_pretty(&hash_window_json)?,
     )?;
+    debug!(path = %config.output_dir.join("hash_window.json").display(), "artifact written");
 
     let pass_window_json = PassWindowJson {
         start_frame: config.checkpoint_start_frame,
@@ -681,6 +715,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.output_dir.join("pass_window.json"),
         serde_json::to_string_pretty(&pass_window_json)?,
     )?;
+    debug!(path = %config.output_dir.join("pass_window.json").display(), "artifact written");
 
     let title_evidence_json = TitleEvidenceJson {
         run_json,
@@ -693,6 +728,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.output_dir.join("title-evidence.json"),
         serde_json::to_string_pretty(&title_evidence_json)?,
     )?;
+    debug!(path = %config.output_dir.join("title-evidence.json").display(), "artifact written");
 
     let runner_log = format!(
         "status={status}\nrom={}\nrom_id={}\ntitle_id={}\nframes_presented={}\nelapsed_ms={}\ncheckpoint_window={}..={}\nhash_samples={}\nexpected_hash_samples={}\ntitle_signal_frame={:?}\ntitle_signal_hash={:?}\n",
@@ -709,6 +745,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.title_signal_hash
     );
     fs::write(config.output_dir.join("runner.log"), runner_log)?;
+    debug!(path = %config.output_dir.join("runner.log").display(), "artifact written");
 
     println!(
         "Milestone 4 smoke harness complete: status={status}, output_dir={}",
@@ -719,22 +756,32 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
 }
 
 fn run(config: &CliConfig) -> Result<SmokePresenter, Box<dyn Error>> {
+    let _run_span = info_span!("smoke_run", rom = %config.rom_path.display()).entered();
+    info!("smoke run starting");
+    let _rom_span = info_span!("rom_load").entered();
     let rom_bytes = fs::read(&config.rom_path).map_err(|error| {
         format!(
             "failed to read ROM '{}': {error}",
             config.rom_path.as_path().display()
         )
     })?;
+    info!(rom_size = rom_bytes.len(), "rom loaded");
+    drop(_rom_span);
+    let _cart_span = info_span!("cartridge_parse").entered();
     let cartridge = Cartridge::from_rom(rom_bytes).map_err(|error| {
         format!(
             "failed to parse cartridge from ROM '{}': {error:?}",
             config.rom_path.as_path().display()
         )
     })?;
+    info!("cartridge parsed");
+    drop(_cart_span);
 
     let mut emulator = Emulator::from_cartridge(cartridge);
     let mut presenter = SmokePresenter::new(config);
 
+    let _frame_loop_span = info_span!("frame_loop").entered();
+    info!("frame loop starting");
     run_emulation_loop(
         &mut emulator,
         &mut presenter,
@@ -743,6 +790,10 @@ fn run(config: &CliConfig) -> Result<SmokePresenter, Box<dyn Error>> {
         None,
     )
     .map_err(|error| format!("emulation loop aborted: {error}"))?;
+    info!(
+        frames_presented = presenter.frames_presented,
+        "frame loop ended"
+    );
 
     if presenter.elapsed_ms() > u128::from(config.wall_time_limit_ms) {
         presenter.timed_out = true;
@@ -752,6 +803,7 @@ fn run(config: &CliConfig) -> Result<SmokePresenter, Box<dyn Error>> {
 }
 
 fn main() -> process::ExitCode {
+    init_tracing();
     let config = match parse_args() {
         Ok(config) => config,
         Err(error) => {
