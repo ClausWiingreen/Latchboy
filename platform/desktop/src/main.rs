@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
+use clap::Parser;
 use latchboy_core::{
     cartridge::Cartridge, Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH,
 };
@@ -21,6 +22,19 @@ struct SaveOnDrop {
     emulator: Emulator,
     save_path: PathBuf,
     persist_enabled: bool,
+}
+
+#[derive(Debug, Parser)]
+#[command(name = "latchboy-desktop")]
+struct DesktopArgs {
+    /// Path to a ROM file.
+    rom_path: PathBuf,
+    /// Maximum number of frames to present before exiting.
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    max_frames: Option<u64>,
+    /// CPU cycle step used for each emulation loop iteration.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..), default_value_t = 1_024)]
+    cycle_step: u32,
 }
 
 impl Drop for SaveOnDrop {
@@ -127,13 +141,8 @@ fn frame_budget_from_env() -> u64 {
 }
 
 fn main() -> ExitCode {
-    let rom_path = match env::args().nth(1) {
-        Some(path) => PathBuf::from(path),
-        None => {
-            eprintln!("usage: latchboy-desktop <path-to-rom.gb>");
-            return ExitCode::FAILURE;
-        }
-    };
+    let args = DesktopArgs::parse();
+    let rom_path = args.rom_path;
 
     let rom_data = match fs::read(&rom_path) {
         Ok(bytes) => bytes,
@@ -166,14 +175,14 @@ fn main() -> ExitCode {
         save_path,
         persist_enabled,
     };
-    let frame_budget = frame_budget_from_env();
-    let iteration_budget = iteration_budget_for_frames(frame_budget, 1_024);
+    let frame_budget = args.max_frames.unwrap_or_else(frame_budget_from_env);
+    let iteration_budget = iteration_budget_for_frames(frame_budget, args.cycle_step);
     let mut surface = WindowSurface::new(frame_budget);
 
     let frames_presented = match run_emulation_loop(
         &mut runtime.emulator,
         &mut surface,
-        1_024,
+        args.cycle_step,
         Some(frame_budget),
         Some(iteration_budget),
     ) {

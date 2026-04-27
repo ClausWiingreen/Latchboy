@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{self, Command};
 use std::time::Instant;
 
+use clap::{Parser, ValueEnum};
 use latchboy_core::{cartridge::Cartridge, Emulator};
 use latchboy_desktop::{run_emulation_loop, FramePresenter};
 
@@ -45,24 +45,70 @@ const MATRIX_PRESETS: [MatrixPreset; 3] = [
     },
 ];
 
-#[derive(Debug)]
-struct UsageError(String);
-
-fn known_title_ids() -> String {
-    MATRIX_PRESETS
-        .iter()
-        .map(|preset| preset.title_id)
-        .collect::<Vec<_>>()
-        .join(", ")
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum MatrixPresetId {
+    #[value(name = "tetris-world")]
+    Tetris,
+    #[value(name = "super-mario-land-world")]
+    SuperMarioLand,
+    #[value(name = "legend-of-zelda-links-awakening-world")]
+    LegendOfZeldaLinksAwakening,
 }
 
-impl fmt::Display for UsageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+impl MatrixPresetId {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Tetris => "tetris-world",
+            Self::SuperMarioLand => "super-mario-land-world",
+            Self::LegendOfZeldaLinksAwakening => "legend-of-zelda-links-awakening-world",
+        }
+    }
+
+    fn preset(self) -> MatrixPreset {
+        MATRIX_PRESETS
+            .iter()
+            .find(|preset| preset.title_id == self.as_str())
+            .copied()
+            .expect("matrix preset id must map to MATRIX_PRESETS")
     }
 }
 
-impl Error for UsageError {}
+#[derive(Debug, Parser)]
+#[command(name = "milestone4_smoke")]
+struct SmokeCliArgs {
+    #[arg(long)]
+    rom: PathBuf,
+    #[arg(long)]
+    rom_id: Option<String>,
+    #[arg(long, value_enum)]
+    title_id: Option<MatrixPresetId>,
+    #[arg(long)]
+    output_dir: PathBuf,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    frame_limit: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    wall_time_limit_ms: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64))]
+    checkpoint_start_frame: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    checkpoint_frame_count: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64))]
+    title_signal_frame: Option<u64>,
+    #[arg(long, value_parser = parse_hash_arg)]
+    title_signal_hash: Option<String>,
+    #[arg(long, value_parser = clap::value_parser!(u64))]
+    hash_start_frame: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    hash_frame_count: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
+    hash_sample_stride: Option<u64>,
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u32).range(1..),
+        default_value_t = DEFAULT_CYCLE_STEP
+    )]
+    cycle_step: u32,
+}
 
 #[derive(Debug)]
 struct CliConfig {
@@ -192,22 +238,6 @@ fn fnv1a64_surface_hash(surface: &[u32]) -> u64 {
     hash
 }
 
-fn parse_u64(value: &str, name: &str) -> Result<u64, UsageError> {
-    value.parse::<u64>().map_err(|_| {
-        UsageError(format!(
-            "invalid --{name} value '{value}': expected integer"
-        ))
-    })
-}
-
-fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
-    value.parse::<u32>().map_err(|_| {
-        UsageError(format!(
-            "invalid --{name} value '{value}': expected integer"
-        ))
-    })
-}
-
 fn normalize_hash(value: &str) -> String {
     let trimmed = value.trim();
     let without_prefix = trimmed
@@ -221,6 +251,12 @@ fn parse_hash_u64(value: &str) -> Result<u64, String> {
     let normalized = normalize_hash(value);
     u64::from_str_radix(&normalized, 16)
         .map_err(|_| format!("invalid hash '{}' (expected 1-16 hex digits)", value.trim()))
+}
+
+fn parse_hash_arg(value: &str) -> Result<String, String> {
+    let normalized = normalize_hash(value);
+    parse_hash_u64(value)?;
+    Ok(normalized)
 }
 
 fn hash_window_end_exclusive(hash_start_frame: u64, hash_frame_count: u64) -> u64 {
@@ -273,119 +309,44 @@ fn shell_escape_arg(value: &str) -> String {
     format!("'{escaped}'")
 }
 
-fn parse_args() -> Result<CliConfig, UsageError> {
+fn parse_args() -> Result<CliConfig, String> {
     let provided_args = env::args().skip(1).collect::<Vec<_>>();
-    let mut args = provided_args.iter();
+    let args = SmokeCliArgs::parse();
+    let title_id = args.title_id.map(|id| id.as_str().to_owned());
+    let selected_preset = args.title_id.map(|id| id.preset());
 
-    let mut rom_path: Option<PathBuf> = None;
-    let mut rom_id: Option<String> = None;
-    let mut title_id: Option<String> = None;
-    let mut output_dir: Option<PathBuf> = None;
-
-    let mut frame_limit: Option<u64> = None;
-    let mut wall_time_limit_ms: Option<u64> = None;
-    let mut checkpoint_start_frame: Option<u64> = None;
-    let mut checkpoint_frame_count: Option<u64> = None;
-    let mut title_signal_frame: Option<u64> = None;
-    let mut title_signal_hash: Option<String> = None;
-    let mut hash_start_frame: Option<u64> = None;
-    let mut hash_frame_count: Option<u64> = None;
-    let mut hash_sample_stride: Option<u64> = None;
-    let mut cycle_step: Option<u32> = None;
-
-    while let Some(flag) = args.next() {
-        if matches!(flag.as_str(), "--help" | "-h") {
-            return Err(UsageError(help_text()));
-        }
-
-        let value = args
-            .next()
-            .ok_or_else(|| UsageError(format!("missing value for argument '{flag}'")))?;
-
-        match flag.as_str() {
-            "--rom" => rom_path = Some(PathBuf::from(value)),
-            "--rom-id" => rom_id = Some(value.clone()),
-            "--title-id" => title_id = Some(value.clone()),
-            "--output-dir" => output_dir = Some(PathBuf::from(value)),
-            "--frame-limit" => frame_limit = Some(parse_u64(value, "frame-limit")?),
-            "--wall-time-limit-ms" => {
-                wall_time_limit_ms = Some(parse_u64(value, "wall-time-limit-ms")?)
-            }
-            "--checkpoint-start-frame" => {
-                checkpoint_start_frame = Some(parse_u64(value, "checkpoint-start-frame")?)
-            }
-            "--checkpoint-frame-count" => {
-                checkpoint_frame_count = Some(parse_u64(value, "checkpoint-frame-count")?)
-            }
-            "--title-signal-frame" => {
-                title_signal_frame = Some(parse_u64(value, "title-signal-frame")?)
-            }
-            "--title-signal-hash" => title_signal_hash = Some(normalize_hash(value)),
-            "--hash-start-frame" => hash_start_frame = Some(parse_u64(value, "hash-start-frame")?),
-            "--hash-frame-count" => hash_frame_count = Some(parse_u64(value, "hash-frame-count")?),
-            "--hash-sample-stride" => {
-                hash_sample_stride = Some(parse_u64(value, "hash-sample-stride")?)
-            }
-            "--cycle-step" => cycle_step = Some(parse_u32(value, "cycle-step")?),
-            _ => {
-                return Err(UsageError(format!(
-                    "unknown argument '{flag}'\n\n{}",
-                    help_text()
-                )));
-            }
-        }
-    }
-
-    let rom_path =
-        rom_path.ok_or_else(|| UsageError(format!("missing required --rom\n\n{}", help_text())))?;
-    let output_dir = output_dir
-        .ok_or_else(|| UsageError(format!("missing required --output-dir\n\n{}", help_text())))?;
-
-    let selected_preset = match title_id.as_deref() {
-        Some(id) => {
-            let preset = MATRIX_PRESETS
-                .iter()
-                .find(|preset| preset.title_id == id)
-                .copied();
-            if preset.is_none() {
-                return Err(UsageError(format!(
-                    "unknown --title-id '{id}'. Expected one of: {}",
-                    known_title_ids()
-                )));
-            }
-            preset
-        }
-        None => None,
-    };
-
-    let rom_id = rom_id.unwrap_or_else(|| {
-        rom_path
+    let rom_id = args.rom_id.unwrap_or_else(|| {
+        args.rom
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or("unknown-rom")
             .to_owned()
     });
 
-    let frame_limit = frame_limit
+    let frame_limit = args
+        .frame_limit
         .or(selected_preset.map(|preset| preset.frame_limit))
         .unwrap_or(300);
-    let wall_time_limit_ms = wall_time_limit_ms
+    let wall_time_limit_ms = args
+        .wall_time_limit_ms
         .or(selected_preset.map(|preset| preset.wall_time_limit_ms))
         .unwrap_or(10_000);
-    let checkpoint_start_frame = checkpoint_start_frame
+    let checkpoint_start_frame = args
+        .checkpoint_start_frame
         .or(selected_preset.map(|preset| preset.checkpoint_start_frame))
         .unwrap_or(frame_limit.saturating_sub(120));
-    let checkpoint_frame_count = checkpoint_frame_count
+    let checkpoint_frame_count = args
+        .checkpoint_frame_count
         .or(selected_preset.map(|preset| preset.checkpoint_frame_count))
         .unwrap_or(120);
     let checkpoint_frame_index = checkpoint_start_frame
         .saturating_add(checkpoint_frame_count)
         .saturating_sub(1);
 
-    let hash_start_frame = hash_start_frame.unwrap_or(checkpoint_start_frame);
-    let hash_frame_count = hash_frame_count.unwrap_or(checkpoint_frame_count);
-    let hash_sample_stride = hash_sample_stride.unwrap_or(1);
-    let title_signal_frame = title_signal_frame.or_else(|| {
+    let hash_start_frame = args.hash_start_frame.unwrap_or(checkpoint_start_frame);
+    let hash_frame_count = args.hash_frame_count.unwrap_or(checkpoint_frame_count);
+    let hash_sample_stride = args.hash_sample_stride.unwrap_or(1);
+    let title_signal_frame = args.title_signal_frame.or_else(|| {
         title_id.as_ref().map(|_| {
             default_title_signal_frame(
                 checkpoint_frame_index,
@@ -395,7 +356,7 @@ fn parse_args() -> Result<CliConfig, UsageError> {
             )
         })
     });
-    let cycle_step = cycle_step.unwrap_or(DEFAULT_CYCLE_STEP);
+    let cycle_step = args.cycle_step;
     let runner_command = format!(
         "cargo run -p latchboy-desktop --bin milestone4_smoke -- {}",
         provided_args
@@ -406,45 +367,33 @@ fn parse_args() -> Result<CliConfig, UsageError> {
     );
 
     if frame_limit == 0 {
-        return Err(UsageError(
-            "--frame-limit must be greater than zero".to_owned(),
-        ));
+        return Err("--frame-limit must be greater than zero".to_owned());
     }
     if wall_time_limit_ms == 0 {
-        return Err(UsageError(
-            "--wall-time-limit-ms must be greater than zero".to_owned(),
-        ));
+        return Err("--wall-time-limit-ms must be greater than zero".to_owned());
     }
     if checkpoint_frame_count == 0 {
-        return Err(UsageError(
-            "--checkpoint-frame-count must be greater than zero".to_owned(),
-        ));
+        return Err("--checkpoint-frame-count must be greater than zero".to_owned());
     }
     if hash_frame_count == 0 {
-        return Err(UsageError(
-            "--hash-frame-count must be greater than zero".to_owned(),
-        ));
+        return Err("--hash-frame-count must be greater than zero".to_owned());
     }
     if hash_sample_stride == 0 {
-        return Err(UsageError(
-            "--hash-sample-stride must be greater than zero".to_owned(),
-        ));
+        return Err("--hash-sample-stride must be greater than zero".to_owned());
     }
     if cycle_step == 0 {
-        return Err(UsageError(
-            "--cycle-step must be greater than zero".to_owned(),
-        ));
+        return Err("--cycle-step must be greater than zero".to_owned());
     }
-    if title_id.is_some() && title_signal_hash.is_none() {
-        return Err(UsageError(
+    if title_id.is_some() && args.title_signal_hash.is_none() {
+        return Err(
             "--title-id requires --title-signal-hash so PASS can be gated on title-specific signal evidence".to_owned(),
-        ));
+        );
     }
-    if title_signal_hash.is_some() && title_signal_frame.is_none() && title_id.is_none() {
-        return Err(UsageError(
+    if args.title_signal_hash.is_some() && title_signal_frame.is_none() && title_id.is_none() {
+        return Err(
             "--title-signal-hash requires --title-signal-frame when --title-id is not provided"
                 .to_owned(),
-        ));
+        );
     }
     if let Some(frame) = title_signal_frame {
         if !frame_is_hash_sample(
@@ -453,65 +402,30 @@ fn parse_args() -> Result<CliConfig, UsageError> {
             hash_frame_count,
             hash_sample_stride,
         ) {
-            return Err(UsageError(format!(
+            return Err(format!(
                 "--title-signal-frame {} is not sampled by hash window start={} frame_count={} stride={}",
                 frame, hash_start_frame, hash_frame_count, hash_sample_stride
-            )));
+            ));
         }
     }
 
     Ok(CliConfig {
-        rom_path,
+        rom_path: args.rom,
         rom_id,
         title_id,
-        output_dir,
+        output_dir: args.output_dir,
         runner_command,
         frame_limit,
         wall_time_limit_ms,
         checkpoint_start_frame,
         checkpoint_frame_count,
         title_signal_frame,
-        title_signal_hash,
+        title_signal_hash: args.title_signal_hash,
         hash_start_frame,
         hash_frame_count,
         hash_sample_stride,
         cycle_step,
     })
-}
-
-fn help_text() -> String {
-    let mut preset_lines = String::new();
-    for preset in MATRIX_PRESETS {
-        preset_lines.push_str(&format!(
-            "  - {} (frame_limit={}, wall_time_limit_ms={}, checkpoint={}..{})\n",
-            preset.title_id,
-            preset.frame_limit,
-            preset.wall_time_limit_ms,
-            preset.checkpoint_start_frame,
-            preset
-                .checkpoint_start_frame
-                .saturating_add(preset.checkpoint_frame_count)
-                .saturating_sub(1)
-        ));
-    }
-
-    format!(
-        "milestone4_smoke usage:\n\
-         cargo run -p latchboy-desktop --bin milestone4_smoke -- \\\n           --rom <path/to/game.gb> \\\n           --output-dir <tests/artifacts/smoke/milestone4/<timestamp>/<title_id>> \\\n           [--rom-id <stable-rom-id>] [--title-id <preset>]\n\n\
-         Optional overrides:\n\
-           --frame-limit <u64>\n\
-           --wall-time-limit-ms <u64>\n\
-           --checkpoint-start-frame <u64>\n\
-           --checkpoint-frame-count <u64>\n\
-           --title-signal-frame <u64>\n\
-           --title-signal-hash <hex|0xhex>  # required when --title-id is set\n\
-           --hash-start-frame <u64>\n\
-           --hash-frame-count <u64>\n\
-           --hash-sample-stride <u64>\n\
-           --cycle-step <u32>\n\n\
-         Built-in Milestone 4 matrix presets:\n{}",
-        preset_lines
-    )
 }
 
 fn git_commit_sha() -> Result<String, Box<dyn Error>> {
@@ -823,10 +737,6 @@ fn main() -> process::ExitCode {
     let config = match parse_args() {
         Ok(config) => config,
         Err(error) => {
-            if error.0.starts_with("milestone4_smoke usage:") {
-                println!("{error}");
-                return process::ExitCode::SUCCESS;
-            }
             eprintln!("{error}");
             return process::ExitCode::FAILURE;
         }
