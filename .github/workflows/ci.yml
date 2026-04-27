@@ -30,6 +30,17 @@ jobs:
       - name: Lint with clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Validate external ROM fixture configuration
+        run: |
+          if [ -z "${LATCHBOY_ROM_ROOT}" ]; then
+            echo "LATCHBOY_ROM_ROOT must be set for milestone-gating CI runs." >&2
+            exit 1
+          fi
+          if [ ! -d "${LATCHBOY_ROM_ROOT}" ]; then
+            echo "LATCHBOY_ROM_ROOT must point to an existing directory: ${LATCHBOY_ROM_ROOT}" >&2
+            exit 1
+          fi
+
       - name: Run tests
         run: cargo test --workspace --all-targets
 
