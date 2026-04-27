@@ -14,5 +14,18 @@ thiserror = "2"
 tracing = "0.1"
 
 [dev-dependencies]
+criterion = "0.5"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+
+[[bench]]
+name = "emulator_step_cycles"
+harness = false
+
+[[bench]]
+name = "instruction_stepping"
+harness = false
+
+[[bench]]
+name = "interrupt_heavy"
+harness = false
