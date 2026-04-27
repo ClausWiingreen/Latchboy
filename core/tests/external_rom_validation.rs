@@ -3,8 +3,11 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use proptest::prelude::*;
+use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use serde::Deserialize;
 
 use latchboy_core::{
@@ -20,6 +23,9 @@ const MILESTONE4_SMOKE_SCHEMA_PATH: &str =
 const MILESTONE4_SMOKE_SUMMARY_PATH: &str = "../tests/artifacts/milestone4-smoke-summary.json";
 const ROM_ROOT_ENV: &str = "LATCHBOY_ROM_ROOT";
 const TRACE_EVENTS_ON_FAILURE: usize = 64;
+const PROPTEST_PERSISTENCE_DIR: &str = "proptest-regressions";
+
+static ROM_ROOT_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -122,6 +128,13 @@ fn rom_root_from_env() -> Option<PathBuf> {
     }
 
     Some(PathBuf::from(trimmed))
+}
+
+fn rom_root_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ROM_ROOT_ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("ROM root env test lock should not be poisoned")
 }
 
 fn is_noop_pass_condition(pass_condition: PassCondition) -> bool {
@@ -620,6 +633,113 @@ pass_condition = "blargg_mem" # suite signal
     assert_eq!(rom.cycle_limit, 20_000_000);
     assert_eq!(rom.frame_limit, 300);
     assert_eq!(rom.wall_time_limit_ms, 8_000);
+}
+
+fn bounded_u64_edge_strategy() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        Just(0u64),
+        Just(1u64),
+        Just(u64::MAX - 1),
+        Just(u64::MAX),
+        0u64..=1_000_000u64
+    ]
+}
+
+fn bounded_milestone_strategy() -> impl Strategy<Value = u8> {
+    prop_oneof![Just(2u8), Just(3u8), Just(4u8)]
+}
+
+fn noisy_text_strategy(max_len: usize) -> impl Strategy<Value = String> {
+    prop_oneof![
+        // ASCII-visible text.
+        proptest::collection::vec(0x20u8..=0x7Eu8, 1..=max_len)
+            .prop_map(|bytes| String::from_utf8(bytes).expect("ASCII bytes should be valid UTF-8")),
+        // UTF-8 scalar noise (non-control), including multi-byte code points.
+        proptest::collection::vec(any::<char>(), 1..=max_len).prop_map(|chars| chars
+            .into_iter()
+            .filter(|c| !c.is_control())
+            .collect::<String>()),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(PROPTEST_PERSISTENCE_DIR))),
+        ..ProptestConfig::with_cases(96)
+    })]
+
+    #[test]
+    fn rom_root_from_env_normalizes_blank_values_to_none(
+        leading_ws in prop::sample::select(vec!["", " ", "\t", "\n", "\r\n", "\u{2003}"]),
+        trailing_ws in prop::sample::select(vec!["", " ", "\t", "\n", "\r\n", "\u{2002}"]),
+        raw_path in noisy_text_strategy(24),
+    ) {
+        let _guard = rom_root_env_lock();
+        let normalized = raw_path.trim();
+        let raw = format!("{leading_ws}{raw_path}{trailing_ws}");
+
+        std::env::set_var(ROM_ROOT_ENV, &raw);
+        let parsed = rom_root_from_env();
+
+        if normalized.is_empty() {
+            prop_assert_eq!(parsed, None);
+        } else {
+            prop_assert_eq!(parsed, Some(PathBuf::from(normalized)));
+        }
+    }
+
+    #[test]
+    fn parse_manifest_accepts_in_range_values_and_preserves_them(
+        id in noisy_text_strategy(24),
+        suite in noisy_text_strategy(24),
+        path in noisy_text_strategy(32),
+        milestone in bounded_milestone_strategy(),
+        required in any::<bool>(),
+        cycle_limit in bounded_u64_edge_strategy().prop_filter("cycle_limit must be positive", |v| *v > 0),
+        frame_limit in bounded_u64_edge_strategy().prop_filter("frame_limit must be positive", |v| *v > 0),
+        wall_time_limit_ms in bounded_u64_edge_strategy().prop_filter("wall_time_limit_ms must be positive", |v| *v > 0),
+        pass_condition in prop::sample::select(vec!["none", "blargg_mem", "blargg_registers", "mooneye_registers"]),
+    ) {
+        let id = id.trim();
+        let suite = suite.trim();
+        let path = path.trim();
+        prop_assume!(!id.is_empty() && !suite.is_empty() && !path.is_empty());
+
+        let temp_dir = std::env::temp_dir();
+        let manifest_path = temp_dir.join(format!(
+            "latchboy-proptest-manifest-{}-{}.toml",
+            std::process::id(),
+            id.len() + suite.len() + path.len() + usize::from(milestone)
+        ));
+
+        let manifest_contents = format!(
+            r#"[[roms]]
+id = {id:?}
+suite = {suite:?}
+path = {path:?}
+milestone = {milestone}
+required = {required}
+cycle_limit = {cycle_limit}
+frame_limit = {frame_limit}
+wall_time_limit_ms = {wall_time_limit_ms}
+pass_condition = "{pass_condition}"
+"#
+        );
+        fs::write(&manifest_path, manifest_contents).expect("temporary proptest manifest should be writable");
+        let parsed = parse_manifest(&manifest_path);
+        fs::remove_file(&manifest_path).expect("temporary proptest manifest should be removable");
+
+        prop_assert_eq!(parsed.roms.len(), 1);
+        let rom = &parsed.roms[0];
+        prop_assert_eq!(rom.id, id);
+        prop_assert_eq!(rom.suite, suite);
+        prop_assert_eq!(rom.path, path);
+        prop_assert_eq!(rom.milestone, milestone);
+        prop_assert_eq!(rom.required, required);
+        prop_assert_eq!(rom.cycle_limit, cycle_limit);
+        prop_assert_eq!(rom.frame_limit, frame_limit);
+        prop_assert_eq!(rom.wall_time_limit_ms, wall_time_limit_ms);
+    }
 }
 
 #[test]

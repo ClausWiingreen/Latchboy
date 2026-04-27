@@ -409,6 +409,10 @@ fn default_rom_only_cartridge() -> Cartridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
+
+    const PROPTEST_PERSISTENCE_DIR: &str = "proptest-regressions";
 
     #[test]
     fn no_boot_startup_uses_dmg_post_boot_defaults() {
@@ -862,5 +866,40 @@ mod tests {
 
         assert_eq!(emulator.cpu().pc(), initial_pc);
         assert_eq!(emulator.total_cycles(), 0);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(PROPTEST_PERSISTENCE_DIR))),
+            ..ProptestConfig::with_cases(128)
+        })]
+
+        #[test]
+        fn step_cycles_total_is_monotonic_and_progress_is_non_negative(
+            steps in proptest::collection::vec(
+                prop_oneof![
+                    Just(0u32),
+                    Just(1u32),
+                    Just(4u32),
+                    Just(u32::MAX),
+                    0u32..=1_000_000u32
+                ],
+                1..=64
+            )
+        ) {
+            let mut emulator = Emulator::new();
+            let mut previous_total = emulator.total_cycles();
+
+            for request in steps {
+                emulator.step_cycles(request);
+                let next_total = emulator.total_cycles();
+                let delta = next_total - previous_total;
+
+                prop_assert!(next_total >= previous_total);
+                prop_assert!(delta <= u64::from(request) + 24);
+
+                previous_total = next_total;
+            }
+        }
     }
 }

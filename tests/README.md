@@ -125,6 +125,26 @@ cargo test -p latchboy-core --test external_rom_validation rom_manifest_register
 LATCHBOY_ROM_ROOT=/absolute/path/to/rom-fixtures cargo test -p latchboy-core --test external_rom_validation required_milestone_4_roms_pass_under_external_validation_flow
 ```
 
+## Property-test failure reproduction (proptest)
+
+`latchboy-core` and `latchboy-desktop` property tests persist failing seeds under
+`proptest-regressions/` (enabled through `FileFailurePersistence::WithSource` in each proptest module).
+
+When CI prints a shrunk case (for example a line like `cc <hex-seed>`), rerun locally with:
+
+```bash
+PROPTEST_CASES=1 cargo test -p latchboy-core --test external_rom_validation -- --nocapture --exact <failing_test_name> --seed <hex-seed>
+```
+
+or for a library test:
+
+```bash
+PROPTEST_CASES=1 cargo test -p latchboy-core <failing_test_name> -- --nocapture --seed <hex-seed>
+```
+
+The generated regression entries can also be replayed by rerunning the same test target normally;
+proptest automatically loads cases from the corresponding `proptest-regressions/*.txt` file.
+
 ## CI gate for Milestone 2 completion
 
 Milestone 2 is considered CI-complete when the GitHub Actions check run named:

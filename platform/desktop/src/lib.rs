@@ -152,3 +152,56 @@ pub fn run_emulation_loop<P: FramePresenter>(
 
     Ok(frames_presented)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
+
+    const PROPTEST_PERSISTENCE_DIR: &str = "proptest-regressions";
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(PROPTEST_PERSISTENCE_DIR))),
+            ..ProptestConfig::with_cases(96)
+        })]
+
+        #[test]
+        fn blit_maps_every_input_byte_into_palette_domain(
+            framebuffer in proptest::collection::vec(any::<u8>(), FRAMEBUFFER_LEN),
+        ) {
+            let mut surface = vec![0u32; FRAMEBUFFER_LEN];
+            blit_dmg_framebuffer_to_rgb_surface(&framebuffer, &mut surface)
+                .expect("shape-matched buffers should blit");
+
+            for pixel in surface {
+                prop_assert!(DMG_PALETTE_RGB.contains(&pixel));
+            }
+        }
+
+        #[test]
+        fn blit_rejects_mismatched_lengths(
+            fb_len in prop_oneof![Just(0usize), Just(FRAMEBUFFER_LEN - 1), Just(FRAMEBUFFER_LEN + 1), 1usize..=FRAMEBUFFER_LEN * 2],
+            surface_len in prop_oneof![Just(0usize), Just(FRAMEBUFFER_LEN - 1), Just(FRAMEBUFFER_LEN + 1), 1usize..=FRAMEBUFFER_LEN * 2],
+        ) {
+            prop_assume!(fb_len != FRAMEBUFFER_LEN || surface_len != FRAMEBUFFER_LEN);
+
+            let framebuffer = vec![0u8; fb_len];
+            let mut surface = vec![0u32; surface_len];
+            let error = blit_dmg_framebuffer_to_rgb_surface(&framebuffer, &mut surface)
+                .expect_err("mismatched lengths must fail");
+
+            match error {
+                FrameBlitError::FramebufferSizeMismatch { expected, actual } => {
+                    prop_assert_eq!(expected, FRAMEBUFFER_LEN);
+                    prop_assert_eq!(actual, fb_len);
+                }
+                FrameBlitError::SurfaceSizeMismatch { expected, actual } => {
+                    prop_assert_eq!(expected, FRAMEBUFFER_LEN);
+                    prop_assert_eq!(actual, surface_len);
+                }
+            }
+        }
+    }
+}
