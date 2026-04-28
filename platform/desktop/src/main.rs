@@ -1,10 +1,8 @@
 use std::env;
 use std::fs;
-use std::io::{self, BufRead};
+use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::mpsc::{self, Receiver};
-use std::thread;
 
 use clap::Parser;
 use latchboy_core::{
@@ -15,6 +13,11 @@ use latchboy_desktop::savefile::{
     should_persist_after_load,
 };
 use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresenter};
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
+use sdl2::pixels::PixelFormatEnum;
+use sdl2::render::Canvas;
+use sdl2::video::Window;
 use thiserror::Error;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -73,43 +76,51 @@ enum SurfaceError {
     FrameImageWrite(String),
 }
 
-/// Minimal headless-friendly window surface buffer.
-struct WindowSurface {
+/// SDL-backed frame presenter.
+struct SdlPresenter {
+    canvas: Canvas<Window>,
+    event_pump: sdl2::EventPump,
     buffer: Vec<u32>,
+    rgb_buffer: Vec<u8>,
     presented_frames: u64,
     max_frames: u64,
     close_requested: bool,
-    input_events: Receiver<String>,
     frame_capture: Option<FrameCaptureConfig>,
 }
 
-impl WindowSurface {
+impl SdlPresenter {
     fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
-        let (tx, rx) = mpsc::channel();
-        thread::spawn(move || {
-            let stdin = io::stdin();
-            for line in stdin.lock().lines() {
-                match line {
-                    Ok(event) => {
-                        if tx.send(event).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-
         if let Some(capture) = &frame_capture {
             fs::create_dir_all(&capture.output_dir)?;
         }
 
+        let sdl = sdl2::init().map_err(io::Error::other)?;
+        let video = sdl.video().map_err(io::Error::other)?;
+        let window = video
+            .window(
+                "Latchboy",
+                (FRAMEBUFFER_WIDTH as u32) * 3,
+                (FRAMEBUFFER_HEIGHT as u32) * 3,
+            )
+            .position_centered()
+            .build()
+            .map_err(io::Error::other)?;
+        let canvas = window
+            .into_canvas()
+            .accelerated()
+            .present_vsync()
+            .build()
+            .map_err(io::Error::other)?;
+        let event_pump = sdl.event_pump().map_err(io::Error::other)?;
+
         Ok(Self {
+            canvas,
+            event_pump,
             buffer: vec![0; FRAMEBUFFER_LEN],
+            rgb_buffer: vec![0; FRAMEBUFFER_LEN * 3],
             presented_frames: 0,
             max_frames,
             close_requested: false,
-            input_events: rx,
             frame_capture,
         })
     }
@@ -155,7 +166,7 @@ impl FrameCaptureConfig {
     }
 }
 
-impl FramePresenter for WindowSurface {
+impl FramePresenter for SdlPresenter {
     type Error = SurfaceError;
 
     fn is_open(&self) -> bool {
@@ -163,10 +174,17 @@ impl FramePresenter for WindowSurface {
     }
 
     fn poll_events(&mut self) -> Result<(), Self::Error> {
-        while let Ok(event) = self.input_events.try_recv() {
-            if event.trim().eq_ignore_ascii_case("q") || event.trim().eq_ignore_ascii_case("quit") {
-                self.close_requested = true;
-                return Ok(());
+        for event in self.event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => {
+                    self.close_requested = true;
+                    break;
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -176,7 +194,34 @@ impl FramePresenter for WindowSurface {
         if surface.len() != FRAMEBUFFER_LEN {
             return Err(SurfaceError::InvalidSurfaceLength);
         }
+
         self.buffer.copy_from_slice(surface);
+
+        for (index, &pixel) in surface.iter().enumerate() {
+            let base = index * 3;
+            self.rgb_buffer[base] = ((pixel >> 16) & 0xFF) as u8;
+            self.rgb_buffer[base + 1] = ((pixel >> 8) & 0xFF) as u8;
+            self.rgb_buffer[base + 2] = (pixel & 0xFF) as u8;
+        }
+
+        let texture_creator = self.canvas.texture_creator();
+        let mut texture = texture_creator
+            .create_texture_streaming(
+                PixelFormatEnum::RGB24,
+                FRAMEBUFFER_WIDTH as u32,
+                FRAMEBUFFER_HEIGHT as u32,
+            )
+            .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
+        texture
+            .update(None, &self.rgb_buffer, FRAMEBUFFER_WIDTH * 3)
+            .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
+
+        self.canvas.clear();
+        self.canvas
+            .copy(&texture, None, None)
+            .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
+        self.canvas.present();
+
         let frame_index = self.presented_frames + 1;
         if let Some(capture) = &self.frame_capture {
             let frame_path = match capture.mode {
@@ -199,13 +244,8 @@ impl FramePresenter for WindowSurface {
                 .map_err(|error| SurfaceError::FrameImageWrite(error.to_string()))?;
             }
         }
+
         self.presented_frames += 1;
-        if self.presented_frames.is_multiple_of(60) {
-            println!(
-                "presented {} frames at {}x{} (type 'q' then Enter to quit)",
-                self.presented_frames, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
-            );
-        }
         Ok(())
     }
 }
@@ -298,7 +338,7 @@ fn main() -> ExitCode {
         },
     });
 
-    let mut surface = match WindowSurface::new(frame_budget, frame_capture) {
+    let mut surface = match SdlPresenter::new(frame_budget, frame_capture) {
         Ok(surface) => surface,
         Err(error) => {
             eprintln!("error: failed to initialize output surface: {error}");
