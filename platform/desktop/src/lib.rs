@@ -27,7 +27,7 @@ pub enum FrameBlitError {
     SurfaceSizeMismatch { expected: usize, actual: usize },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Error)]
 pub enum SurfaceImageWriteError {
     #[error("surface length mismatch for {width}x{height}: expected {expected}, got {actual}")]
     SurfaceSizeMismatch {
