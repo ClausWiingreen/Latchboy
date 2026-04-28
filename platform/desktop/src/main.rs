@@ -71,8 +71,12 @@ impl Drop for SaveOnDrop {
 
 #[derive(Debug, Error)]
 enum SurfaceError {
-    #[error("surface update failed")]
+    #[error("invalid surface length")]
     InvalidSurfaceLength,
+    #[error("SDL texture update failed: {0}")]
+    TextureUpdate(String),
+    #[error("SDL canvas copy failed: {0}")]
+    CanvasCopy(String),
     #[error("failed to write frame image: {0}")]
     FrameImageWrite(String),
 }
@@ -247,12 +251,12 @@ impl FramePresenter for SdlPresenter {
 
         self.texture
             .update(None, &self.rgb_buffer, FRAMEBUFFER_WIDTH * 3)
-            .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
+            .map_err(|error| SurfaceError::TextureUpdate(error.to_string()))?;
 
         self.canvas.clear();
         self.canvas
             .copy(&self.texture, None, None)
-            .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
+            .map_err(SurfaceError::CanvasCopy)?;
         self.canvas.present();
 
         let frame_index = self.presented_frames + 1;
