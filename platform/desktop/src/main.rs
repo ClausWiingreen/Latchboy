@@ -382,9 +382,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    println!(
-        "Latchboy desktop started. Close the window or press Esc to quit."
-    );
+    println!("Latchboy desktop started. Close the window or press Esc to quit.");
     if args.max_frames.is_some() {
         println!(
             "Automation/debug frame cap active: stopping after up to {} presented frames.",
