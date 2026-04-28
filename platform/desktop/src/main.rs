@@ -42,10 +42,18 @@ struct DesktopArgs {
     /// Capture one frame image for every N presented frames.
     ///
     /// For example, `--frame-output-every 60` writes frames 60, 120, 180...
-    #[arg(long, value_parser = clap::value_parser!(u64).range(1..), default_value_t = 1)]
-    frame_output_every: u64,
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u64).range(1..),
+        requires = "frame_output_dir"
+    )]
+    frame_output_every: Option<u64>,
     /// Capture only the final presented frame as `frame-last.png`.
-    #[arg(long, conflicts_with = "frame_output_every")]
+    #[arg(
+        long,
+        requires = "frame_output_dir",
+        conflicts_with = "frame_output_every"
+    )]
     frame_output_last_only: bool,
 }
 
@@ -107,31 +115,6 @@ impl WindowSurface {
     }
 }
 
-impl Drop for WindowSurface {
-    fn drop(&mut self) {
-        let Some(capture) = &self.frame_capture else {
-            return;
-        };
-
-        if !matches!(capture.mode, FrameCaptureMode::LastOnly) || self.presented_frames == 0 {
-            return;
-        }
-
-        let frame_path = capture.output_dir.join("frame-last.png");
-        if let Err(error) = write_rgb_surface_to_png(
-            &frame_path,
-            &self.buffer,
-            FRAMEBUFFER_WIDTH as u32,
-            FRAMEBUFFER_HEIGHT as u32,
-        ) {
-            eprintln!(
-                "warning: failed to write final frame image '{}': {error}",
-                frame_path.display()
-            );
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 enum FrameCaptureMode {
     Every { interval: u64 },
@@ -177,12 +160,19 @@ impl FramePresenter for WindowSurface {
         self.buffer.copy_from_slice(surface);
         let frame_index = self.presented_frames + 1;
         if let Some(capture) = &self.frame_capture {
-            if capture.should_capture(frame_index) {
-                let frame_path = capture
-                    .output_dir
-                    .join(format!("frame-{frame_index:06}.png"));
+            let frame_path = match capture.mode {
+                FrameCaptureMode::Every { .. } if capture.should_capture(frame_index) => Some(
+                    capture
+                        .output_dir
+                        .join(format!("frame-{frame_index:06}.png")),
+                ),
+                FrameCaptureMode::LastOnly => Some(capture.output_dir.join("frame-last.png")),
+                _ => None,
+            };
+
+            if let Some(path) = frame_path {
                 write_rgb_surface_to_png(
-                    &frame_path,
+                    &path,
                     &self.buffer,
                     FRAMEBUFFER_WIDTH as u32,
                     FRAMEBUFFER_HEIGHT as u32,
@@ -284,7 +274,7 @@ fn main() -> ExitCode {
             FrameCaptureMode::LastOnly
         } else {
             FrameCaptureMode::Every {
-                interval: args.frame_output_every,
+                interval: args.frame_output_every.unwrap_or(1),
             }
         },
     });
