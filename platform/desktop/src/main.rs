@@ -16,8 +16,9 @@ use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresen
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
+use sdl2::render::{Canvas, Texture};
+use sdl2::video::{Window, WindowBuildError};
+use sdl2::VideoSubsystem;
 use thiserror::Error;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -80,6 +81,7 @@ enum SurfaceError {
 struct SdlPresenter {
     canvas: Canvas<Window>,
     event_pump: sdl2::EventPump,
+    texture: Texture,
     buffer: Vec<u32>,
     rgb_buffer: Vec<u8>,
     presented_frames: u64,
@@ -89,14 +91,8 @@ struct SdlPresenter {
 }
 
 impl SdlPresenter {
-    fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
-        if let Some(capture) = &frame_capture {
-            fs::create_dir_all(&capture.output_dir)?;
-        }
-
-        let sdl = sdl2::init().map_err(io::Error::other)?;
-        let video = sdl.video().map_err(io::Error::other)?;
-        let window = video
+    fn build_window(video: &VideoSubsystem) -> Result<Window, WindowBuildError> {
+        video
             .window(
                 "Latchboy",
                 (FRAMEBUFFER_WIDTH as u32) * 3,
@@ -104,18 +100,63 @@ impl SdlPresenter {
             )
             .position_centered()
             .build()
-            .map_err(io::Error::other)?;
-        let canvas = window
-            .into_canvas()
-            .accelerated()
-            .present_vsync()
-            .build()
+    }
+
+    fn build_canvas(video: &VideoSubsystem) -> io::Result<Canvas<Window>> {
+        let mut last_error: Option<io::Error> = None;
+
+        for attempt in [
+            "accelerated + vsync",
+            "accelerated",
+            "software",
+            "default renderer",
+        ] {
+            let window = Self::build_window(video).map_err(io::Error::other)?;
+            let mut builder = window.into_canvas();
+            builder = match attempt {
+                "accelerated + vsync" => builder.accelerated().present_vsync(),
+                "accelerated" => builder.accelerated(),
+                "software" => builder.software(),
+                _ => builder,
+            };
+
+            match builder.build() {
+                Ok(canvas) => {
+                    info!(renderer_profile = attempt, "initialized SDL renderer");
+                    return Ok(canvas);
+                }
+                Err(error) => {
+                    debug!(renderer_profile = attempt, %error, "SDL renderer init failed");
+                    last_error = Some(io::Error::other(error));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| io::Error::other("failed to build SDL renderer")))
+    }
+
+    fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
+        if let Some(capture) = &frame_capture {
+            fs::create_dir_all(&capture.output_dir)?;
+        }
+
+        let sdl = sdl2::init().map_err(io::Error::other)?;
+        let video = sdl.video().map_err(io::Error::other)?;
+        let canvas = Self::build_canvas(&video)?;
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator
+            .create_texture_streaming(
+                PixelFormatEnum::RGB24,
+                FRAMEBUFFER_WIDTH as u32,
+                FRAMEBUFFER_HEIGHT as u32,
+            )
             .map_err(io::Error::other)?;
         let event_pump = sdl.event_pump().map_err(io::Error::other)?;
 
         Ok(Self {
             canvas,
             event_pump,
+            texture,
             buffer: vec![0; FRAMEBUFFER_LEN],
             rgb_buffer: vec![0; FRAMEBUFFER_LEN * 3],
             presented_frames: 0,
@@ -204,21 +245,13 @@ impl FramePresenter for SdlPresenter {
             self.rgb_buffer[base + 2] = (pixel & 0xFF) as u8;
         }
 
-        let texture_creator = self.canvas.texture_creator();
-        let mut texture = texture_creator
-            .create_texture_streaming(
-                PixelFormatEnum::RGB24,
-                FRAMEBUFFER_WIDTH as u32,
-                FRAMEBUFFER_HEIGHT as u32,
-            )
-            .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
-        texture
+        self.texture
             .update(None, &self.rgb_buffer, FRAMEBUFFER_WIDTH * 3)
             .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
 
         self.canvas.clear();
         self.canvas
-            .copy(&texture, None, None)
+            .copy(&self.texture, None, None)
             .map_err(|_| SurfaceError::InvalidSurfaceLength)?;
         self.canvas.present();
 
