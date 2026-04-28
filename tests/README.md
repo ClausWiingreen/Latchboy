@@ -174,6 +174,14 @@ RUST_LOG=debug cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom /pa
 RUST_LOG='latchboy_core=trace,latchboy_desktop=debug' cargo test -p latchboy-core --test headless_harness
 ```
 
+### SDL desktop runtime expectations and environment caveats
+
+- `cargo run -p latchboy-desktop -- /path/to/rom.gb` launches a live SDL window by default; the process exits when the user closes the window or presses `Esc` unless a frame cap is explicitly set.
+- `--max-frames` remains supported for deterministic automation/debug runs where bounded execution is required.
+- `--frame-output-dir` (optionally combined with `--frame-output-every` or `--frame-output-last-only`) remains supported for PNG frame capture during automation/debug execution.
+- On Linux/macOS CI or remote shells without a display server, SDL may fail to initialize a video device unless a virtual display is provided (for example `xvfb-run`) or a compatible SDL video driver is configured.
+- The core deterministic harness (`cargo test -p latchboy-core --test headless_harness`) does not depend on SDL and remains suitable for display-less environments.
+
 ## Milestone 2 acceptance checklist → jobs/artifacts
 
 - [ ] **Backlog bullet: “Passes CPU instruction correctness test ROMs.”**  
@@ -375,5 +383,5 @@ cargo run -p latchboy-desktop -- /absolute/path/to/rom.gb
 ### Limitations
 
 - Audio output is not wired in this frontend yet.
-- Input/controller mapping is not implemented yet (current surface backend is headless-friendly and does not create an OS window).
-- The desktop integration smoke test is headless-friendly and validates that the frame presentation path is callable and non-panicking without creating a real OS window.
+- Input/controller mapping is not implemented yet (keyboard `Esc` only for quit).
+- Desktop runs require SDL video initialization for the live window path; use headless core tests for display-less CI.

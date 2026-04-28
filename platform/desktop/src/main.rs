@@ -34,13 +34,13 @@ struct SaveOnDrop {
 struct DesktopArgs {
     /// Path to a ROM file.
     rom_path: PathBuf,
-    /// Maximum number of frames to present before exiting.
+    /// Optional frame cap for automation/debug runs; by default the SDL window stays open until closed.
     #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
     max_frames: Option<u64>,
     /// CPU cycle step used for each emulation loop iteration.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), default_value_t = 1_024)]
     cycle_step: u32,
-    /// Optional directory to dump each presented frame as PNG while running headless.
+    /// Optional directory to dump presented frames as PNG for automation/debug capture.
     #[arg(long)]
     frame_output_dir: Option<PathBuf>,
     /// Capture one frame image for every N presented frames.
@@ -382,6 +382,15 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    println!(
+        "Latchboy desktop started. Close the window or press Esc to quit."
+    );
+    if args.max_frames.is_some() {
+        println!(
+            "Automation/debug frame cap active: stopping after up to {} presented frames.",
+            frame_budget
+        );
+    }
 
     let frame_loop_span = info_span!("frame_loop");
     let _frame_loop_guard = frame_loop_span.enter();
