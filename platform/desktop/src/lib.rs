@@ -124,6 +124,12 @@ pub fn write_rgb_surface_to_png(
             path: path.display().to_string(),
             source,
         })?;
+    png_writer
+        .finish()
+        .map_err(|source| SurfaceImageWriteError::Encode {
+            path: path.display().to_string(),
+            source,
+        })?;
     Ok(())
 }
 
