@@ -39,6 +39,14 @@ struct DesktopArgs {
     /// Optional directory to dump each presented frame as PNG while running headless.
     #[arg(long)]
     frame_output_dir: Option<PathBuf>,
+    /// Capture one frame image for every N presented frames.
+    ///
+    /// For example, `--frame-output-every 60` writes frames 60, 120, 180...
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..), default_value_t = 1)]
+    frame_output_every: u64,
+    /// Capture only the final presented frame as `frame-last.png`.
+    #[arg(long, conflicts_with = "frame_output_every")]
+    frame_output_last_only: bool,
 }
 
 impl Drop for SaveOnDrop {
@@ -64,11 +72,11 @@ struct WindowSurface {
     max_frames: u64,
     close_requested: bool,
     input_events: Receiver<String>,
-    frame_output_dir: Option<PathBuf>,
+    frame_capture: Option<FrameCaptureConfig>,
 }
 
 impl WindowSurface {
-    fn new(max_frames: u64, frame_output_dir: Option<PathBuf>) -> io::Result<Self> {
+    fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
             let stdin = io::stdin();
@@ -84,8 +92,8 @@ impl WindowSurface {
             }
         });
 
-        if let Some(dir) = &frame_output_dir {
-            fs::create_dir_all(dir)?;
+        if let Some(capture) = &frame_capture {
+            fs::create_dir_all(&capture.output_dir)?;
         }
 
         Ok(Self {
@@ -94,8 +102,54 @@ impl WindowSurface {
             max_frames,
             close_requested: false,
             input_events: rx,
-            frame_output_dir,
+            frame_capture,
         })
+    }
+}
+
+impl Drop for WindowSurface {
+    fn drop(&mut self) {
+        let Some(capture) = &self.frame_capture else {
+            return;
+        };
+
+        if !matches!(capture.mode, FrameCaptureMode::LastOnly) || self.presented_frames == 0 {
+            return;
+        }
+
+        let frame_path = capture.output_dir.join("frame-last.png");
+        if let Err(error) = write_rgb_surface_to_png(
+            &frame_path,
+            &self.buffer,
+            FRAMEBUFFER_WIDTH as u32,
+            FRAMEBUFFER_HEIGHT as u32,
+        ) {
+            eprintln!(
+                "warning: failed to write final frame image '{}': {error}",
+                frame_path.display()
+            );
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum FrameCaptureMode {
+    Every { interval: u64 },
+    LastOnly,
+}
+
+#[derive(Clone, Debug)]
+struct FrameCaptureConfig {
+    output_dir: PathBuf,
+    mode: FrameCaptureMode,
+}
+
+impl FrameCaptureConfig {
+    fn should_capture(&self, frame_index: u64) -> bool {
+        match self.mode {
+            FrameCaptureMode::Every { interval } => frame_index.is_multiple_of(interval),
+            FrameCaptureMode::LastOnly => false,
+        }
     }
 }
 
@@ -122,15 +176,19 @@ impl FramePresenter for WindowSurface {
         }
         self.buffer.copy_from_slice(surface);
         let frame_index = self.presented_frames + 1;
-        if let Some(dir) = &self.frame_output_dir {
-            let frame_path = dir.join(format!("frame-{frame_index:06}.png"));
-            write_rgb_surface_to_png(
-                &frame_path,
-                &self.buffer,
-                FRAMEBUFFER_WIDTH as u32,
-                FRAMEBUFFER_HEIGHT as u32,
-            )
-            .map_err(|error| SurfaceError::FrameImageWrite(error.to_string()))?;
+        if let Some(capture) = &self.frame_capture {
+            if capture.should_capture(frame_index) {
+                let frame_path = capture
+                    .output_dir
+                    .join(format!("frame-{frame_index:06}.png"));
+                write_rgb_surface_to_png(
+                    &frame_path,
+                    &self.buffer,
+                    FRAMEBUFFER_WIDTH as u32,
+                    FRAMEBUFFER_HEIGHT as u32,
+                )
+                .map_err(|error| SurfaceError::FrameImageWrite(error.to_string()))?;
+            }
         }
         self.presented_frames += 1;
         if self.presented_frames.is_multiple_of(60) {
@@ -220,7 +278,18 @@ fn main() -> ExitCode {
         cycle_step = args.cycle_step,
         "computed run budgets"
     );
-    let mut surface = match WindowSurface::new(frame_budget, args.frame_output_dir) {
+    let frame_capture = args.frame_output_dir.map(|output_dir| FrameCaptureConfig {
+        output_dir,
+        mode: if args.frame_output_last_only {
+            FrameCaptureMode::LastOnly
+        } else {
+            FrameCaptureMode::Every {
+                interval: args.frame_output_every,
+            }
+        },
+    });
+
+    let mut surface = match WindowSurface::new(frame_budget, frame_capture) {
         Ok(surface) => surface,
         Err(error) => {
             eprintln!("error: failed to initialize output surface: {error}");
@@ -255,4 +324,32 @@ fn main() -> ExitCode {
         frames_presented, FRAMEBUFFER_WIDTH, FRAMEBUFFER_HEIGHT
     );
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FrameCaptureConfig, FrameCaptureMode};
+    use std::path::PathBuf;
+
+    #[test]
+    fn capture_every_interval_selects_expected_frames() {
+        let config = FrameCaptureConfig {
+            output_dir: PathBuf::from("unused"),
+            mode: FrameCaptureMode::Every { interval: 3 },
+        };
+        assert!(!config.should_capture(1));
+        assert!(!config.should_capture(2));
+        assert!(config.should_capture(3));
+        assert!(config.should_capture(6));
+    }
+
+    #[test]
+    fn last_only_mode_defers_capture_until_shutdown() {
+        let config = FrameCaptureConfig {
+            output_dir: PathBuf::from("unused"),
+            mode: FrameCaptureMode::LastOnly,
+        };
+        assert!(!config.should_capture(1));
+        assert!(!config.should_capture(99));
+    }
 }
