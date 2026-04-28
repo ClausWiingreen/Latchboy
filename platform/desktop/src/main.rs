@@ -113,6 +113,25 @@ impl WindowSurface {
             frame_capture,
         })
     }
+
+    fn flush_final_frame_capture(&self) -> Result<(), SurfaceError> {
+        let Some(capture) = &self.frame_capture else {
+            return Ok(());
+        };
+
+        if !matches!(capture.mode, FrameCaptureMode::LastOnly) || self.presented_frames == 0 {
+            return Ok(());
+        }
+
+        let path = capture.output_dir.join("frame-last.png");
+        write_rgb_surface_to_png(
+            &path,
+            &self.buffer,
+            FRAMEBUFFER_WIDTH as u32,
+            FRAMEBUFFER_HEIGHT as u32,
+        )
+        .map_err(|error| SurfaceError::FrameImageWrite(error.to_string()))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -166,7 +185,7 @@ impl FramePresenter for WindowSurface {
                         .output_dir
                         .join(format!("frame-{frame_index:06}.png")),
                 ),
-                FrameCaptureMode::LastOnly => Some(capture.output_dir.join("frame-last.png")),
+                FrameCaptureMode::LastOnly => None,
                 _ => None,
             };
 
@@ -304,6 +323,10 @@ fn main() -> ExitCode {
         }
     };
     info!(frames_presented, "frame loop ended");
+    if let Err(error) = surface.flush_final_frame_capture() {
+        eprintln!("error: failed to flush final frame capture: {error}");
+        return ExitCode::FAILURE;
+    }
     if frames_presented >= frame_budget {
         debug!(frames_presented, frame_budget, "frame budget exhaustion");
     }
