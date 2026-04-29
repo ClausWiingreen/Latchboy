@@ -138,18 +138,21 @@ is green on the target commit/PR. This maps to workflow `.github/workflows/ci.ym
 To avoid false-green runs where `external_rom_validation` is skipped, CI must provide a non-empty
 `LATCHBOY_ROM_ROOT` that resolves every required manifest `path`.
 
-The current workflow reads this value from a GitHub Actions repository variable:
+The current workflow provisions fixtures during CI and maps `LATCHBOY_ROM_ROOT` to a job-local path under the GitHub workspace.
 
 - Workflow location: `.github/workflows/ci.yml`
 - Job: `rust-checks`
-- Environment mapping: `LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}`
+- Environment mapping: `LATCHBOY_ROM_ROOT: ${{ github.workspace }}/.rom-fixtures`
+- Preflight enforcement: CI fails early if `LATCHBOY_ROM_ROOT` is unset/empty or required fixture checksum variables are missing.
 
 Recommended provisioning pattern for maintainers:
 
-1. Build or mount a fixture directory in CI that matches `tests/rom_manifest.toml`.
-2. Set repository variable **`LATCHBOY_ROM_ROOT`** to that absolute CI path (for example, `/opt/latchboy-roms`).
-3. Ensure the configured path exists on the runner before the `Run tests` step.
+1. Keep release/merge-gating jobs fixture-mandatory (non-empty `LATCHBOY_ROM_ROOT` + required checksum vars).
+2. Provision fixture archives in CI, verify checksums, and unzip into `${LATCHBOY_ROM_ROOT}` before test execution.
+3. Ensure the path exists and contains every required `tests/rom_manifest.toml` entry before `cargo test --workspace --all-targets`.
 4. Keep fixture contents synchronized with required manifest entries whenever required ROM cases are added or paths change.
+
+For developer-local runs, `external_rom_validation` remains intentionally skippable when `LATCHBOY_ROM_ROOT` is unset/empty. This preserves fast local iteration while keeping merge/release gates strict in CI.
 
 Practical verification in CI logs:
 

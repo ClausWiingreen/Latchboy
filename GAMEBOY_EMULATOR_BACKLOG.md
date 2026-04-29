@@ -280,7 +280,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Add a dedicated Milestone 3 gate test in `core/tests/external_rom_validation.rs` (`required_milestone_3_roms_pass_under_external_validation_flow`) to avoid coupling Milestone 3 pass/fail status to Milestone 2 runs.
 - [ ] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
   - [x] Add an explicit CI preflight check that fails when `LATCHBOY_ROM_ROOT` is unset/empty for milestone-gating jobs.
-  - [ ] Keep developer-local runs skippable, but make release/merge gate jobs fixture-mandatory and documented as such.
+  - [x] Keep developer-local runs skippable, but make release/merge gate jobs fixture-mandatory and documented as such.
 - [ ] **Priority 1: Reorder validation progression to match dependency risk**
   - [ ] Complete Milestone 3 fixture-enforced closure first.
   - [ ] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
