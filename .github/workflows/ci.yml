@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       LATCHBOY_ROM_ROOT: ${{ github.workspace }}/.rom-fixtures
+      BLARGG_CPU_INSTRS_SHA256: ${{ vars.BLARGG_CPU_INSTRS_SHA256 }}
+      BLARGG_INSTR_TIMING_SHA256: ${{ vars.BLARGG_INSTR_TIMING_SHA256 }}
+      MOONEYE_MTS_20240926_SHA256: ${{ vars.MOONEYE_MTS_20240926_SHA256 }}
 
     steps:
       - name: Checkout
@@ -31,14 +34,23 @@ jobs:
 
           curl -fsSL -o /tmp/cpu_instrs.zip \
             https://gbdev.gg8.se/files/roms/blargg-gb-tests/cpu_instrs.zip
+          sha256sum -c <<EOF
+          ${BLARGG_CPU_INSTRS_SHA256}  /tmp/cpu_instrs.zip
+          EOF
           unzip -q /tmp/cpu_instrs.zip -d "${LATCHBOY_ROM_ROOT}/blargg"
 
           curl -fsSL -o /tmp/instr_timing.zip \
             https://gbdev.gg8.se/files/roms/blargg-gb-tests/instr_timing.zip
+          sha256sum -c <<EOF
+          ${BLARGG_INSTR_TIMING_SHA256}  /tmp/instr_timing.zip
+          EOF
           unzip -q /tmp/instr_timing.zip -d "${LATCHBOY_ROM_ROOT}/blargg"
 
           curl -fsSL -o /tmp/mooneye-test-suite.zip \
             https://gekkio.fi/files/mooneye-test-suite/mts-20240926-1737-443f6e1/mts-20240926-1737-443f6e1.zip
+          sha256sum -c <<EOF
+          ${MOONEYE_MTS_20240926_SHA256}  /tmp/mooneye-test-suite.zip
+          EOF
           unzip -q /tmp/mooneye-test-suite.zip -d /tmp/mooneye-test-suite
           cp -R /tmp/mooneye-test-suite/mts-20240926-1737-443f6e1/acceptance \
             "${LATCHBOY_ROM_ROOT}/mooneye/"
@@ -53,6 +65,10 @@ jobs:
         run: |
           if [ -z "${LATCHBOY_ROM_ROOT:-}" ]; then
             echo "LATCHBOY_ROM_ROOT must be set for milestone-gating external ROM validation."
+            exit 1
+          fi
+          if [ -z "${BLARGG_CPU_INSTRS_SHA256:-}" ] || [ -z "${BLARGG_INSTR_TIMING_SHA256:-}" ] || [ -z "${MOONEYE_MTS_20240926_SHA256:-}" ]; then
+            echo "ROM fixture SHA256 values must be set for deterministic fixture verification."
             exit 1
           fi
 
