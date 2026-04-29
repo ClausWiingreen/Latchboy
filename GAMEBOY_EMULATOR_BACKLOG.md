@@ -266,7 +266,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
   - [ ] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
 - [ ] **Priority 1: Turn Milestone 4 evidence from “defined” to “enforced”**
-  - [ ] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
+  - [x] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
   - [ ] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
   - [ ] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
   - [ ] Add a CI assertion that milestone-gating runs report **executed required ROM count > 0** (to prevent skip-green sign-offs).
@@ -302,7 +302,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
   - [x] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
   - [x] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
-  - [ ] Require committed smoke summary evidence matching `tests/artifacts/milestone4-smoke-summary.schema.json` (title → `run.json`, `summary.json`, `hash_window`, checkpoint frame index, pass/fail reason) for milestone sign-off.
+  - [x] Require committed smoke summary evidence matching `tests/artifacts/milestone4-smoke-summary.schema.json` (title → `run.json`, `summary.json`, `hash_window`, checkpoint frame index, pass/fail reason) for milestone sign-off.
   - [ ] Enforce policy that only metadata + hashes are committed; copyrighted commercial frame/image/video assets are forbidden.
   - [ ] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
   - [ ] Enforce one smoke-threshold policy across backlog + `tests/README.md` + CI output messaging.
