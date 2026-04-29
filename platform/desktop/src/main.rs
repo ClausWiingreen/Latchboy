@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use latchboy_core::{
@@ -89,6 +91,8 @@ struct SdlPresenter {
     max_frames: u64,
     close_requested: bool,
     frame_capture: Option<FrameCaptureConfig>,
+    target_frame_duration: Duration,
+    next_frame_deadline: Option<Instant>,
 }
 
 impl SdlPresenter {
@@ -122,6 +126,8 @@ impl SdlPresenter {
             max_frames,
             close_requested: false,
             frame_capture,
+            target_frame_duration: Duration::from_secs_f64(1.0 / 60.0),
+            next_frame_deadline: None,
         })
     }
 
@@ -196,6 +202,12 @@ impl FramePresenter for SdlPresenter {
         }
 
         self.buffer.copy_from_slice(surface);
+        let now = Instant::now();
+        if let Some(deadline) = self.next_frame_deadline {
+            if deadline > now {
+                thread::sleep(deadline - now);
+            }
+        }
 
         let mut window_surface = self
             .window
@@ -280,6 +292,11 @@ impl FramePresenter for SdlPresenter {
         }
 
         self.presented_frames += 1;
+        self.next_frame_deadline = Some(
+            self.next_frame_deadline
+                .unwrap_or_else(Instant::now)
+                + self.target_frame_duration,
+        );
         Ok(())
     }
 }
