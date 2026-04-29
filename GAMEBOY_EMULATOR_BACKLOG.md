@@ -300,7 +300,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Add a follow-on milestone note for post-input interactive goals (pause/reset hotkeys, deterministic input playback, and expanded compatibility smoke list).
 - [ ] **Milestone 4 closure contract**
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
-  - [ ] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
+  - [x] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
   - [x] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
   - [ ] Require committed smoke summary evidence matching `tests/artifacts/milestone4-smoke-summary.schema.json` (title → `run.json`, `summary.json`, `hash_window`, checkpoint frame index, pass/fail reason) for milestone sign-off.
   - [ ] Enforce policy that only metadata + hashes are committed; copyrighted commercial frame/image/video assets are forbidden.
