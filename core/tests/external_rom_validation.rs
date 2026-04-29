@@ -661,12 +661,18 @@ fn required_milestone_2_and_3_roms_pass_under_external_validation_flow() {
     }
 
     let mut failures = Vec::new();
+    let mut executed_required_roms = 0usize;
     for rom in required_m2_m3_roms {
+        executed_required_roms += 1;
         if let Err(error) = run_rom(&rom_root, rom) {
             failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
         }
     }
 
+    assert!(
+        executed_required_roms > 0,
+        "required milestone 2/3 ROM execution must include at least one ROM"
+    );
     assert!(
         failures.is_empty(),
         "required milestone 2/3 ROM validation failures:\n{}",
@@ -713,12 +719,18 @@ fn required_milestone_3_roms_pass_under_external_validation_flow() {
     }
 
     let mut failures = Vec::new();
+    let mut executed_required_roms = 0usize;
     for rom in required_m3_roms {
+        executed_required_roms += 1;
         if let Err(error) = run_rom(&rom_root, rom) {
             failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
         }
     }
 
+    assert!(
+        executed_required_roms > 0,
+        "required milestone 3 ROM execution must include at least one ROM"
+    );
     assert!(
         failures.is_empty(),
         "required milestone 3 ROM validation failures:\n{}",
@@ -814,12 +826,18 @@ fn required_milestone_4_roms_pass_under_external_validation_flow() {
     }
 
     let mut failures = Vec::new();
+    let mut executed_required_roms = 0usize;
     for rom in required_m4_roms {
+        executed_required_roms += 1;
         if let Err(error) = run_rom(&rom_root, rom) {
             failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
         }
     }
 
+    assert!(
+        executed_required_roms > 0,
+        "required milestone 4 ROM execution must include at least one ROM"
+    );
     assert!(
         failures.is_empty(),
         "required milestone 4 ROM validation failures:\n{}",
