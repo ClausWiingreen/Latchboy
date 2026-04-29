@@ -632,7 +632,7 @@ impl Ppu {
             1
         } else if self.scanline_dot < MODE2_CYCLES {
             2
-        } else if self.scanline_dot < (MODE0_CYCLES_END - 1) {
+        } else if self.scanline_dot < (MODE0_CYCLES_END - 4) {
             3
         } else {
             0
