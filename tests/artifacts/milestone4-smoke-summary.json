@@ -57,6 +57,33 @@
         ]
       },
       "copyrighted_assets_committed": false
+    },
+    "legend-of-zelda-links-awakening-world": {
+      "run.json": {
+        "commit_sha": "0000000",
+        "rom_id": "legend-of-zelda-links-awakening-world-local",
+        "runner_command": "cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <local-rom-path> --rom-id legend-of-zelda-links-awakening-world-local --title-id legend-of-zelda-links-awakening-world --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/legend-of-zelda-links-awakening-world",
+        "frame_limit": 660,
+        "wall_time_limit_ms": 14000
+      },
+      "summary.json": {
+        "status": "FAIL",
+        "checkpoint_frame_index": 0,
+        "pass_fail_reason": "Placeholder entry committed for schema gating; replace with fixture-backed smoke evidence."
+      },
+      "hash_window": {
+        "algorithm": "fnv1a64",
+        "start_frame": 0,
+        "frame_count": 1,
+        "sample_stride": 1,
+        "hashes": [
+          {
+            "frame_index": 0,
+            "hash": "0000000000000000"
+          }
+        ]
+      },
+      "copyrighted_assets_committed": false
     }
   }
 }
