@@ -37,8 +37,11 @@ jobs:
             https://gbdev.gg8.se/files/roms/blargg-gb-tests/instr_timing.zip
           unzip -q /tmp/instr_timing.zip -d "${LATCHBOY_ROM_ROOT}/blargg"
 
-          git clone --depth 1 https://github.com/Gekkio/mooneye-test-suite.git /tmp/mooneye-test-suite
-          cp -R /tmp/mooneye-test-suite/acceptance "${LATCHBOY_ROM_ROOT}/mooneye/"
+          curl -fsSL -o /tmp/mooneye-test-suite.zip \
+            https://gekkio.fi/files/mooneye-test-suite/mts-20240926-1737-443f6e1/mts-20240926-1737-443f6e1.zip
+          unzip -q /tmp/mooneye-test-suite.zip -d /tmp/mooneye-test-suite
+          cp -R /tmp/mooneye-test-suite/mts-20240926-1737-443f6e1/acceptance \
+            "${LATCHBOY_ROM_ROOT}/mooneye/"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
