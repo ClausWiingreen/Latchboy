@@ -10,7 +10,7 @@ jobs:
   rust-checks:
     runs-on: ubuntu-latest
     env:
-      LATCHBOY_ROM_ROOT: ${{ vars.LATCHBOY_ROM_ROOT }}
+      LATCHBOY_ROM_ROOT: ${{ github.workspace }}/.rom-fixtures
 
     steps:
       - name: Checkout
@@ -23,6 +23,22 @@ jobs:
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Provision ROM fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p "${LATCHBOY_ROM_ROOT}/blargg" "${LATCHBOY_ROM_ROOT}/mooneye"
+
+          curl -fsSL -o /tmp/cpu_instrs.zip \
+            https://gbdev.gg8.se/files/roms/blargg-gb-tests/cpu_instrs.zip
+          unzip -q /tmp/cpu_instrs.zip -d "${LATCHBOY_ROM_ROOT}/blargg"
+
+          curl -fsSL -o /tmp/instr_timing.zip \
+            https://gbdev.gg8.se/files/roms/blargg-gb-tests/instr_timing.zip
+          unzip -q /tmp/instr_timing.zip -d "${LATCHBOY_ROM_ROOT}/blargg"
+
+          git clone --depth 1 https://github.com/Gekkio/mooneye-test-suite.git /tmp/mooneye-test-suite
+          cp -R /tmp/mooneye-test-suite/acceptance "${LATCHBOY_ROM_ROOT}/mooneye/"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
