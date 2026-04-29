@@ -15,7 +15,7 @@ use latchboy_desktop::savefile::{
 use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresenter};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
+use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::video::{Window, WindowBuildError};
 use sdl2::VideoSubsystem;
 use thiserror::Error;
@@ -229,9 +229,24 @@ impl FramePresenter for SdlPresenter {
                                 continue;
                             }
                             let offset = row + (dx * bytes_per_pixel);
-                            let mapped = Color::RGB(r, g, b).to_u32(&pixel_format).to_ne_bytes();
-                            pixels[offset..offset + bytes_per_pixel]
-                                .copy_from_slice(&mapped[..bytes_per_pixel]);
+                            match pixel_format_enum {
+                                PixelFormatEnum::RGB24 => {
+                                    pixels[offset] = r;
+                                    pixels[offset + 1] = g;
+                                    pixels[offset + 2] = b;
+                                }
+                                PixelFormatEnum::BGR24 => {
+                                    pixels[offset] = b;
+                                    pixels[offset + 1] = g;
+                                    pixels[offset + 2] = r;
+                                }
+                                _ => {
+                                    let mapped =
+                                        Color::RGB(r, g, b).to_u32(&pixel_format).to_ne_bytes();
+                                    pixels[offset..offset + bytes_per_pixel]
+                                        .copy_from_slice(&mapped[..bytes_per_pixel]);
+                                }
+                            }
                         }
                     }
                 }
