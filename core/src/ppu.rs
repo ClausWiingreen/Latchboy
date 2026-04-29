@@ -192,16 +192,17 @@ impl Ppu {
     }
 
     fn stat_irq_condition_active(&self) -> bool {
+        let coincidence_enabled_and_true = (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
+            && (self.stat & STAT_LYC_EQUAL_BIT) != 0;
+
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
-            return false;
+            return coincidence_enabled_and_true;
         }
 
         let mode = self.current_mode();
         let mode_enabled = (mode == 0 && (self.stat & STAT_MODE_0_INTERRUPT_BIT) != 0)
             || (mode == 1 && (self.stat & STAT_MODE_1_INTERRUPT_BIT) != 0)
             || (mode == 2 && (self.stat & STAT_MODE_2_INTERRUPT_BIT) != 0);
-        let coincidence_enabled_and_true = (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
-            && (self.stat & STAT_LYC_EQUAL_BIT) != 0;
 
         mode_enabled || coincidence_enabled_and_true
     }
