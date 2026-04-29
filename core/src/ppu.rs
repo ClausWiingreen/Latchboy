@@ -25,7 +25,7 @@ const TOTAL_SCANLINES: u8 = 154;
 const MODE2_CYCLES: u16 = 80;
 const MODE3_CYCLES: u16 = 172;
 const MODE0_CYCLES_END: u16 = MODE2_CYCLES + MODE3_CYCLES;
-pub(crate) const LCD_ENABLE_STARTUP_DELAY_DOTS: u8 = 4;
+pub(crate) const LCD_ENABLE_STARTUP_DELAY_DOTS: u8 = 16;
 pub const FRAMEBUFFER_WIDTH: usize = 160;
 pub const FRAMEBUFFER_HEIGHT: usize = 144;
 pub const FRAMEBUFFER_LEN: usize = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT;
@@ -192,16 +192,17 @@ impl Ppu {
     }
 
     fn stat_irq_condition_active(&self) -> bool {
+        let coincidence_enabled_and_true = (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
+            && (self.stat & STAT_LYC_EQUAL_BIT) != 0;
+
         if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
-            return false;
+            return coincidence_enabled_and_true;
         }
 
         let mode = self.current_mode();
         let mode_enabled = (mode == 0 && (self.stat & STAT_MODE_0_INTERRUPT_BIT) != 0)
             || (mode == 1 && (self.stat & STAT_MODE_1_INTERRUPT_BIT) != 0)
             || (mode == 2 && (self.stat & STAT_MODE_2_INTERRUPT_BIT) != 0);
-        let coincidence_enabled_and_true = (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
-            && (self.stat & STAT_LYC_EQUAL_BIT) != 0;
 
         mode_enabled || coincidence_enabled_and_true
     }
