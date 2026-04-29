@@ -293,9 +293,7 @@ impl FramePresenter for SdlPresenter {
 
         self.presented_frames += 1;
         self.next_frame_deadline = Some(
-            self.next_frame_deadline
-                .unwrap_or_else(Instant::now)
-                + self.target_frame_duration,
+            self.next_frame_deadline.unwrap_or_else(Instant::now) + self.target_frame_duration,
         );
         Ok(())
     }
