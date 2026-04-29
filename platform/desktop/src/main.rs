@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use latchboy_core::{
@@ -15,8 +17,7 @@ use latchboy_desktop::savefile::{
 use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresenter};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::PixelFormatEnum;
-use sdl2::render::{Canvas, Texture};
+use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::video::{Window, WindowBuildError};
 use sdl2::VideoSubsystem;
 use thiserror::Error;
@@ -83,15 +84,15 @@ enum SurfaceError {
 
 /// SDL-backed frame presenter.
 struct SdlPresenter {
-    canvas: Canvas<Window>,
+    window: Window,
     event_pump: sdl2::EventPump,
-    texture: Texture,
     buffer: Vec<u32>,
-    rgb_buffer: Vec<u8>,
     presented_frames: u64,
     max_frames: u64,
     close_requested: bool,
     frame_capture: Option<FrameCaptureConfig>,
+    target_frame_duration: Duration,
+    next_frame_deadline: Option<Instant>,
 }
 
 impl SdlPresenter {
@@ -106,39 +107,6 @@ impl SdlPresenter {
             .build()
     }
 
-    fn build_canvas(video: &VideoSubsystem) -> io::Result<Canvas<Window>> {
-        let mut last_error: Option<io::Error> = None;
-
-        for attempt in [
-            "accelerated + vsync",
-            "accelerated",
-            "software",
-            "default renderer",
-        ] {
-            let window = Self::build_window(video).map_err(io::Error::other)?;
-            let mut builder = window.into_canvas();
-            builder = match attempt {
-                "accelerated + vsync" => builder.accelerated().present_vsync(),
-                "accelerated" => builder.accelerated(),
-                "software" => builder.software(),
-                _ => builder,
-            };
-
-            match builder.build() {
-                Ok(canvas) => {
-                    info!(renderer_profile = attempt, "initialized SDL renderer");
-                    return Ok(canvas);
-                }
-                Err(error) => {
-                    debug!(renderer_profile = attempt, %error, "SDL renderer init failed");
-                    last_error = Some(io::Error::other(error));
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| io::Error::other("failed to build SDL renderer")))
-    }
-
     fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
         if let Some(capture) = &frame_capture {
             fs::create_dir_all(&capture.output_dir)?;
@@ -146,27 +114,20 @@ impl SdlPresenter {
 
         let sdl = sdl2::init().map_err(io::Error::other)?;
         let video = sdl.video().map_err(io::Error::other)?;
-        let canvas = Self::build_canvas(&video)?;
-        let texture_creator = canvas.texture_creator();
-        let texture = texture_creator
-            .create_texture_streaming(
-                PixelFormatEnum::RGB24,
-                FRAMEBUFFER_WIDTH as u32,
-                FRAMEBUFFER_HEIGHT as u32,
-            )
-            .map_err(io::Error::other)?;
+        let window = Self::build_window(&video).map_err(io::Error::other)?;
+        info!("initialized SDL window surface presenter");
         let event_pump = sdl.event_pump().map_err(io::Error::other)?;
 
         Ok(Self {
-            canvas,
+            window,
             event_pump,
-            texture,
             buffer: vec![0; FRAMEBUFFER_LEN],
-            rgb_buffer: vec![0; FRAMEBUFFER_LEN * 3],
             presented_frames: 0,
             max_frames,
             close_requested: false,
             frame_capture,
+            target_frame_duration: Duration::from_secs_f64(1.0 / 60.0),
+            next_frame_deadline: None,
         })
     }
 
@@ -241,23 +202,71 @@ impl FramePresenter for SdlPresenter {
         }
 
         self.buffer.copy_from_slice(surface);
-
-        for (index, &pixel) in surface.iter().enumerate() {
-            let base = index * 3;
-            self.rgb_buffer[base] = ((pixel >> 16) & 0xFF) as u8;
-            self.rgb_buffer[base + 1] = ((pixel >> 8) & 0xFF) as u8;
-            self.rgb_buffer[base + 2] = (pixel & 0xFF) as u8;
+        let now = Instant::now();
+        if let Some(deadline) = self.next_frame_deadline {
+            if deadline > now {
+                thread::sleep(deadline - now);
+            }
         }
 
-        self.texture
-            .update(None, &self.rgb_buffer, FRAMEBUFFER_WIDTH * 3)
+        let mut window_surface = self
+            .window
+            .surface(&self.event_pump)
             .map_err(|error| SurfaceError::TextureUpdate(error.to_string()))?;
+        let surface_width = window_surface.width() as usize;
+        let surface_height = window_surface.height() as usize;
+        let pitch = window_surface.pitch() as usize;
+        let pixel_format_enum = window_surface.pixel_format_enum();
+        let bytes_per_pixel = pixel_format_enum.byte_size_per_pixel();
+        let pixel_format = window_surface.pixel_format();
+        let scale_x = (surface_width / FRAMEBUFFER_WIDTH).max(1);
+        let scale_y = (surface_height / FRAMEBUFFER_HEIGHT).max(1);
 
-        self.canvas.clear();
-        self.canvas
-            .copy(&self.texture, None, None)
-            .map_err(SurfaceError::CanvasCopy)?;
-        self.canvas.present();
+        window_surface.with_lock_mut(|pixels| {
+            for y in 0..FRAMEBUFFER_HEIGHT {
+                for x in 0..FRAMEBUFFER_WIDTH {
+                    let pixel = surface[y * FRAMEBUFFER_WIDTH + x];
+                    let r = ((pixel >> 16) & 0xFF) as u8;
+                    let g = ((pixel >> 8) & 0xFF) as u8;
+                    let b = (pixel & 0xFF) as u8;
+                    for sy in 0..scale_y {
+                        let dy = y * scale_y + sy;
+                        if dy >= surface_height {
+                            continue;
+                        }
+                        let row = dy * pitch;
+                        for sx in 0..scale_x {
+                            let dx = x * scale_x + sx;
+                            if dx >= surface_width {
+                                continue;
+                            }
+                            let offset = row + (dx * bytes_per_pixel);
+                            match pixel_format_enum {
+                                PixelFormatEnum::RGB24 => {
+                                    pixels[offset] = r;
+                                    pixels[offset + 1] = g;
+                                    pixels[offset + 2] = b;
+                                }
+                                PixelFormatEnum::BGR24 => {
+                                    pixels[offset] = b;
+                                    pixels[offset + 1] = g;
+                                    pixels[offset + 2] = r;
+                                }
+                                _ => {
+                                    let mapped =
+                                        Color::RGB(r, g, b).to_u32(&pixel_format).to_ne_bytes();
+                                    pixels[offset..offset + bytes_per_pixel]
+                                        .copy_from_slice(&mapped[..bytes_per_pixel]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        window_surface
+            .update_window()
+            .map_err(|error| SurfaceError::CanvasCopy(error.to_string()))?;
 
         let frame_index = self.presented_frames + 1;
         if let Some(capture) = &self.frame_capture {
@@ -283,6 +292,9 @@ impl FramePresenter for SdlPresenter {
         }
 
         self.presented_frames += 1;
+        self.next_frame_deadline = Some(
+            self.next_frame_deadline.unwrap_or_else(Instant::now) + self.target_frame_duration,
+        );
         Ok(())
     }
 }
