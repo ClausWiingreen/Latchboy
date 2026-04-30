@@ -342,7 +342,6 @@ fn format_timeout_state(emulator: &Emulator, executed_cycles: u64) -> String {
     )
 }
 
-
 #[test]
 fn required_manifest_entries_are_covered_by_milestone_gate_tests() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
