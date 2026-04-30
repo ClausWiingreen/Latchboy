@@ -31,6 +31,8 @@ struct StepSignature {
     operand2: Option<u8>,
     branch_taken: bool,
     interrupt_entry: bool,
+    ppu_ly_before: u8,
+    ppu_ly_after: u8,
 }
 
 impl StepSignature {
@@ -48,6 +50,8 @@ impl StepSignature {
             interrupt_entry: observation.ime_before
                 && !observation.ime_after
                 && observation.sp_after != observation.sp_before,
+            ppu_ly_before: observation.ppu_before.ly,
+            ppu_ly_after: observation.ppu_after.ly,
         }
     }
 }
@@ -65,6 +69,9 @@ struct PendingStep {
 struct LoopState {
     window: Vec<PendingStep>,
     repetitions: u64,
+    ly_observed_min: u8,
+    ly_observed_max: u8,
+    ly_terminating: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,9 +83,6 @@ enum LoopKind {
 struct LoopSummary {
     kind: LoopKind,
     confidence_high: bool,
-    ly_min: u8,
-    ly_max: u8,
-    ly_terminating: u8,
 }
 
 fn instruction_len(observation: &CpuStepObservation) -> u16 {
@@ -245,15 +249,14 @@ impl<'a> TraceCollector<'a> {
                 let single_window_end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
                 let single_window_cycles = single_window_end.saturating_sub(start);
                 let cycles_consumed = single_window_cycles.saturating_mul(state.repetitions);
-                let summary = semantic.expect("semantic loop summary should exist");
                 writeln!(
                     self.writer,
                     "loop type=wait_ly_vblank iterations={} cycles={} ly_range={:02X}..{:02X} ly_end={:02X}",
                     state.repetitions,
                     cycles_consumed,
-                    summary.ly_min,
-                    summary.ly_max,
-                    summary.ly_terminating
+                    state.ly_observed_min,
+                    state.ly_observed_max,
+                    state.ly_terminating
                 )?;
             } else {
                 for step in state.window {
@@ -277,8 +280,6 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
     let mut saw_ly_read = false;
     let mut saw_conditional_back_jump = false;
     let mut high_confidence = false;
-    let mut ly_values = Vec::new();
-
     for step in window {
         let sig = step.signature;
         match (sig.opcode, sig.operand1, sig.operand2) {
@@ -292,11 +293,6 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
             }
             _ => {}
         }
-        if sig.opcode == Some(0xFE) {
-            if let Some(value) = sig.operand1 {
-                ly_values.push(value);
-            }
-        }
         if matches!(sig.opcode, Some(0x20 | 0x28 | 0x30 | 0x38))
             && sig.branch_taken
             && sig.pc_after < sig.pc_before
@@ -309,16 +305,27 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
         return None;
     }
 
-    let ly_min = ly_values.iter().copied().min().unwrap_or(0);
-    let ly_max = ly_values.iter().copied().max().unwrap_or(0);
-    let ly_terminating = ly_values.last().copied().unwrap_or(0);
     Some(LoopSummary {
         kind: LoopKind::WaitLyVblank,
         confidence_high: high_confidence,
-        ly_min,
-        ly_max,
-        ly_terminating,
     })
+}
+
+fn ly_range_for_steps(steps: &[PendingStep]) -> Option<(u8, u8, u8)> {
+    let mut ly_min = u8::MAX;
+    let mut ly_max = u8::MIN;
+    for step in steps {
+        ly_min = ly_min.min(step.signature.ppu_ly_before);
+        ly_min = ly_min.min(step.signature.ppu_ly_after);
+        ly_max = ly_max.max(step.signature.ppu_ly_before);
+        ly_max = ly_max.max(step.signature.ppu_ly_after);
+    }
+    let ly_terminating = steps.last()?.signature.ppu_ly_after;
+    Some((ly_min, ly_max, ly_terminating))
+}
+
+fn merge_ly_range(current: (u8, u8, u8), next: (u8, u8, u8)) -> (u8, u8, u8) {
+    (current.0.min(next.0), current.1.max(next.1), next.2)
 }
 
 impl<'a> EmulatorObserver for TraceCollector<'a> {
@@ -938,6 +945,19 @@ fn update_loop_compression(collector: &mut TraceCollector<'_>) -> io::Result<()>
                 .all(|(x, y)| x.signature == y.signature && !y.signature.interrupt_entry)
             {
                 state.repetitions = state.repetitions.saturating_add(1);
+                if let Some(tail_range) = ly_range_for_steps(&tail) {
+                    let merged = merge_ly_range(
+                        (
+                            state.ly_observed_min,
+                            state.ly_observed_max,
+                            state.ly_terminating,
+                        ),
+                        tail_range,
+                    );
+                    state.ly_observed_min = merged.0;
+                    state.ly_observed_max = merged.1;
+                    state.ly_terminating = merged.2;
+                }
                 collector
                     .pending_steps
                     .truncate(collector.pending_steps.len() - size);
@@ -977,9 +997,15 @@ fn update_loop_compression(collector: &mut TraceCollector<'_>) -> io::Result<()>
             .all(|(x, y)| x.signature == y.signature && !x.signature.interrupt_entry)
         {
             collector.pending_steps.truncate(len - 2 * size);
+            let range_a = ly_range_for_steps(&a).unwrap_or((0, 0, 0));
+            let range_b = ly_range_for_steps(&b).unwrap_or((0, 0, 0));
+            let merged = merge_ly_range(range_a, range_b);
             collector.loop_state = Some(LoopState {
                 window: a,
                 repetitions: 2,
+                ly_observed_min: merged.0,
+                ly_observed_max: merged.1,
+                ly_terminating: merged.2,
             });
             return Ok(());
         }
