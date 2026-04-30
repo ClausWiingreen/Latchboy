@@ -812,12 +812,23 @@ fn main() -> ExitCode {
 fn update_loop_compression(collector: &mut TraceCollector<'_>) -> io::Result<()> {
     if let Some(state) = collector.loop_state.as_mut() {
         let size = state.window.len();
+        let loop_start_step = state
+            .window
+            .first()
+            .map(|step| step.step_index)
+            .unwrap_or(u64::MAX);
         if collector.pending_steps.len() >= size {
             let tail = collector
                 .pending_steps
                 .range(collector.pending_steps.len() - size..)
                 .cloned()
                 .collect::<Vec<_>>();
+            if tail
+                .first()
+                .is_some_and(|step| step.step_index < loop_start_step)
+            {
+                return Ok(());
+            }
             if state
                 .window
                 .iter()
@@ -830,6 +841,8 @@ fn update_loop_compression(collector: &mut TraceCollector<'_>) -> io::Result<()>
                     .truncate(collector.pending_steps.len() - size);
                 return Ok(());
             }
+        } else {
+            return Ok(());
         }
         collector.flush_loop_summary()?;
     }
@@ -1011,5 +1024,79 @@ mod tests {
         observation.sp_after = 0xFFFC;
         let signature = StepSignature::from_observation(&observation);
         assert!(signature.interrupt_entry);
+    }
+
+    #[test]
+    fn does_not_break_active_loop_until_full_window_arrives() {
+        let path = std::env::temp_dir().join("trace_rom_loop_extension_test.txt");
+        let file = fs::File::create(&path).unwrap();
+        let mut writer = BufWriter::new(file);
+        let config = CliConfig {
+            rom_path: PathBuf::new(),
+            output_path: PathBuf::new(),
+            cycle_step: 1,
+            max_steps: None,
+            max_cycles: None,
+            exit_on_jr_fe: false,
+            exit_on_unimplemented: false,
+            watch_io: false,
+            format: TraceFormat::Minimal,
+        };
+        let mut c = TraceCollector::new(&mut writer, &config);
+        let loop_seq = [
+            step(0, 0x0100, 0x0102, 0xF0, 0x44),
+            step(4, 0x0102, 0x0104, 0xFE, 0x90),
+            step(8, 0x0104, 0x0100, 0x20, 0xFA),
+        ];
+        c.pending_steps.push_back(PendingStep {
+            step_index: 0,
+            text: format_cpu_step_line(
+                0,
+                &step(0, 0x0000, 0x0001, 0x00, 0x00),
+                TraceFormat::Minimal,
+            ),
+            start_cycle: 0,
+            end_cycle: 4,
+            signature: StepSignature::from_observation(&step(0, 0x0000, 0x0001, 0x00, 0x00)),
+        });
+        for (idx, s) in loop_seq.iter().chain(loop_seq.iter()).enumerate() {
+            let step_index = (idx + 1) as u64;
+            c.pending_steps.push_back(PendingStep {
+                step_index,
+                text: format_cpu_step_line(step_index, s, TraceFormat::Minimal),
+                start_cycle: s.start_cycle + ((idx / 3) as u64) * 12,
+                end_cycle: s.end_cycle + ((idx / 3) as u64) * 12,
+                signature: StepSignature::from_observation(s),
+            });
+        }
+        update_loop_compression(&mut c).unwrap();
+        assert!(c.loop_state.is_some());
+
+        c.pending_steps.push_back(PendingStep {
+            step_index: 7,
+            text: format_cpu_step_line(7, &loop_seq[0], TraceFormat::Minimal),
+            start_cycle: 24,
+            end_cycle: 28,
+            signature: StepSignature::from_observation(&loop_seq[0]),
+        });
+        update_loop_compression(&mut c).unwrap();
+        assert!(c.loop_state.is_some());
+
+        c.pending_steps.push_back(PendingStep {
+            step_index: 8,
+            text: format_cpu_step_line(8, &loop_seq[1], TraceFormat::Minimal),
+            start_cycle: 28,
+            end_cycle: 32,
+            signature: StepSignature::from_observation(&loop_seq[1]),
+        });
+        c.pending_steps.push_back(PendingStep {
+            step_index: 9,
+            text: format_cpu_step_line(9, &loop_seq[2], TraceFormat::Minimal),
+            start_cycle: 32,
+            end_cycle: 36,
+            signature: StepSignature::from_observation(&loop_seq[2]),
+        });
+        update_loop_compression(&mut c).unwrap();
+        assert_eq!(c.loop_state.as_ref().map(|s| s.repetitions), Some(3));
     }
 }
