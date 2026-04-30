@@ -297,9 +297,9 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [x] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
   - [x] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them. **([impl]/[doc]/[gate] legend added in this section.)**
-- [ ] **Priority 2: Remove cross-doc threshold ambiguity (Milestone 4 smoke coverage)**
-  - [ ] Align backlog and `tests/README.md` on one closure threshold: either strict **3/3** curated title passes or explicitly documented phased policy (**2/3 minimum for interim, 3/3 for release sign-off**).
-  - [ ] Mirror the chosen threshold in smoke schema-facing guidance so artifact review does not rely on tribal knowledge.
+- [x] **Priority 2: Remove cross-doc threshold ambiguity (Milestone 4 smoke coverage)**
+  - [x] Align backlog and `tests/README.md` on one closure threshold: strict **3/3** curated title passes for Milestone 4 closure sign-off.
+  - [x] Mirror the chosen threshold in smoke schema-facing guidance so artifact review does not rely on tribal knowledge.
 - [ ] **Priority 3: Document blocking dependencies directly inside milestones**
   - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
   - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
