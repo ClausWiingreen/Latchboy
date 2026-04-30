@@ -308,7 +308,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
   - [x] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
 - [ ] **Priority 3: Re-scope Milestone 5 naming and order**
-  - [ ] Rename Milestone 5 heading from “Input and DMA” to “Input and UX integration” (DMA has already been pulled into Milestone 4 implementation scope).
+  - [x] Rename Milestone 5 heading from “Input and DMA” to “Input and UX integration” (DMA has already been pulled into Milestone 4 implementation scope).
   - [ ] Keep FF00/joypad interrupt behavior as Milestone 5 gate prerequisites before adding broader game-compatibility smoke goals.
   - [ ] Add a follow-on milestone note for post-input interactive goals (pause/reset hotkeys, deterministic input playback, and expanded compatibility smoke list).
 - [ ] **Milestone 4 closure contract**
