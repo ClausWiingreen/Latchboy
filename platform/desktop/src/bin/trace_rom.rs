@@ -67,15 +67,14 @@ struct LoopState {
 }
 
 fn instruction_len(observation: &CpuStepObservation) -> u16 {
-    let len = match observation.opcode_hint {
+    match observation.opcode_hint {
         Some(
             0x3E | 0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x18 | 0x20 | 0x28 | 0x30
             | 0x38 | 0xC6 | 0xCE | 0xD6 | 0xDE | 0xE0 | 0xE6 | 0xEE | 0xF0 | 0xF6 | 0xFE,
         ) => 2,
         Some(0x01 | 0x11 | 0x21 | 0x31 | 0x08 | 0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA | 0xCD) => 3,
         _ => 1,
-    };
-    len
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -951,7 +950,7 @@ mod tests {
                     ..s.clone()
                 };
                 c.pending_steps.push_back(PendingStep {
-                    text: format_cpu_step_line(i as u64, &obs, TraceFormat::Minimal),
+                    text: format_cpu_step_line(i, &obs, TraceFormat::Minimal),
                     start_cycle: obs.start_cycle,
                     end_cycle: obs.end_cycle,
                     signature: StepSignature::from_observation(&obs),
