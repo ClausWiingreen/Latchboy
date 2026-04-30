@@ -309,8 +309,13 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
 - [ ] **Priority 3: Re-scope Milestone 5 naming and order**
   - [x] Rename Milestone 5 heading from “Input and DMA” to “Input and UX integration” (DMA has already been pulled into Milestone 4 implementation scope).
-  - [ ] Keep FF00/joypad interrupt behavior as Milestone 5 gate prerequisites before adding broader game-compatibility smoke goals.
+  - [x] Keep FF00/joypad interrupt behavior as Milestone 5 gate prerequisites before adding broader game-compatibility smoke goals.
   - [ ] Add a follow-on milestone note for post-input interactive goals (pause/reset hotkeys, deterministic input playback, and expanded compatibility smoke list).
+
+**Milestone 5 gate-order note (2026-04-30)**
+- Milestone 5 closure should stay anchored on FF00 matrix correctness + joypad interrupt signaling (unit/integration + required Milestone 5 ROM gates) before any expansion to broader curated game-compatibility smoke targets.
+- Broader interaction-heavy smoke goals remain follow-on work after FF00/interrupt gate evidence is fixture-backed and CI-enforced.
+
 - [ ] **Milestone 4 closure contract**
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
   - [x] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
