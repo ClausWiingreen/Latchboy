@@ -279,6 +279,11 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 ## Backlog sequencing refinements (2026-04-20, review-driven updates)
 
+- **Status marker legend (applies to this section and future milestone closure notes)**
+  - **[impl]** Implemented in code (feature behavior exists with local tests where practical).
+  - **[doc]** Documented contract/evidence requirements (runbook, manifest comments, artifact schema guidance).
+  - **[gate]** Enforced in automated validation (CI/test assertions fail on regressions or missing prerequisites).
+
 - [ ] **Priority 0: Close Milestone 3 objective evidence gap before expanding milestone scope**
   - [x] Add a required Milestone 3 boot/startup external validation case to `tests/rom_manifest.toml` (or an equivalent required deterministic external harness case) so startup acceptance is fixture-backed, not unit-only.
   - [x] Add a dedicated Milestone 3 gate test in `core/tests/external_rom_validation.rs` (`required_milestone_3_roms_pass_under_external_validation_flow`) to avoid coupling Milestone 3 pass/fail status to Milestone 2 runs.
@@ -291,7 +296,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [x] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
-  - [ ] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them.
+  - [x] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them. **([impl]/[doc]/[gate] legend added in this section.)**
 - [ ] **Priority 2: Remove cross-doc threshold ambiguity (Milestone 4 smoke coverage)**
   - [ ] Align backlog and `tests/README.md` on one closure threshold: either strict **3/3** curated title passes or explicitly documented phased policy (**2/3 minimum for interim, 3/3 for release sign-off**).
   - [ ] Mirror the chosen threshold in smoke schema-facing guidance so artifact review does not rely on tribal knowledge.
