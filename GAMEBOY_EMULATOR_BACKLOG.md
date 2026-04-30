@@ -323,7 +323,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - deterministic input recording/playback for reproducible smoke/debug sessions,
   - expanded curated compatibility smoke matrix beyond the current minimum closure set.
 
-- [ ] **Milestone 4 closure contract**
+- [x] **Milestone 4 closure contract**
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
   - [x] Gate those required Milestone 4 entries in `external_rom_validation` tests and CI execution.
   - [x] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
