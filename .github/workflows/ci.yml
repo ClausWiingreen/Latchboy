@@ -72,5 +72,10 @@ jobs:
       - name: Lint with clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Milestone smoke threshold policy
+        run: |
+          echo "Milestone smoke threshold policy: strict 3/3 curated title checkpoint passes are required for closure messaging."
+          echo "CI does not publish commercial frame captures; closure evidence must remain metadata+hash only."
+
       - name: Run tests
         run: cargo test --workspace --all-targets
