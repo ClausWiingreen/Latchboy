@@ -1,8 +1,8 @@
+use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::collections::VecDeque;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -41,8 +41,13 @@ impl StepSignature {
             pc_after: observation.pc_after,
             operand1: observation.operand1_before,
             operand2: observation.operand2_before,
-            branch_taken: observation.pc_after != observation.pc_before.wrapping_add(instruction_len(observation)),
-            interrupt_entry: !observation.ime_before && observation.ime_after && observation.sp_after != observation.sp_before,
+            branch_taken: observation.pc_after
+                != observation
+                    .pc_before
+                    .wrapping_add(instruction_len(observation)),
+            interrupt_entry: !observation.ime_before
+                && observation.ime_after
+                && observation.sp_after != observation.sp_before,
         }
     }
 }
@@ -63,13 +68,15 @@ struct LoopState {
 
 fn instruction_len(observation: &CpuStepObservation) -> u16 {
     let len = match observation.opcode_hint {
-        Some(0x3E | 0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x18 | 0x20 | 0x28 | 0x30 | 0x38 | 0xC6 | 0xCE | 0xD6 | 0xDE | 0xE0 | 0xE6 | 0xEE | 0xF0 | 0xF6 | 0xFE) => 2,
+        Some(
+            0x3E | 0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x18 | 0x20 | 0x28 | 0x30
+            | 0x38 | 0xC6 | 0xCE | 0xD6 | 0xDE | 0xE0 | 0xE6 | 0xEE | 0xF0 | 0xF6 | 0xFE,
+        ) => 2,
         Some(0x01 | 0x11 | 0x21 | 0x31 | 0x08 | 0xC3 | 0xC2 | 0xCA | 0xD2 | 0xDA | 0xCD) => 3,
         _ => 1,
     };
     len
 }
-
 
 #[derive(Debug, Clone, Copy)]
 enum TraceFormat {
@@ -158,7 +165,6 @@ impl<'a> TraceCollector<'a> {
     }
 }
 
-
 impl<'a> TraceCollector<'a> {
     fn flush_pending_raw(&mut self) -> io::Result<()> {
         while let Some(step) = self.pending_steps.pop_front() {
@@ -172,12 +178,31 @@ impl<'a> TraceCollector<'a> {
             if state.repetitions > 1 {
                 let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
                 let end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
-                let first_pc = state.window.first().map(|s| s.signature.pc_before).unwrap_or(0);
-                let last_pc = state.window.last().map(|s| s.signature.pc_after).unwrap_or(first_pc);
-                let body = state.window.iter().map(|s| format!("{:02X}", s.signature.opcode.unwrap_or(0xFF))).collect::<Vec<_>>().join(" ");
-                writeln!(self.writer, "loop x{}: [{}] cycles={}..{} pc_span={:04X}->{:04X}", state.repetitions, body, start, end, first_pc, last_pc)?;
+                let first_pc = state
+                    .window
+                    .first()
+                    .map(|s| s.signature.pc_before)
+                    .unwrap_or(0);
+                let last_pc = state
+                    .window
+                    .last()
+                    .map(|s| s.signature.pc_after)
+                    .unwrap_or(first_pc);
+                let body = state
+                    .window
+                    .iter()
+                    .map(|s| format!("{:02X}", s.signature.opcode.unwrap_or(0xFF)))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    self.writer,
+                    "loop x{}: [{}] cycles={}..{} pc_span={:04X}->{:04X}",
+                    state.repetitions, body, start, end, first_pc, last_pc
+                )?;
             } else {
-                for step in state.window { writeln!(self.writer, "{}", step.text)?; }
+                for step in state.window {
+                    writeln!(self.writer, "{}", step.text)?;
+                }
             }
         }
         Ok(())
@@ -241,7 +266,13 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
                 }
             }
             EmulatorEvent::HaltedFastForward(observation) => {
-                if let Err(error) = self.flush_loop_summary().and_then(|_| self.flush_pending_raw()) { self.io_error = Some(error); return; }
+                if let Err(error) = self
+                    .flush_loop_summary()
+                    .and_then(|_| self.flush_pending_raw())
+                {
+                    self.io_error = Some(error);
+                    return;
+                }
                 if let Some(limit) = self.config.max_steps {
                     if self.budget_steps >= limit {
                         self.exit_reason = Some(ExitReason::MaxStepsReached { limit });
@@ -263,7 +294,13 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
                 }
             }
             EmulatorEvent::WatchIo(observation) => {
-                if let Err(error) = self.flush_loop_summary().and_then(|_| self.flush_pending_raw()) { self.io_error = Some(error); return; }
+                if let Err(error) = self
+                    .flush_loop_summary()
+                    .and_then(|_| self.flush_pending_raw())
+                {
+                    self.io_error = Some(error);
+                    return;
+                }
                 if let Err(error) = write_watch_io_line(self.writer, &observation) {
                     self.io_error = Some(error);
                 }
@@ -417,10 +454,7 @@ fn format_opcode(value: Option<u8>) -> String {
         .unwrap_or_else(|| "--".to_string())
 }
 
-fn format_cpu_step_line_minimal(
-    step_index: u64,
-    observation: &CpuStepObservation,
-) -> String {
+fn format_cpu_step_line_minimal(step_index: u64, observation: &CpuStepObservation) -> String {
     let mut changed = Vec::new();
     let before = &observation.registers_before;
     let after = &observation.registers_after;
@@ -475,10 +509,7 @@ fn format_cpu_step_line_minimal(
     )
 }
 
-fn format_cpu_step_line_normal(
-    step_index: u64,
-    observation: &CpuStepObservation,
-) -> String {
+fn format_cpu_step_line_normal(step_index: u64, observation: &CpuStepObservation) -> String {
     let regs = &observation.registers_after;
     format!(
         "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={} ppu_lcdc={:02X}->{:02X} ppu_stat={:02X}->{:02X} ppu_ly={:02X}->{:02X}",
@@ -509,10 +540,7 @@ fn format_cpu_step_line_normal(
     )
 }
 
-fn format_cpu_step_line_full(
-    step_index: u64,
-    observation: &CpuStepObservation,
-) -> String {
+fn format_cpu_step_line_full(step_index: u64, observation: &CpuStepObservation) -> String {
     let regs = &observation.registers_after;
     format!(
         "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={} ppu_lcdc={:02X}->{:02X} ppu_stat={:02X}->{:02X} ppu_ly={:02X}->{:02X} ppu_lyc={:02X}->{:02X} ppu_dot={:03}->{:03} ppu_lcd_warmup={}->{}",
@@ -552,7 +580,7 @@ fn format_cpu_step_line_full(
 fn write_halted_fast_forward_line(
     writer: &mut BufWriter<fs::File>,
     observation: &HaltedFastForwardObservation,
- ) -> io::Result<()> {
+) -> io::Result<()> {
     writeln!(
         writer,
         "halt-fast-forward cycles={}..{} pc={:04X} advanced={}",
@@ -772,36 +800,70 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-
 fn update_loop_compression(collector: &mut TraceCollector<'_>) -> io::Result<()> {
     if let Some(state) = collector.loop_state.as_mut() {
         let size = state.window.len();
         if collector.pending_steps.len() >= size {
-            let tail = collector.pending_steps.range(collector.pending_steps.len() - size..).cloned().collect::<Vec<_>>();
-            if state.window.iter().zip(&tail).all(|(x, y)| x.signature == y.signature && !y.signature.interrupt_entry) {
+            let tail = collector
+                .pending_steps
+                .range(collector.pending_steps.len() - size..)
+                .cloned()
+                .collect::<Vec<_>>();
+            if state
+                .window
+                .iter()
+                .zip(&tail)
+                .all(|(x, y)| x.signature == y.signature && !y.signature.interrupt_entry)
+            {
                 state.repetitions = state.repetitions.saturating_add(1);
-                collector.pending_steps.truncate(collector.pending_steps.len() - size);
+                collector
+                    .pending_steps
+                    .truncate(collector.pending_steps.len() - size);
                 return Ok(());
             }
         }
         collector.flush_loop_summary()?;
     }
-    if collector.pending_steps.len() < LOOP_WINDOW_MIN * 2 { return Ok(()); }
+    if collector.pending_steps.len() < LOOP_WINDOW_MIN * 2 {
+        return Ok(());
+    }
     let len = collector.pending_steps.len();
     let preferred = LOOP_WINDOW_PREFERRED.min(len / 2);
-    let candidates = std::iter::once(preferred).chain((LOOP_WINDOW_MIN..=LOOP_WINDOW_MAX.min(len/2)).rev().filter(move |s| *s != preferred));
+    let candidates = std::iter::once(preferred).chain(
+        (LOOP_WINDOW_MIN..=LOOP_WINDOW_MAX.min(len / 2))
+            .rev()
+            .filter(move |s| *s != preferred),
+    );
     for size in candidates {
-        if size < LOOP_WINDOW_MIN { continue; }
-        let a = collector.pending_steps.range(len - 2*size..len-size).cloned().collect::<Vec<_>>();
-        let b = collector.pending_steps.range(len - size..len).cloned().collect::<Vec<_>>();
-        if a.iter().zip(&b).all(|(x,y)| x.signature==y.signature && !x.signature.interrupt_entry) {
-            collector.pending_steps.truncate(len - 2*size);
-            collector.loop_state = Some(LoopState{window:a,repetitions:2});
+        if size < LOOP_WINDOW_MIN {
+            continue;
+        }
+        let a = collector
+            .pending_steps
+            .range(len - 2 * size..len - size)
+            .cloned()
+            .collect::<Vec<_>>();
+        let b = collector
+            .pending_steps
+            .range(len - size..len)
+            .cloned()
+            .collect::<Vec<_>>();
+        if a.iter()
+            .zip(&b)
+            .all(|(x, y)| x.signature == y.signature && !x.signature.interrupt_entry)
+        {
+            collector.pending_steps.truncate(len - 2 * size);
+            collector.loop_state = Some(LoopState {
+                window: a,
+                repetitions: 2,
+            });
             return Ok(());
         }
     }
-    if collector.pending_steps.len() > LOOP_WINDOW_MAX*2 {
-        if let Some(step)=collector.pending_steps.pop_front(){ writeln!(collector.writer,"{}",step.text)?; }
+    if collector.pending_steps.len() > LOOP_WINDOW_MAX * 2 {
+        if let Some(step) = collector.pending_steps.pop_front() {
+            writeln!(collector.writer, "{}", step.text)?;
+        }
     }
     Ok(())
 }
@@ -811,7 +873,13 @@ mod tests {
     use super::*;
     use latchboy_core::{cpu::Registers, observability::PpuSnapshot};
 
-    fn step(start_cycle: u64, pc_before: u16, pc_after: u16, opcode: u8, operand1: u8) -> CpuStepObservation {
+    fn step(
+        start_cycle: u64,
+        pc_before: u16,
+        pc_after: u16,
+        opcode: u8,
+        operand1: u8,
+    ) -> CpuStepObservation {
         CpuStepObservation {
             start_cycle,
             end_cycle: start_cycle + 4,
@@ -831,10 +899,24 @@ mod tests {
             halted_after: false,
             interrupt_flag_before: 0,
             interrupt_enable_before: 0,
-            ppu_before: PpuSnapshot { lcdc: 0, stat: 0, ly: 0x44, lyc: 0, scanline_dot: 0, lcd_enable_delay_dots: 0 },
+            ppu_before: PpuSnapshot {
+                lcdc: 0,
+                stat: 0,
+                ly: 0x44,
+                lyc: 0,
+                scanline_dot: 0,
+                lcd_enable_delay_dots: 0,
+            },
             interrupt_flag: 0,
             interrupt_enable: 0,
-            ppu_after: PpuSnapshot { lcdc: 0, stat: 0, ly: 0x44, lyc: 0, scanline_dot: 0, lcd_enable_delay_dots: 0 },
+            ppu_after: PpuSnapshot {
+                lcdc: 0,
+                stat: 0,
+                ly: 0x44,
+                lyc: 0,
+                scanline_dot: 0,
+                lcd_enable_delay_dots: 0,
+            },
             unimplemented_opcode: None,
         }
     }
@@ -863,7 +945,11 @@ mod tests {
         ];
         for i in 0..2 {
             for s in seq.iter() {
-                let obs = CpuStepObservation { start_cycle: s.start_cycle + i * 12, end_cycle: s.end_cycle + i * 12, ..s.clone() };
+                let obs = CpuStepObservation {
+                    start_cycle: s.start_cycle + i * 12,
+                    end_cycle: s.end_cycle + i * 12,
+                    ..s.clone()
+                };
                 c.pending_steps.push_back(PendingStep {
                     text: format_cpu_step_line(i as u64, &obs, TraceFormat::Minimal),
                     start_cycle: obs.start_cycle,
@@ -875,7 +961,11 @@ mod tests {
         update_loop_compression(&mut c).unwrap();
         assert!(c.loop_state.is_some());
         c.pending_steps.push_back(PendingStep {
-            text: format_cpu_step_line(99, &step(24, 0x0104, 0x0106, 0x20, 0xFA), TraceFormat::Minimal),
+            text: format_cpu_step_line(
+                99,
+                &step(24, 0x0104, 0x0106, 0x20, 0xFA),
+                TraceFormat::Minimal,
+            ),
             start_cycle: 24,
             end_cycle: 28,
             signature: StepSignature::from_observation(&step(24, 0x0104, 0x0106, 0x20, 0xFA)),
