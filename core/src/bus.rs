@@ -104,6 +104,7 @@ impl Hash for Bus {
         self.wram.hash(state);
         self.io_registers.hash(state);
         self.joypad.hash(state);
+        self.serial.hash(state);
         self.timer.hash(state);
         self.hram.hash(state);
         self.interrupt_enable.hash(state);

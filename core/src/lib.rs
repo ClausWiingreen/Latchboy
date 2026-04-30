@@ -705,6 +705,36 @@ mod tests {
     }
 
     #[test]
+    fn hash_reflects_serial_state() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"HSHS");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let emu_a = Emulator::from_cartridge(cartridge.clone());
+        let mut emu_b = Emulator::from_cartridge(cartridge);
+
+        emu_b.bus.write8(crate::serial::SB_REGISTER, b'P');
+        emu_b.bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        let mut hasher_a = DefaultHasher::new();
+        emu_a.hash(&mut hasher_a);
+
+        let mut hasher_b = DefaultHasher::new();
+        emu_b.hash(&mut hasher_b);
+
+        assert_ne!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
     fn reset_preserves_loaded_cartridge_program() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
         rom[0x0100] = 0x3E; // LD A, d8
