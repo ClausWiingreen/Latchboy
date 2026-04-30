@@ -45,8 +45,8 @@ impl StepSignature {
                 != observation
                     .pc_before
                     .wrapping_add(instruction_len(observation)),
-            interrupt_entry: !observation.ime_before
-                && observation.ime_after
+            interrupt_entry: observation.ime_before
+                && !observation.ime_after
                 && observation.sp_after != observation.sp_before,
         }
     }
@@ -176,7 +176,10 @@ impl<'a> TraceCollector<'a> {
         if let Some(state) = self.loop_state.take() {
             if state.repetitions > 1 {
                 let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
-                let end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
+                let single_window_end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
+                let single_window_cycles = single_window_end.saturating_sub(start);
+                let end =
+                    start.saturating_add(single_window_cycles.saturating_mul(state.repetitions));
                 let first_pc = state
                     .window
                     .first()
@@ -975,6 +978,18 @@ mod tests {
         writer.flush().unwrap();
         let out = fs::read_to_string(path).unwrap();
         assert!(out.contains("loop x"));
+        assert!(out.contains("cycles=0..24"));
         assert!(out.contains("step="));
+    }
+
+    #[test]
+    fn marks_interrupt_entry_on_ime_disable_and_stack_push() {
+        let mut observation = step(0, 0x0100, 0x0040, 0x00, 0x00);
+        observation.ime_before = true;
+        observation.ime_after = false;
+        observation.sp_before = 0xFFFE;
+        observation.sp_after = 0xFFFC;
+        let signature = StepSignature::from_observation(&observation);
+        assert!(signature.interrupt_entry);
     }
 }
