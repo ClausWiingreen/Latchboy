@@ -252,8 +252,12 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Joypad interrupt generation.
 
 **Acceptance criteria**
-- Input works consistently in at least 3 games.
-- Joypad interrupt behavior passes targeted ROM/unit tests and works consistently in at least 3 games.
+- **Required ROM gate threshold (objective):** All `milestone = 5` and `required = true` joypad/input-focused entries in `tests/rom_manifest.toml` pass **100%** under fixture-backed `external_rom_validation` runs (`LATCHBOY_ROM_ROOT` set).
+- **Deterministic smoke threshold (objective):** At least **3/3** curated input-usable title smoke cases reach their named interaction checkpoints (for example: start/menu navigation) within fixed frame/time budgets captured in the smoke artifact summary.
+- **Targeted behavior gate (objective):** Joypad interrupt behavior passes targeted unit/integration tests and any required Milestone 5 ROM cases that explicitly exercise FF00 interrupt signaling.
+- **Evidence linkage (must exist for sign-off):**
+  - Automated gate evidence from milestone-scoped `external_rom_validation` test output for Milestone 5 required entries.
+  - Committed smoke summary artifact (metadata + hashes only) documenting title ID, checkpoint signal, budget, and pass/fail reason for each curated case.
 
 ---
 
@@ -270,8 +274,8 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
   - [x] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
   - [x] Add a CI assertion that milestone-gating runs report **executed required ROM count > 0** (to prevent skip-green sign-offs).
-- [ ] **Priority 2: Normalize acceptance criteria wording**
-  - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
+- [x] **Priority 2: Normalize acceptance criteria wording**
+  - [x] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
 
 ## Backlog sequencing refinements (2026-04-20, review-driven updates)
 
