@@ -188,6 +188,11 @@ impl Emulator {
         self.bus.set_button_pressed(button, pressed);
     }
 
+    /// Drains and returns bytes emitted by completed serial transfers.
+    pub fn take_serial_transfer_log(&mut self) -> Vec<u8> {
+        self.bus.take_serial_transfer_log()
+    }
+
     /// Advances execution by at least `cycles` machine cycles and emits detailed execution events.
     pub fn step_cycles_with_observer<O: EmulatorObserver>(
         &mut self,
@@ -702,6 +707,58 @@ mod tests {
         emu_b.hash(&mut hasher_b);
 
         assert_ne!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
+    fn hash_reflects_serial_state() {
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"HSHS");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let emu_a = Emulator::from_cartridge(cartridge.clone());
+        let mut emu_b = Emulator::from_cartridge(cartridge);
+
+        emu_b.bus.write8(crate::serial::SB_REGISTER, b'P');
+        emu_b.bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        let mut hasher_a = DefaultHasher::new();
+        emu_a.hash(&mut hasher_a);
+
+        let mut hasher_b = DefaultHasher::new();
+        emu_b.hash(&mut hasher_b);
+
+        assert_ne!(hasher_a.finish(), hasher_b.finish());
+    }
+
+    #[test]
+    fn serial_transfer_log_is_exposed_via_emulator_api() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"SLOG");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+
+        emulator.bus.write8(crate::serial::SB_REGISTER, b'P');
+        emulator.bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(emulator.take_serial_transfer_log(), vec![b'P']);
+        assert!(emulator.take_serial_transfer_log().is_empty());
     }
 
     #[test]
