@@ -267,7 +267,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [ ] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
 - [ ] **Priority 1: Turn Milestone 4 evidence from “defined” to “enforced”**
   - [x] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
-  - [ ] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
+  - [x] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
   - [ ] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
   - [ ] Add a CI assertion that milestone-gating runs report **executed required ROM count > 0** (to prevent skip-green sign-offs).
 - [ ] **Priority 2: Normalize acceptance criteria wording**
