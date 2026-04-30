@@ -259,9 +259,9 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 ## Backlog sequencing refinements (2026-04-17)
 
-- [ ] **Priority 1: Tighten milestone-to-validation mapping**
-  - [ ] For each milestone from 3 onward, define at least one required external ROM suite entry (`tests/rom_manifest.toml`) before marking the milestone complete.
-  - [ ] Keep deferred/non-required entries explicit, with a note describing the dependency (e.g., PPU mode timing not yet in scope).
+- [x] **Priority 1: Tighten milestone-to-validation mapping**
+  - [x] For each milestone from 3 onward, define at least one required external ROM suite entry (`tests/rom_manifest.toml`) before marking the milestone complete.
+  - [x] Keep deferred/non-required entries explicit, with a note describing the dependency (e.g., PPU mode timing not yet in scope).
 - [ ] **Priority 1: Close the “registered vs enforced” validation gap**
   - [ ] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
   - [ ] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
