@@ -294,9 +294,9 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [x] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
   - [x] Add an explicit CI preflight check that fails when `LATCHBOY_ROM_ROOT` is unset/empty for milestone-gating jobs.
   - [x] Keep developer-local runs skippable, but make release/merge gate jobs fixture-mandatory and documented as such.
-- [ ] **Priority 1: Reorder validation progression to match dependency risk**
+- [x] **Priority 1: Reorder validation progression to match dependency risk**
   - [x] Complete Milestone 3 fixture-enforced closure first.
-  - [ ] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
+  - [x] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
   - [ ] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [x] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
