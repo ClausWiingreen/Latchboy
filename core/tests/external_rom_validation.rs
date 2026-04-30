@@ -614,6 +614,77 @@ validate(summary, schema, schema)
 }
 
 #[test]
+fn milestone4_artifacts_forbid_copyrighted_frame_captures() {
+    let artifacts_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/artifacts");
+    let ignored_smoke_artifacts_root = artifacts_root.join("smoke/milestone4");
+    let forbidden_extensions = [
+        "png", "jpg", "jpeg", "gif", "bmp", "webp", "mp4", "mov", "mkv",
+    ];
+    let forbidden_names = ["frames", "final_frame.png", "video", "captures"];
+
+    let mut violations = Vec::new();
+    let mut stack = vec![artifacts_root.clone()];
+    while let Some(path) = stack.pop() {
+        if path.starts_with(&ignored_smoke_artifacts_root) {
+            continue;
+        }
+
+        let entries = fs::read_dir(&path).unwrap_or_else(|error| {
+            panic!("failed to read artifacts path {}: {error}", path.display())
+        });
+        for entry in entries {
+            let entry =
+                entry.unwrap_or_else(|error| panic!("failed to read artifact entry: {error}"));
+            let entry_path = entry.path();
+            let metadata = entry.metadata().unwrap_or_else(|error| {
+                panic!(
+                    "failed to read metadata for {}: {error}",
+                    entry_path.display()
+                )
+            });
+
+            if metadata.is_dir() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy().to_ascii_lowercase();
+                if forbidden_names.iter().any(|forbidden| name == *forbidden) {
+                    violations.push(format!("forbidden directory: {}", entry_path.display()));
+                }
+                stack.push(entry_path);
+                continue;
+            }
+
+            let lowercase_path = entry_path.to_string_lossy().to_ascii_lowercase();
+            if forbidden_names
+                .iter()
+                .any(|forbidden| lowercase_path.ends_with(forbidden))
+            {
+                violations.push(format!("forbidden file name: {}", entry_path.display()));
+                continue;
+            }
+
+            if let Some(ext) = entry_path.extension().and_then(|ext| ext.to_str()) {
+                let ext = ext.to_ascii_lowercase();
+                if forbidden_extensions
+                    .iter()
+                    .any(|forbidden| ext == *forbidden)
+                {
+                    violations.push(format!(
+                        "forbidden media extension .{ext}: {}",
+                        entry_path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "tests/artifacts must not contain copyrighted frame/image/video captures:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn manifest_parser_accepts_inline_toml_comments() {
     let temp_dir = std::env::temp_dir();
     let manifest_path = temp_dir.join(format!(
