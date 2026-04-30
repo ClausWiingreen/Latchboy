@@ -143,6 +143,7 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 **Acceptance criteria**
 - Timer test ROMs pass.
 - Boot/no-boot paths both produce stable startup.
+- Serial pass/fail capture hook (`SB`/`SC`-backed test output) remains a required diagnostics dependency for fixture-driven Milestones 3–5 validation expansion.
 
 **Acceptance status review (2026-04-20, updated)**
 - ✅ `Timer test ROMs pass` now has **manifest-level coverage wiring** in-tree: `tests/rom_manifest.toml` includes required Milestone 3 timer-adjacent entries (`blargg-instr-timing-m3-gate`, `mooneye-acceptance-timer-div-write`) plus an explicit deferred timer case (`mooneye-acceptance-timer-rapid-toggle`), and `external_rom_validation` enforces this structure.
@@ -215,6 +216,8 @@ Build a reliable, testable, and reasonably accurate Nintendo Game Boy (DMG) emul
 - **Evidence linkage (must exist for sign-off):**
   - Automated gate evidence: `external_rom_validation` output for `required_milestone_4_roms_pass_under_external_validation_flow`.
   - Smoke evidence artifact: `tests/artifacts/milestone4-smoke-summary.json` (validated against `tests/artifacts/milestone4-smoke-summary.schema.json`).
+- Milestone 4 validation continues to require an available serial diagnostics path for ROM suites that emit pass/fail over `SB`/`SC`, even before full link-cable emulation.
+
 - **Deterministic verification commands (CI/local):**
   - `LATCHBOY_ROM_ROOT=<rom-fixtures> cargo test -p latchboy-core --test external_rom_validation required_milestone_4_roms_pass_under_external_validation_flow`
   - `cargo run -p latchboy-desktop --bin milestone4_smoke -- --rom <absolute-rom-path> --rom-id <rom-id> --title-id <tetris-world|super-mario-land-world|legend-of-zelda-links-awakening-world> --title-signal-hash <expected-hash> --output-dir tests/artifacts/smoke/milestone4/<timestamp>/<title-id>`
@@ -252,6 +255,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Joypad interrupt generation.
 
 **Acceptance criteria**
+- Milestone 5 closure keeps serial diagnostics as a prerequisite for scalable ROM verdict collection across input-focused suites.
 - **Required ROM gate threshold (objective):** All `milestone = 5` and `required = true` joypad/input-focused entries in `tests/rom_manifest.toml` pass **100%** under fixture-backed `external_rom_validation` runs (`LATCHBOY_ROM_ROOT` set).
 - **Deterministic smoke threshold (objective):** At least **3/3** curated input-usable title smoke cases reach their named interaction checkpoints (for example: start/menu navigation) within fixed frame/time budgets captured in the smoke artifact summary.
 - **Targeted behavior gate (objective):** Joypad interrupt behavior passes targeted unit/integration tests and any required Milestone 5 ROM cases that explicitly exercise FF00 interrupt signaling.
@@ -300,9 +304,9 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [x] **Priority 2: Remove cross-doc threshold ambiguity (Milestone 4 smoke coverage)**
   - [x] Align backlog and `tests/README.md` on one closure threshold: strict **3/3** curated title passes for Milestone 4 closure sign-off.
   - [x] Mirror the chosen threshold in smoke schema-facing guidance so artifact review does not rely on tribal knowledge.
-- [ ] **Priority 3: Document blocking dependencies directly inside milestones**
-  - [ ] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
-  - [ ] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
+- [x] **Priority 3: Document blocking dependencies directly inside milestones**
+  - [x] Keep DMA listed under Milestone 4 because sprite correctness/timing depends on it.
+  - [x] Keep serial-output hooks referenced in Milestones 3–5 test plans so Blargg-style pass/fail reporting is available before full serial-link completion.
 - [ ] **Priority 3: Re-scope Milestone 5 naming and order**
   - [ ] Rename Milestone 5 heading from “Input and DMA” to “Input and UX integration” (DMA has already been pulled into Milestone 4 implementation scope).
   - [ ] Keep FF00/joypad interrupt behavior as Milestone 5 gate prerequisites before adding broader game-compatibility smoke goals.
