@@ -616,20 +616,27 @@ validate(summary, schema, schema)
 #[test]
 fn milestone4_artifacts_forbid_copyrighted_frame_captures() {
     let artifacts_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/artifacts");
-    let forbidden_extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "mp4", "mov", "mkv"];
+    let forbidden_extensions = [
+        "png", "jpg", "jpeg", "gif", "bmp", "webp", "mp4", "mov", "mkv",
+    ];
     let forbidden_names = ["frames", "final_frame.png", "video", "captures"];
 
     let mut violations = Vec::new();
     let mut stack = vec![artifacts_root.clone()];
     while let Some(path) = stack.pop() {
-        let entries = fs::read_dir(&path)
-            .unwrap_or_else(|error| panic!("failed to read artifacts path {}: {error}", path.display()));
+        let entries = fs::read_dir(&path).unwrap_or_else(|error| {
+            panic!("failed to read artifacts path {}: {error}", path.display())
+        });
         for entry in entries {
-            let entry = entry.unwrap_or_else(|error| panic!("failed to read artifact entry: {error}"));
+            let entry =
+                entry.unwrap_or_else(|error| panic!("failed to read artifact entry: {error}"));
             let entry_path = entry.path();
-            let metadata = entry
-                .metadata()
-                .unwrap_or_else(|error| panic!("failed to read metadata for {}: {error}", entry_path.display()));
+            let metadata = entry.metadata().unwrap_or_else(|error| {
+                panic!(
+                    "failed to read metadata for {}: {error}",
+                    entry_path.display()
+                )
+            });
 
             if metadata.is_dir() {
                 let name = entry.file_name();
@@ -652,8 +659,14 @@ fn milestone4_artifacts_forbid_copyrighted_frame_captures() {
 
             if let Some(ext) = entry_path.extension().and_then(|ext| ext.to_str()) {
                 let ext = ext.to_ascii_lowercase();
-                if forbidden_extensions.iter().any(|forbidden| ext == *forbidden) {
-                    violations.push(format!("forbidden media extension .{ext}: {}", entry_path.display()));
+                if forbidden_extensions
+                    .iter()
+                    .any(|forbidden| ext == *forbidden)
+                {
+                    violations.push(format!(
+                        "forbidden media extension .{ext}: {}",
+                        entry_path.display()
+                    ));
                 }
             }
         }
