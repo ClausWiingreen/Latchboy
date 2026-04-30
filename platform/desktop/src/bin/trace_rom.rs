@@ -83,6 +83,7 @@ enum LoopKind {
 struct LoopSummary {
     kind: LoopKind,
     confidence_high: bool,
+    has_compare_value: bool,
 }
 
 fn instruction_len(observation: &CpuStepObservation) -> u16 {
@@ -139,6 +140,7 @@ struct CliConfig {
     watch_io: bool,
     format: TraceFormat,
     summarize_waits: bool,
+    summarize_waits_overridden: bool,
 }
 
 enum CliParseResult {
@@ -210,13 +212,15 @@ impl<'a> TraceCollector<'a> {
             }
             let semantic = summarize_wait_loop(&state.window);
             let emit_semantic = self.config.summarize_waits
-                && semantic
-                    .as_ref()
-                    .is_some_and(|summary| summary.kind == LoopKind::WaitLyVblank);
+                && semantic.as_ref().is_some_and(|summary| {
+                    summary.kind == LoopKind::WaitLyVblank && summary.has_compare_value
+                });
             let confidence_high = semantic
                 .as_ref()
                 .is_some_and(|summary| summary.confidence_high);
-            let emit_raw_loop = matches!(self.config.format, TraceFormat::Full) || !confidence_high;
+            let force_raw_for_full = matches!(self.config.format, TraceFormat::Full)
+                && !self.config.summarize_waits_overridden;
+            let emit_raw_loop = force_raw_for_full || !confidence_high;
             if state.repetitions > 1 && (!emit_semantic || emit_raw_loop) {
                 let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
                 let single_window_end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
@@ -280,6 +284,7 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
     let mut saw_ly_read = false;
     let mut saw_conditional_back_jump = false;
     let mut high_confidence = false;
+    let mut saw_compare = false;
     for step in window {
         let sig = step.signature;
         match (sig.opcode, sig.operand1, sig.operand2) {
@@ -299,6 +304,9 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
         {
             saw_conditional_back_jump = true;
         }
+        if sig.opcode == Some(0xFE) && sig.operand1.is_some() {
+            saw_compare = true;
+        }
     }
 
     if !(saw_ly_read && saw_conditional_back_jump) {
@@ -307,7 +315,8 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
 
     Some(LoopSummary {
         kind: LoopKind::WaitLyVblank,
-        confidence_high: high_confidence,
+        confidence_high: high_confidence && saw_compare,
+        has_compare_value: saw_compare,
     })
 }
 
@@ -521,6 +530,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         TraceFormat::Full => false,
         TraceFormat::Minimal | TraceFormat::Normal => true,
     });
+    let summarize_waits_overridden = summarize_waits_override.is_some();
 
     Ok(CliParseResult::Config(CliConfig {
         rom_path,
@@ -533,6 +543,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         watch_io,
         format,
         summarize_waits,
+        summarize_waits_overridden,
     }))
 }
 
@@ -1087,6 +1098,7 @@ mod tests {
             watch_io: false,
             format: TraceFormat::Minimal,
             summarize_waits: true,
+            summarize_waits_overridden: false,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let prefix = step(0, 0x0000, 0x0001, 0x00, 0x00);
@@ -1172,6 +1184,7 @@ mod tests {
             watch_io: false,
             format: TraceFormat::Minimal,
             summarize_waits: true,
+            summarize_waits_overridden: false,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let loop_seq = [
