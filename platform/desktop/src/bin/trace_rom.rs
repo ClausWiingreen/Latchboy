@@ -67,6 +67,20 @@ struct LoopState {
     repetitions: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoopKind {
+    WaitLyVblank,
+}
+
+#[derive(Debug, Clone)]
+struct LoopSummary {
+    kind: LoopKind,
+    confidence_high: bool,
+    ly_min: u8,
+    ly_max: u8,
+    ly_terminating: u8,
+}
+
 fn instruction_len(observation: &CpuStepObservation) -> u16 {
     match observation.opcode_hint {
         Some(
@@ -120,6 +134,7 @@ struct CliConfig {
     exit_on_unimplemented: bool,
     watch_io: bool,
     format: TraceFormat,
+    summarize_waits: bool,
 }
 
 enum CliParseResult {
@@ -189,7 +204,14 @@ impl<'a> TraceCollector<'a> {
                     writeln!(self.writer, "{}", step.text)?;
                 }
             }
-            if state.repetitions > 1 {
+            let semantic = summarize_wait_loop(&state.window);
+            let emit_semantic = self.config.summarize_waits
+                && semantic
+                    .as_ref()
+                    .is_some_and(|summary| summary.kind == LoopKind::WaitLyVblank);
+            let confidence_high = semantic.as_ref().is_some_and(|summary| summary.confidence_high);
+            let emit_raw_loop = matches!(self.config.format, TraceFormat::Full) || !confidence_high;
+            if state.repetitions > 1 && (!emit_semantic || emit_raw_loop) {
                 let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
                 let single_window_end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
                 let single_window_cycles = single_window_end.saturating_sub(start);
@@ -216,6 +238,21 @@ impl<'a> TraceCollector<'a> {
                     "loop x{}: [{}] cycles={}..{} pc_span={:04X}->{:04X}",
                     state.repetitions, body, start, end, first_pc, last_pc
                 )?;
+            } else if state.repetitions > 1 && emit_semantic {
+                let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
+                let single_window_end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
+                let single_window_cycles = single_window_end.saturating_sub(start);
+                let cycles_consumed = single_window_cycles.saturating_mul(state.repetitions);
+                let summary = semantic.expect("semantic loop summary should exist");
+                writeln!(
+                    self.writer,
+                    "loop type=wait_ly_vblank iterations={} cycles={} ly_range={:02X}..{:02X} ly_end={:02X}",
+                    state.repetitions,
+                    cycles_consumed,
+                    summary.ly_min,
+                    summary.ly_max,
+                    summary.ly_terminating
+                )?;
             } else {
                 for step in state.window {
                     writeln!(self.writer, "{}", step.text)?;
@@ -229,6 +266,54 @@ impl<'a> TraceCollector<'a> {
         self.flush_loop_summary()?;
         self.flush_pending_raw()
     }
+}
+
+fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
+    if window.len() < 2 {
+        return None;
+    }
+    let mut saw_ly_read = false;
+    let mut saw_conditional_back_jump = false;
+    let mut high_confidence = false;
+    let mut ly_values = Vec::new();
+
+    for step in window {
+        let sig = step.signature;
+        match (sig.opcode, sig.operand1, sig.operand2) {
+            (Some(0xF0), Some(0x44), _) => {
+                saw_ly_read = true;
+                high_confidence = true;
+            }
+            (Some(0xFA), Some(0x44), Some(0xFF)) => {
+                saw_ly_read = true;
+                high_confidence = true;
+            }
+            _ => {}
+        }
+        if sig.opcode == Some(0xFE) {
+            if let Some(value) = sig.operand1 {
+                ly_values.push(value);
+            }
+        }
+        if matches!(sig.opcode, Some(0x20 | 0x28 | 0x30 | 0x38)) && sig.branch_taken && sig.pc_after < sig.pc_before {
+            saw_conditional_back_jump = true;
+        }
+    }
+
+    if !(saw_ly_read && saw_conditional_back_jump) {
+        return None;
+    }
+
+    let ly_min = ly_values.iter().copied().min().unwrap_or(0);
+    let ly_max = ly_values.iter().copied().max().unwrap_or(0);
+    let ly_terminating = ly_values.last().copied().unwrap_or(0);
+    Some(LoopSummary {
+        kind: LoopKind::WaitLyVblank,
+        confidence_high: high_confidence,
+        ly_min,
+        ly_max,
+        ly_terminating,
+    })
 }
 
 impl<'a> EmulatorObserver for TraceCollector<'a> {
@@ -368,6 +453,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
     let mut exit_on_unimplemented = true;
     let mut watch_io = false;
     let mut format = TraceFormat::Normal;
+    let mut summarize_waits_override = None;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -399,6 +485,8 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
             "--exit-on-unimplemented" => exit_on_unimplemented = true,
             "--no-exit-on-unimplemented" => exit_on_unimplemented = false,
             "--watch-io" => watch_io = true,
+            "--summarize-waits" => summarize_waits_override = Some(true),
+            "--no-summarize-waits" => summarize_waits_override = Some(false),
             "--format" => {
                 let value = args
                     .next()
@@ -417,6 +505,11 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         }
     }
 
+    let summarize_waits = summarize_waits_override.unwrap_or(match format {
+        TraceFormat::Full => false,
+        TraceFormat::Minimal | TraceFormat::Normal => true,
+    });
+
     Ok(CliParseResult::Config(CliConfig {
         rom_path,
         output_path,
@@ -427,11 +520,15 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         exit_on_unimplemented,
         watch_io,
         format,
+        summarize_waits,
     }))
 }
 
 fn usage() -> String {
-    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]".to_string()
+    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--summarize-waits|--no-summarize-waits] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]\n\
+--summarize-waits aggregates canonical LY polling loops (FF44 + conditional backward jump) into one semantic event.\n\
+Default: on for minimal/normal format, off for full format."
+        .to_string()
 }
 
 fn load_emulator(rom_path: &PathBuf) -> Result<Emulator, String> {
@@ -958,6 +1055,7 @@ mod tests {
             exit_on_unimplemented: false,
             watch_io: false,
             format: TraceFormat::Minimal,
+            summarize_waits: true,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let prefix = step(0, 0x0000, 0x0001, 0x00, 0x00);
@@ -1009,10 +1107,13 @@ mod tests {
         drop(c);
         writer.flush().unwrap();
         let out = fs::read_to_string(path).unwrap();
-        assert!(out.contains("loop x"));
-        assert!(out.contains("cycles=0..24"));
+        assert!(out.contains("loop type=wait_ly_vblank"));
+        assert!(out.contains("iterations=2"));
+        assert!(out.contains("cycles=24"));
         assert!(out.contains("step="));
-        assert!(out.find("step=0").unwrap() < out.find("loop x").unwrap());
+        assert!(
+            out.find("step=0").unwrap() < out.find("loop type=wait_ly_vblank").unwrap()
+        );
     }
 
     #[test]
@@ -1041,6 +1142,7 @@ mod tests {
             exit_on_unimplemented: false,
             watch_io: false,
             format: TraceFormat::Minimal,
+            summarize_waits: true,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let loop_seq = [
