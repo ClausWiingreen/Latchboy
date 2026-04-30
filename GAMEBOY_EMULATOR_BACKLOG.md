@@ -310,11 +310,18 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Priority 3: Re-scope Milestone 5 naming and order**
   - [x] Rename Milestone 5 heading from “Input and DMA” to “Input and UX integration” (DMA has already been pulled into Milestone 4 implementation scope).
   - [x] Keep FF00/joypad interrupt behavior as Milestone 5 gate prerequisites before adding broader game-compatibility smoke goals.
-  - [ ] Add a follow-on milestone note for post-input interactive goals (pause/reset hotkeys, deterministic input playback, and expanded compatibility smoke list).
+  - [x] Add a follow-on milestone note for post-input interactive goals (pause/reset hotkeys, deterministic input playback, and expanded compatibility smoke list).
 
 **Milestone 5 gate-order note (2026-04-30)**
 - Milestone 5 closure should stay anchored on FF00 matrix correctness + joypad interrupt signaling (unit/integration + required Milestone 5 ROM gates) before any expansion to broader curated game-compatibility smoke targets.
 - Broader interaction-heavy smoke goals remain follow-on work after FF00/interrupt gate evidence is fixture-backed and CI-enforced.
+
+**Post-Milestone 5 follow-on note (2026-04-30)**
+- After Milestone 5 FF00 + interrupt gates are closure-ready ([impl]/[doc]/[gate]), track interactive UX expansion as a distinct follow-on milestone block rather than inflating Milestone 5 scope.
+- Initial follow-on objectives should include:
+  - pause/reset hotkeys with deterministic resume semantics,
+  - deterministic input recording/playback for reproducible smoke/debug sessions,
+  - expanded curated compatibility smoke matrix beyond the current minimum closure set.
 
 - [ ] **Milestone 4 closure contract**
   - [x] Add required PPU-focused ROM entries (`milestone = 4`, `required = true`) before marking Milestone 4 complete.
