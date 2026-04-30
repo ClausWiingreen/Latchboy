@@ -22,7 +22,7 @@ const LOOP_WINDOW_MIN: usize = 2;
 const LOOP_WINDOW_MAX: usize = 8;
 const LOOP_WINDOW_PREFERRED: usize = 3;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 struct StepSignature {
     opcode: Option<u8>,
     pc_before: u16,
@@ -34,6 +34,20 @@ struct StepSignature {
     ppu_ly_before: u8,
     ppu_ly_after: u8,
 }
+
+impl PartialEq for StepSignature {
+    fn eq(&self, other: &Self) -> bool {
+        self.opcode == other.opcode
+            && self.pc_before == other.pc_before
+            && self.pc_after == other.pc_after
+            && self.operand1 == other.operand1
+            && self.operand2 == other.operand2
+            && self.branch_taken == other.branch_taken
+            && self.interrupt_entry == other.interrupt_entry
+    }
+}
+
+impl Eq for StepSignature {}
 
 impl StepSignature {
     fn from_observation(observation: &CpuStepObservation) -> Self {
