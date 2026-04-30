@@ -286,7 +286,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Add an explicit CI preflight check that fails when `LATCHBOY_ROM_ROOT` is unset/empty for milestone-gating jobs.
   - [x] Keep developer-local runs skippable, but make release/merge gate jobs fixture-mandatory and documented as such.
 - [ ] **Priority 1: Reorder validation progression to match dependency risk**
-  - [ ] Complete Milestone 3 fixture-enforced closure first.
+  - [x] Complete Milestone 3 fixture-enforced closure first.
   - [ ] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
   - [ ] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
