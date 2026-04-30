@@ -105,8 +105,8 @@ fn parse_manifest(manifest_path: &Path) -> RomManifest {
             rom.id
         );
         assert!(
-            (2..=4).contains(&rom.milestone),
-            "{} milestone must be between 2 and 4",
+            (2..=5).contains(&rom.milestone),
+            "{} milestone must be between 2 and 5",
             rom.id
         );
     }
@@ -437,6 +437,31 @@ fn rom_manifest_registers_required_milestone_4_ppu_suites() {
 
     for rom in &manifest.roms {
         if rom.required && rom.milestone == 4 {
+            assert!(
+                !is_noop_pass_condition(rom.pass_condition),
+                "{} is required for milestone {} and must not use pass_condition = \"none\"",
+                rom.id,
+                rom.milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rom_manifest_registers_required_milestone_5_suite_entries() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    assert!(
+        manifest
+            .roms
+            .iter()
+            .any(|rom| rom.required && rom.milestone == 5),
+        "manifest must include at least one required milestone 5 ROM entry"
+    );
+
+    for rom in &manifest.roms {
+        if rom.required && rom.milestone == 5 {
             assert!(
                 !is_noop_pass_condition(rom.pass_condition),
                 "{} is required for milestone {} and must not use pass_condition = \"none\"",
@@ -841,6 +866,64 @@ fn required_milestone_4_roms_pass_under_external_validation_flow() {
     assert!(
         failures.is_empty(),
         "required milestone 4 ROM validation failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn required_milestone_5_roms_pass_under_external_validation_flow() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    let Some(rom_root) = rom_root_from_env() else {
+        eprintln!(
+            "skipping required ROM run: set {ROM_ROOT_ENV} to execute external ROM validation"
+        );
+        return;
+    };
+
+    assert!(
+        rom_root.is_dir(),
+        "{ROM_ROOT_ENV} must point to a directory, got {}",
+        rom_root.display()
+    );
+
+    let required_m5_roms: Vec<&RomEntry> = manifest
+        .roms
+        .iter()
+        .filter(|rom| rom.required && rom.milestone == 5)
+        .collect();
+
+    assert!(
+        !required_m5_roms.is_empty(),
+        "manifest must define required milestone 5 ROM cases"
+    );
+
+    for rom in &required_m5_roms {
+        assert!(
+            !is_noop_pass_condition(rom.pass_condition),
+            "{} is required for milestone {} and must not use pass_condition = \"none\"",
+            rom.id,
+            rom.milestone
+        );
+    }
+
+    let mut failures = Vec::new();
+    let mut executed_required_roms = 0usize;
+    for rom in required_m5_roms {
+        executed_required_roms += 1;
+        if let Err(error) = run_rom(&rom_root, rom) {
+            failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
+        }
+    }
+
+    assert!(
+        executed_required_roms > 0,
+        "required milestone 5 ROM execution must include at least one ROM"
+    );
+    assert!(
+        failures.is_empty(),
+        "required milestone 5 ROM validation failures:\n{}",
         failures.join("\n")
     );
 }
