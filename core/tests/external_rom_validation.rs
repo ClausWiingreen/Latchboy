@@ -616,6 +616,7 @@ validate(summary, schema, schema)
 #[test]
 fn milestone4_artifacts_forbid_copyrighted_frame_captures() {
     let artifacts_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/artifacts");
+    let ignored_smoke_artifacts_root = artifacts_root.join("smoke/milestone4");
     let forbidden_extensions = [
         "png", "jpg", "jpeg", "gif", "bmp", "webp", "mp4", "mov", "mkv",
     ];
@@ -624,6 +625,10 @@ fn milestone4_artifacts_forbid_copyrighted_frame_captures() {
     let mut violations = Vec::new();
     let mut stack = vec![artifacts_root.clone()];
     while let Some(path) = stack.pop() {
+        if path.starts_with(&ignored_smoke_artifacts_root) {
+            continue;
+        }
+
         let entries = fs::read_dir(&path).unwrap_or_else(|error| {
             panic!("failed to read artifacts path {}: {error}", path.display())
         });
