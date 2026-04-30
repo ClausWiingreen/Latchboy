@@ -288,7 +288,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - **[doc]** Documented contract/evidence requirements (runbook, manifest comments, artifact schema guidance).
   - **[gate]** Enforced in automated validation (CI/test assertions fail on regressions or missing prerequisites).
 
-- [ ] **Priority 0: Close Milestone 3 objective evidence gap before expanding milestone scope**
+- [x] **Priority 0: Close Milestone 3 objective evidence gap before expanding milestone scope**
   - [x] Add a required Milestone 3 boot/startup external validation case to `tests/rom_manifest.toml` (or an equivalent required deterministic external harness case) so startup acceptance is fixture-backed, not unit-only.
   - [x] Add a dedicated Milestone 3 gate test in `core/tests/external_rom_validation.rs` (`required_milestone_3_roms_pass_under_external_validation_flow`) to avoid coupling Milestone 3 pass/fail status to Milestone 2 runs.
 - [x] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
@@ -297,7 +297,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [x] **Priority 1: Reorder validation progression to match dependency risk**
   - [x] Complete Milestone 3 fixture-enforced closure first.
   - [x] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
-  - [ ] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
+  - [x] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
 - [ ] **Priority 2: Clarify “evidence of completion” artifacts**
   - [x] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
   - [x] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them. **([impl]/[doc]/[gate] legend added in this section.)**
