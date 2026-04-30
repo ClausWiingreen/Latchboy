@@ -229,7 +229,7 @@ For each `titles.<title_id>` entry:
 
 Summary-level coverage requirement:
 
-- `titles` must include at least **2** distinct title entries (matching the curated 2–3 title baseline for Milestone 4 smoke coverage).
+- `titles` must include all **3** curated Milestone 4 title entries (`tetris-world`, `super-mario-land-world`, `legend-of-zelda-links-awakening-world`) for release closure sign-off.
 
 Copyright and artifact policy for committed evidence:
 
@@ -237,9 +237,9 @@ Copyright and artifact policy for committed evidence:
 - ❌ Forbidden: copyrighted commercial frame captures (`final_frame.png`, `frames/`, raw video, GIFs)
   in git history, PR attachments, issues, or public CI artifacts.
 
-### Curated title checkpoints (2–3 title baseline)
+### Curated title checkpoints (strict 3/3 baseline)
 
-Use this baseline matrix unless a release branch explicitly documents overrides:
+Use this baseline matrix for Milestone 4 closure; all three curated titles are required for sign-off:
 
 | Title (local-only ROM) | Expected milestone checkpoint | Deterministic budget | Explicit pass signal |
 | --- | --- | --- | --- |
