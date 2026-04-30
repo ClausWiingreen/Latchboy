@@ -33,13 +33,14 @@ Ownership/lifetime:
 
 Frontend conversion from DMG shade bytes to display pixels must go through:
 
-- `blit_dmg_framebuffer_to_rgb_surface(framebuffer: &[u8], surface: &mut [u32])`
+- `blit_dmg_framebuffer_to_rgb_surface(framebuffer: &[u8], surface: &mut [u32]) -> Result<(), FrameBlitError>`
 
 Mapping semantics are fixed:
 
 - Input: DMG shade indices (`0..=3`).
 - Output: RGB888 packed as `0x00RRGGBB`.
 - Palette source: `DMG_PALETTE_RGB`.
+- Error contract: adapters must handle `FrameBlitError` (framebuffer/surface length mismatches) and must not treat blitting as infallible.
 
 ## Non-goals / prohibited divergence
 
