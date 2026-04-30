@@ -265,10 +265,10 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [x] **Priority 1: Close the “registered vs enforced” validation gap**
   - [x] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
   - [x] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
-- [ ] **Priority 1: Turn Milestone 4 evidence from “defined” to “enforced”**
+- [x] **Priority 1: Turn Milestone 4 evidence from “defined” to “enforced”**
   - [x] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
   - [x] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.
-  - [ ] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
+  - [x] Ensure CI treats missing/empty `LATCHBOY_ROM_ROOT` as a failing configuration for milestone-gating jobs.
   - [x] Add a CI assertion that milestone-gating runs report **executed required ROM count > 0** (to prevent skip-green sign-offs).
 - [ ] **Priority 2: Normalize acceptance criteria wording**
   - [ ] Convert broad terms like “mostly pass” and “playable user experience” into measurable checkpoints (required ROM pass %, deterministic budget caps, and minimum smoke-test title list).
@@ -278,7 +278,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Priority 0: Close Milestone 3 objective evidence gap before expanding milestone scope**
   - [x] Add a required Milestone 3 boot/startup external validation case to `tests/rom_manifest.toml` (or an equivalent required deterministic external harness case) so startup acceptance is fixture-backed, not unit-only.
   - [x] Add a dedicated Milestone 3 gate test in `core/tests/external_rom_validation.rs` (`required_milestone_3_roms_pass_under_external_validation_flow`) to avoid coupling Milestone 3 pass/fail status to Milestone 2 runs.
-- [ ] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
+- [x] **Priority 1: Make fixture-backed milestone gates non-skippable in CI**
   - [x] Add an explicit CI preflight check that fails when `LATCHBOY_ROM_ROOT` is unset/empty for milestone-gating jobs.
   - [x] Keep developer-local runs skippable, but make release/merge gate jobs fixture-mandatory and documented as such.
 - [ ] **Priority 1: Reorder validation progression to match dependency risk**
