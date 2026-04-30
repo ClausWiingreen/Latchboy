@@ -298,7 +298,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Complete Milestone 3 fixture-enforced closure first.
   - [x] Then complete Milestone 4 PPU required ROM gate + smoke summary schema enforcement.
   - [x] Only then mark Milestone 5 input/UX acceptance items as active closure targets.
-- [ ] **Priority 2: Clarify “evidence of completion” artifacts**
+- [x] **Priority 2: Clarify “evidence of completion” artifacts**
   - [x] Require a lightweight `tests/artifacts/README.md` schema for which non-copyrighted evidence files must be committed per milestone (for example: manifest diff, hash summaries, pass/fail tables).
   - [x] Distinguish “implemented”, “documented”, and “gated in CI/tests” status markers so milestone reviews cannot conflate them. **([impl]/[doc]/[gate] legend added in this section.)**
 - [x] **Priority 2: Remove cross-doc threshold ambiguity (Milestone 4 smoke coverage)**
