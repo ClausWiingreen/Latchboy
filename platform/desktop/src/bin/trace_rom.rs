@@ -54,6 +54,7 @@ impl StepSignature {
 
 #[derive(Debug, Clone)]
 struct PendingStep {
+    step_index: u64,
     text: String,
     start_cycle: u64,
     end_cycle: u64,
@@ -174,6 +175,20 @@ impl<'a> TraceCollector<'a> {
 
     fn flush_loop_summary(&mut self) -> io::Result<()> {
         if let Some(state) = self.loop_state.take() {
+            let loop_start_step = state
+                .window
+                .first()
+                .map(|step| step.step_index)
+                .unwrap_or(u64::MAX);
+            while self
+                .pending_steps
+                .front()
+                .is_some_and(|step| step.step_index < loop_start_step)
+            {
+                if let Some(step) = self.pending_steps.pop_front() {
+                    writeln!(self.writer, "{}", step.text)?;
+                }
+            }
             if state.repetitions > 1 {
                 let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
                 let single_window_end = state.window.last().map(|s| s.end_cycle).unwrap_or(start);
@@ -233,6 +248,7 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
 
                 let line = format_cpu_step_line(self.cpu_steps, &observation, self.config.format);
                 let pending = PendingStep {
+                    step_index: self.cpu_steps,
                     text: line,
                     start_cycle: observation.start_cycle,
                     end_cycle: observation.end_cycle,
@@ -931,11 +947,20 @@ mod tests {
             format: TraceFormat::Minimal,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
+        let prefix = step(0, 0x0000, 0x0001, 0x00, 0x00);
+        c.pending_steps.push_back(PendingStep {
+            step_index: 0,
+            text: format_cpu_step_line(0, &prefix, TraceFormat::Minimal),
+            start_cycle: 0,
+            end_cycle: 4,
+            signature: StepSignature::from_observation(&prefix),
+        });
         let seq = [
             step(0, 0x0100, 0x0102, 0xF0, 0x44),
             step(4, 0x0102, 0x0104, 0xFE, 0x90),
             step(8, 0x0104, 0x0100, 0x20, 0xFA),
         ];
+        let mut step_index = 1u64;
         for i in 0..2 {
             for s in seq.iter() {
                 let obs = CpuStepObservation {
@@ -944,18 +969,21 @@ mod tests {
                     ..s.clone()
                 };
                 c.pending_steps.push_back(PendingStep {
-                    text: format_cpu_step_line(i, &obs, TraceFormat::Minimal),
+                    step_index,
+                    text: format_cpu_step_line(step_index, &obs, TraceFormat::Minimal),
                     start_cycle: obs.start_cycle,
                     end_cycle: obs.end_cycle,
                     signature: StepSignature::from_observation(&obs),
                 });
+                step_index += 1;
             }
         }
         update_loop_compression(&mut c).unwrap();
         assert!(c.loop_state.is_some());
         c.pending_steps.push_back(PendingStep {
+            step_index,
             text: format_cpu_step_line(
-                99,
+                step_index,
                 &step(24, 0x0104, 0x0106, 0x20, 0xFA),
                 TraceFormat::Minimal,
             ),
@@ -971,6 +999,7 @@ mod tests {
         assert!(out.contains("loop x"));
         assert!(out.contains("cycles=0..24"));
         assert!(out.contains("step="));
+        assert!(out.find("step=0").unwrap() < out.find("loop x").unwrap());
     }
 
     #[test]
