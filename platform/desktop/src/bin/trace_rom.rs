@@ -18,6 +18,26 @@ use latchboy_core::{
 
 const DEFAULT_CYCLE_STEP: u32 = 1;
 
+#[derive(Debug, Clone, Copy)]
+enum TraceFormat {
+    Minimal,
+    Normal,
+    Full,
+}
+
+impl TraceFormat {
+    fn parse(value: &str) -> Result<Self, UsageError> {
+        match value {
+            "minimal" => Ok(Self::Minimal),
+            "normal" => Ok(Self::Normal),
+            "full" => Ok(Self::Full),
+            _ => Err(UsageError(format!(
+                "invalid --format value '{value}': expected one of: minimal, normal, full"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct UsageError(String);
 
@@ -39,6 +59,7 @@ struct CliConfig {
     exit_on_jr_fe: bool,
     exit_on_unimplemented: bool,
     watch_io: bool,
+    format: TraceFormat,
 }
 
 enum CliParseResult {
@@ -95,7 +116,12 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
                     }
                 }
 
-                if let Err(error) = write_cpu_step_line(self.writer, self.cpu_steps, &observation) {
+                if let Err(error) = write_cpu_step_line(
+                    self.writer,
+                    self.cpu_steps,
+                    &observation,
+                    self.config.format,
+                ) {
                     self.io_error = Some(error);
                     return;
                 }
@@ -193,6 +219,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
     let mut exit_on_jr_fe = true;
     let mut exit_on_unimplemented = true;
     let mut watch_io = false;
+    let mut format = TraceFormat::Normal;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -224,6 +251,12 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
             "--exit-on-unimplemented" => exit_on_unimplemented = true,
             "--no-exit-on-unimplemented" => exit_on_unimplemented = false,
             "--watch-io" => watch_io = true,
+            "--format" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| UsageError("missing value for --format".to_string()))?;
+                format = TraceFormat::parse(&value)?;
+            }
             "-h" | "--help" => {
                 return Ok(CliParseResult::Help);
             }
@@ -245,11 +278,12 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         exit_on_jr_fe,
         exit_on_unimplemented,
         watch_io,
+        format,
     }))
 }
 
 fn usage() -> String {
-    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]".to_string()
+    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]".to_string()
 }
 
 fn load_emulator(rom_path: &PathBuf) -> Result<Emulator, String> {
@@ -270,21 +304,129 @@ fn write_cpu_step_line(
     writer: &mut BufWriter<fs::File>,
     step_index: u64,
     observation: &CpuStepObservation,
+    format: TraceFormat,
 ) -> io::Result<()> {
-    fn format_operand(value: Option<u8>) -> String {
-        value
-            .map(|byte| format!("{byte:02X}"))
-            .unwrap_or_else(|| "--".to_string())
+    match format {
+        TraceFormat::Minimal => write_cpu_step_line_minimal(writer, step_index, observation),
+        TraceFormat::Normal => write_cpu_step_line_normal(writer, step_index, observation),
+        TraceFormat::Full => write_cpu_step_line_full(writer, step_index, observation),
+    }
+}
+
+fn format_operand(value: Option<u8>) -> String {
+    value
+        .map(|byte| format!("{byte:02X}"))
+        .unwrap_or_else(|| "--".to_string())
+}
+
+fn format_opcode(value: Option<u8>) -> String {
+    value
+        .map(|opcode| format!("{opcode:02X}"))
+        .unwrap_or_else(|| "--".to_string())
+}
+
+fn write_cpu_step_line_minimal(
+    writer: &mut BufWriter<fs::File>,
+    step_index: u64,
+    observation: &CpuStepObservation,
+) -> io::Result<()> {
+    let mut changed = Vec::new();
+    let before = &observation.registers_before;
+    let after = &observation.registers_after;
+    if before.a != after.a {
+        changed.push(format!("a={:02X}", after.a));
+    }
+    if before.f != after.f {
+        changed.push(format!("f={:02X}", after.f));
+    }
+    if before.b != after.b {
+        changed.push(format!("b={:02X}", after.b));
+    }
+    if before.c != after.c {
+        changed.push(format!("c={:02X}", after.c));
+    }
+    if before.d != after.d {
+        changed.push(format!("d={:02X}", after.d));
+    }
+    if before.e != after.e {
+        changed.push(format!("e={:02X}", after.e));
+    }
+    if before.h != after.h {
+        changed.push(format!("h={:02X}", after.h));
+    }
+    if before.l != after.l {
+        changed.push(format!("l={:02X}", after.l));
+    }
+    if observation.sp_before != observation.sp_after {
+        changed.push(format!("sp={:04X}", observation.sp_after));
+    }
+    if observation.ime_before != observation.ime_after {
+        changed.push(format!("ime={}", observation.ime_after));
+    }
+    if observation.halted_before != observation.halted_after {
+        changed.push(format!("halted={}", observation.halted_after));
     }
 
-    let regs = &observation.registers_after;
-    let opcode = observation
-        .opcode_hint
-        .map(|opcode| format!("{opcode:02X}"))
-        .unwrap_or_else(|| "--".to_string());
-    let operand1 = format_operand(observation.operand1_before);
-    let operand2 = format_operand(observation.operand2_before);
+    writeln!(
+        writer,
+        "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}]{}",
+        observation.start_cycle,
+        observation.end_cycle,
+        observation.pc_before,
+        observation.pc_after,
+        format_opcode(observation.opcode_hint),
+        format_operand(observation.operand1_before),
+        format_operand(observation.operand2_before),
+        if changed.is_empty() {
+            "".to_string()
+        } else {
+            format!(" {}", changed.join(" "))
+        },
+    )
+}
 
+fn write_cpu_step_line_normal(
+    writer: &mut BufWriter<fs::File>,
+    step_index: u64,
+    observation: &CpuStepObservation,
+) -> io::Result<()> {
+    let regs = &observation.registers_after;
+    writeln!(
+        writer,
+        "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={} ppu_lcdc={:02X}->{:02X} ppu_stat={:02X}->{:02X} ppu_ly={:02X}->{:02X}",
+        observation.start_cycle,
+        observation.end_cycle,
+        observation.pc_before,
+        observation.pc_after,
+        format_opcode(observation.opcode_hint),
+        format_operand(observation.operand1_before),
+        format_operand(observation.operand2_before),
+        regs.a,
+        regs.f,
+        regs.b,
+        regs.c,
+        regs.d,
+        regs.e,
+        regs.h,
+        regs.l,
+        observation.sp_after,
+        observation.ime_after,
+        observation.halted_after,
+        observation.ppu_before.lcdc,
+        observation.ppu_after.lcdc,
+        observation.ppu_before.stat,
+        observation.ppu_after.stat,
+        observation.ppu_before.ly,
+        observation.ppu_after.ly,
+    )
+}
+
+fn write_cpu_step_line_full(
+    writer: &mut BufWriter<fs::File>,
+    step_index: u64,
+    observation: &CpuStepObservation,
+) -> io::Result<()> {
+    let regs = &observation.registers_after;
     writeln!(
         writer,
         "step={step_index} cycles={}..{} pc={:04X}->{:04X} opcode={} bytes=[{} {}] a={:02X} f={:02X} b={:02X} c={:02X} d={:02X} e={:02X} h={:02X} l={:02X} sp={:04X} ime={} halted={} ppu_lcdc={:02X}->{:02X} ppu_stat={:02X}->{:02X} ppu_ly={:02X}->{:02X} ppu_lyc={:02X}->{:02X} ppu_dot={:03}->{:03} ppu_lcd_warmup={}->{}",
@@ -292,9 +434,9 @@ fn write_cpu_step_line(
         observation.end_cycle,
         observation.pc_before,
         observation.pc_after,
-        opcode,
-        operand1,
-        operand2,
+        format_opcode(observation.opcode_hint),
+        format_operand(observation.operand1_before),
+        format_operand(observation.operand2_before),
         regs.a,
         regs.f,
         regs.b,
