@@ -263,8 +263,8 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] For each milestone from 3 onward, define at least one required external ROM suite entry (`tests/rom_manifest.toml`) before marking the milestone complete.
   - [x] Keep deferred/non-required entries explicit, with a note describing the dependency (e.g., PPU mode timing not yet in scope).
 - [ ] **Priority 1: Close the “registered vs enforced” validation gap**
-  - [ ] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
-  - [ ] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
+  - [x] Ensure every `required = true` manifest entry is covered by at least one test assertion (parser gate + execution path), not only by convention/docs.
+  - [x] Add milestone-scoped gate tests incrementally (`required_milestone_4_*`, then Milestone 5, etc.) so new required suites cannot silently be ignored.
 - [ ] **Priority 1: Turn Milestone 4 evidence from “defined” to “enforced”**
   - [x] Commit `tests/artifacts/milestone4-smoke-summary.json` for the curated title set using metadata + hash-only evidence.
   - [x] Add a test/CI check that validates committed smoke summary files against `tests/artifacts/milestone4-smoke-summary.schema.json`.

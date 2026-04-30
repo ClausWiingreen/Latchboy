@@ -342,6 +342,32 @@ fn format_timeout_state(emulator: &Emulator, executed_cycles: u64) -> String {
     )
 }
 
+
+#[test]
+fn required_manifest_entries_are_covered_by_milestone_gate_tests() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    let covered_milestones = [2u8, 3, 4, 5];
+    for rom in manifest.roms.iter().filter(|rom| rom.required) {
+        assert!(
+            covered_milestones.contains(&rom.milestone),
+            "{} is marked required but has no milestone gate test coverage",
+            rom.id
+        );
+    }
+
+    for milestone in covered_milestones {
+        assert!(
+            manifest
+                .roms
+                .iter()
+                .any(|rom| rom.required && rom.milestone == milestone),
+            "manifest must include at least one required milestone {milestone} ROM entry"
+        );
+    }
+}
+
 #[test]
 fn rom_manifest_registers_required_milestone_2_and_3_suites() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
