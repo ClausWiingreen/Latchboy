@@ -5,6 +5,7 @@ use crate::cartridge::Cartridge;
 use crate::input::{Joypad, JoypadButton};
 use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
+use crate::serial::SerialPort;
 use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
 
 const VRAM_START: u16 = 0x8000;
@@ -84,6 +85,7 @@ pub struct Bus {
     wram: [u8; WRAM_SIZE],
     io_registers: [u8; IO_REGISTERS_SIZE],
     joypad: Joypad,
+    serial: SerialPort,
     timer: Timer,
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
@@ -142,6 +144,7 @@ impl Bus {
             wram: [0; WRAM_SIZE],
             io_registers: [0; IO_REGISTERS_SIZE],
             joypad: Joypad::default(),
+            serial: SerialPort::default(),
             timer: Timer::default(),
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
@@ -189,6 +192,8 @@ impl Bus {
                         self.boot_rom_disable_value
                     } else if address == JOYP_REGISTER {
                         self.joypad.read_p1()
+                    } else if let Some(value) = self.serial.read(address) {
+                        value
                     } else if matches!(
                         address,
                         DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
@@ -218,6 +223,7 @@ impl Bus {
         self.wram = [0; WRAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
         self.joypad = Joypad::default();
+        self.serial = SerialPort::default();
         self.timer = Timer::default();
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
@@ -266,6 +272,7 @@ impl Bus {
                     if requested_interrupt {
                         self.request_joypad_interrupt();
                     }
+                } else if self.serial.write(address, value) {
                 } else if self.ppu.write_register(address, value) {
                     if self.ppu.take_stat_irq_pending() {
                         let interrupt_flag_index =
@@ -308,6 +315,8 @@ impl Bus {
                     self.boot_rom_disable_value
                 } else if address == JOYP_REGISTER {
                     self.joypad.read_p1()
+                } else if let Some(value) = self.serial.read(address) {
+                    value
                 } else if matches!(
                     address,
                     DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
@@ -437,6 +446,10 @@ impl Bus {
         std::mem::take(&mut self.watch_io_events.borrow_mut())
     }
 
+    pub fn take_serial_transfer_log(&mut self) -> Vec<u8> {
+        self.serial.take_transfer_log()
+    }
+
     fn record_watch_io_write(&self, address: u16, value: u8) {
         self.record_watch_io_event(BusWatchIoAccessType::Write, address, value);
     }
@@ -517,6 +530,31 @@ mod tests {
 
         bus.write8(0xEABC, 0xA5);
         assert_eq!(bus.read8(0xCABC), 0xA5);
+    }
+
+    #[test]
+    fn serial_sb_sc_registers_are_read_write_accessible() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.write8(crate::serial::SB_REGISTER, 0x42);
+        bus.write8(crate::serial::SC_REGISTER, 0x00);
+
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), 0x42);
+        assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x81, 0x00);
+    }
+
+    #[test]
+    fn serial_internal_clock_transfer_logs_byte_and_clears_start_bit() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.write8(crate::serial::SB_REGISTER, b'P');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), 0xFF);
+        assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
+        assert_eq!(bus.take_serial_transfer_log(), vec![b'P']);
     }
 
     #[test]

@@ -336,10 +336,10 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 ## Milestone 6 — Serial I/O
 
-- [ ] **Serial link registers**
-  - [ ] Implement SB/SC read-write behavior.
-  - [ ] Basic internal clock transfer stub.
-  - [ ] Test hook/log output for serial-based test ROMs.
+- [x] **Serial link registers**
+  - [x] Implement SB/SC read-write behavior.
+  - [x] Basic internal clock transfer stub.
+  - [x] Test hook/log output for serial-based test ROMs.
 
 **Acceptance criteria**
 - Blargg/mooneye serial-output ROMs can report pass/fail via serial capture.
