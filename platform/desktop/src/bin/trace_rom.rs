@@ -209,7 +209,9 @@ impl<'a> TraceCollector<'a> {
                 && semantic
                     .as_ref()
                     .is_some_and(|summary| summary.kind == LoopKind::WaitLyVblank);
-            let confidence_high = semantic.as_ref().is_some_and(|summary| summary.confidence_high);
+            let confidence_high = semantic
+                .as_ref()
+                .is_some_and(|summary| summary.confidence_high);
             let emit_raw_loop = matches!(self.config.format, TraceFormat::Full) || !confidence_high;
             if state.repetitions > 1 && (!emit_semantic || emit_raw_loop) {
                 let start = state.window.first().map(|s| s.start_cycle).unwrap_or(0);
@@ -295,7 +297,10 @@ fn summarize_wait_loop(window: &[PendingStep]) -> Option<LoopSummary> {
                 ly_values.push(value);
             }
         }
-        if matches!(sig.opcode, Some(0x20 | 0x28 | 0x30 | 0x38)) && sig.branch_taken && sig.pc_after < sig.pc_before {
+        if matches!(sig.opcode, Some(0x20 | 0x28 | 0x30 | 0x38))
+            && sig.branch_taken
+            && sig.pc_after < sig.pc_before
+        {
             saw_conditional_back_jump = true;
         }
     }
@@ -1111,9 +1116,7 @@ mod tests {
         assert!(out.contains("iterations=2"));
         assert!(out.contains("cycles=24"));
         assert!(out.contains("step="));
-        assert!(
-            out.find("step=0").unwrap() < out.find("loop type=wait_ly_vblank").unwrap()
-        );
+        assert!(out.find("step=0").unwrap() < out.find("loop type=wait_ly_vblank").unwrap());
     }
 
     #[test]
