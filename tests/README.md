@@ -186,6 +186,12 @@ RUST_LOG='latchboy_core=trace,latchboy_desktop=debug' cargo test -p latchboy-cor
 - [ ] **Artifact check: Manifest and fixture contract is satisfied.**  
       Evidence: `tests/rom_manifest.toml` contains required `milestone = 2` + `required = true` entries; local/CI fixture tree resolves every required `path`.
 
+## Frame output contract (single source of truth)
+
+Canonical frame-output API expectations now live in `docs/frame-output-contract.md`.
+Use that document as the normative producer/consumer contract for core framebuffer bytes
+and frontend blit behavior to avoid duplicate or drifting render glue across milestones.
+
 ## Milestone 4 commercial smoke matrix
 
 Milestone 4 smoke checks are a **checkpoint-oriented**, deterministic sanity pass over a small

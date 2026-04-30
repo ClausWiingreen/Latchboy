@@ -329,7 +329,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Record a minimum commercial-title smoke matrix (title, expected menu state, deterministic timeout budget, pass signal) in `tests/README.md`.
   - [x] Require committed smoke summary evidence matching `tests/artifacts/milestone4-smoke-summary.schema.json` (title → `run.json`, `summary.json`, `hash_window`, checkpoint frame index, pass/fail reason) for milestone sign-off.
   - [x] Enforce policy that only metadata + hashes are committed; copyrighted commercial frame/image/video assets are forbidden.
-  - [ ] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
+  - [x] Define a single source of truth for frame output API (core buffer format + frontend consumption expectations) to avoid duplicated rendering glue in later milestones.
   - [ ] Enforce one smoke-threshold policy across backlog + `tests/README.md` + CI output messaging.
 
 ---
