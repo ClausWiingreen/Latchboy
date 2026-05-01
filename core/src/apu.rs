@@ -36,8 +36,8 @@ impl Apu {
 
         let advanced_steps = (total_t_cycles / period) as u32;
         self.t_cycle_counter = (total_t_cycles % period) as u32;
-        self.frame_step =
-            ((u32::from(self.frame_step) + advanced_steps) % u32::from(Self::FRAME_SEQUENCER_STEPS)) as u8;
+        self.frame_step = ((u32::from(self.frame_step) + advanced_steps)
+            % u32::from(Self::FRAME_SEQUENCER_STEPS)) as u8;
 
         advanced_steps
     }
