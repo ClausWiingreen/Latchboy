@@ -31,14 +31,13 @@ impl Apu {
     /// Returns the number of frame-sequencer steps advanced.
     #[must_use]
     pub fn tick(&mut self, t_cycles: u32) -> u32 {
-        self.t_cycle_counter = self.t_cycle_counter.saturating_add(t_cycles);
+        let total_t_cycles = u64::from(self.t_cycle_counter) + u64::from(t_cycles);
+        let period = u64::from(Self::FRAME_SEQUENCER_PERIOD_T_CYCLES);
 
-        let mut advanced_steps = 0;
-        while self.t_cycle_counter >= Self::FRAME_SEQUENCER_PERIOD_T_CYCLES {
-            self.t_cycle_counter -= Self::FRAME_SEQUENCER_PERIOD_T_CYCLES;
-            self.frame_step = (self.frame_step + 1) % Self::FRAME_SEQUENCER_STEPS;
-            advanced_steps += 1;
-        }
+        let advanced_steps = (total_t_cycles / period) as u32;
+        self.t_cycle_counter = (total_t_cycles % period) as u32;
+        self.frame_step =
+            ((u32::from(self.frame_step) + advanced_steps) % u32::from(Self::FRAME_SEQUENCER_STEPS)) as u8;
 
         advanced_steps
     }
@@ -83,4 +82,16 @@ mod tests {
         assert_eq!(advanced, u32::from(Apu::FRAME_SEQUENCER_STEPS));
         assert_eq!(apu.frame_step(), 0);
     }
+    #[test]
+    fn frame_sequencer_handles_large_tick_without_losing_steps() {
+        let mut apu = Apu::new();
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES - 1);
+
+        let advanced = apu.tick(u32::MAX);
+        let expected = (u64::from(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES - 1) + u64::from(u32::MAX))
+            / u64::from(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES);
+
+        assert_eq!(u64::from(advanced), expected);
+    }
+
 }
