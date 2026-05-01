@@ -7,7 +7,7 @@
 pub struct Apu {
     frame_step: u8,
     t_cycle_counter: u32,
-    sample_cycle_accumulator: u32,
+    sample_phase: u64,
     sample_buffer: Vec<i16>,
 }
 
@@ -22,14 +22,13 @@ impl Apu {
     pub const FRAME_SEQUENCER_STEPS: u8 = 8;
     pub const DMG_CLOCK_HZ: u32 = 4_194_304;
     pub const OUTPUT_SAMPLE_RATE_HZ: u32 = 48_000;
-    pub const T_CYCLES_PER_SAMPLE: u32 = Self::DMG_CLOCK_HZ / Self::OUTPUT_SAMPLE_RATE_HZ;
 
     #[must_use]
     pub const fn new() -> Self {
         Self {
             frame_step: 0,
             t_cycle_counter: 0,
-            sample_cycle_accumulator: 0,
+            sample_phase: 0,
             sample_buffer: Vec::new(),
         }
     }
@@ -47,10 +46,9 @@ impl Apu {
         self.frame_step = ((u32::from(self.frame_step) + advanced_steps)
             % u32::from(Self::FRAME_SEQUENCER_STEPS)) as u8;
 
-        let total_sample_cycles = u64::from(self.sample_cycle_accumulator) + u64::from(t_cycles);
-        let cycles_per_sample = u64::from(Self::T_CYCLES_PER_SAMPLE);
-        let generated_samples = total_sample_cycles / cycles_per_sample;
-        self.sample_cycle_accumulator = (total_sample_cycles % cycles_per_sample) as u32;
+        self.sample_phase += u64::from(t_cycles) * u64::from(Self::OUTPUT_SAMPLE_RATE_HZ);
+        let generated_samples = self.sample_phase / u64::from(Self::DMG_CLOCK_HZ);
+        self.sample_phase %= u64::from(Self::DMG_CLOCK_HZ);
         for _ in 0..generated_samples {
             self.sample_buffer.push(0);
         }
@@ -124,11 +122,24 @@ mod tests {
     fn tick_queues_silence_samples_at_fixed_cadence() {
         let mut apu = Apu::new();
 
-        let _ = apu.tick(Apu::T_CYCLES_PER_SAMPLE * 4 + (Apu::T_CYCLES_PER_SAMPLE - 1));
+        // 4 exact sample periods worth of t-cycles, plus one cycle short of a fifth.
+        let cycles_per_four_samples =
+            (u64::from(Apu::DMG_CLOCK_HZ) * 4) / u64::from(Apu::OUTPUT_SAMPLE_RATE_HZ);
+        let _ = apu.tick((cycles_per_four_samples + 86) as u32);
         assert_eq!(apu.queued_samples(), 4);
 
         let samples = apu.drain_samples();
         assert_eq!(samples, vec![0, 0, 0, 0]);
         assert_eq!(apu.queued_samples(), 0);
+    }
+
+    #[test]
+    fn sample_generation_preserves_fractional_remainder_across_ticks() {
+        let mut apu = Apu::new();
+
+        let _ = apu.tick(87);
+        assert_eq!(apu.queued_samples(), 0);
+        let _ = apu.tick(1);
+        assert_eq!(apu.queued_samples(), 1);
     }
 }
