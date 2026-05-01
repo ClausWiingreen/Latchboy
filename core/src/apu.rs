@@ -1,14 +1,14 @@
 /// Approximate DMG APU frame sequencer plus initial audio sample buffering.
 ///
-/// This milestone provides timing/domain scaffolding only: generated samples are
-/// currently silence, but they are produced at a deterministic cadence and queued
-/// for frontend consumption.
+/// This milestone provides deterministic timing plus an initial Channel 1 square
+/// wave path (fixed 50% duty) so audio output is no longer hard-coded silence.
 #[derive(Debug, Clone)]
 pub struct Apu {
     frame_step: u8,
     t_cycle_counter: u32,
     sample_phase: u64,
     sample_buffer: Vec<i16>,
+    ch1_phase: u64,
 }
 
 impl Default for Apu {
@@ -23,6 +23,10 @@ impl Apu {
     pub const DMG_CLOCK_HZ: u32 = 4_194_304;
     pub const OUTPUT_SAMPLE_RATE_HZ: u32 = 48_000;
 
+    // Placeholder CH1 tone until full NR10-NR14 behavior lands.
+    const CH1_FREQUENCY_HZ: u32 = 440;
+    const CH1_AMPLITUDE: i16 = 2_500;
+
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -30,6 +34,7 @@ impl Apu {
             t_cycle_counter: 0,
             sample_phase: 0,
             sample_buffer: Vec::new(),
+            ch1_phase: 0,
         }
     }
 
@@ -50,10 +55,21 @@ impl Apu {
         let generated_samples = self.sample_phase / u64::from(Self::DMG_CLOCK_HZ);
         self.sample_phase %= u64::from(Self::DMG_CLOCK_HZ);
         for _ in 0..generated_samples {
-            self.sample_buffer.push(0);
+            let sample = self.next_ch1_sample();
+            self.sample_buffer.push(sample);
         }
 
         advanced_steps
+    }
+
+    fn next_ch1_sample(&mut self) -> i16 {
+        let phase_period = u64::from(Self::OUTPUT_SAMPLE_RATE_HZ);
+        self.ch1_phase = (self.ch1_phase + u64::from(Self::CH1_FREQUENCY_HZ)) % phase_period;
+        if self.ch1_phase < (phase_period / 2) {
+            Self::CH1_AMPLITUDE
+        } else {
+            -Self::CH1_AMPLITUDE
+        }
     }
 
     #[must_use]
@@ -119,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn tick_queues_silence_samples_at_fixed_cadence() {
+    fn tick_queues_ch1_samples_at_fixed_cadence() {
         let mut apu = Apu::new();
 
         // 4 exact sample periods worth of t-cycles, plus one cycle short of a fifth.
@@ -129,7 +145,8 @@ mod tests {
         assert_eq!(apu.queued_samples(), 4);
 
         let samples = apu.drain_samples();
-        assert_eq!(samples, vec![0, 0, 0, 0]);
+        assert_eq!(samples.len(), 4);
+        assert!(samples.iter().all(|sample| sample.abs() == 2_500));
         assert_eq!(apu.queued_samples(), 0);
     }
 
