@@ -32,6 +32,16 @@ enum DutyCycle {
 }
 
 impl DutyCycle {
+    const fn from_duty_bits(bits: u8) -> Self {
+        match bits & 0b11 {
+            0b00 => Self::Duty12_5,
+            0b01 => Self::Duty25,
+            0b10 => Self::Duty50,
+            0b11 => Self::Duty75,
+            _ => Self::Duty50,
+        }
+    }
+
     const fn high_numerator(self) -> u8 {
         match self {
             Self::Duty12_5 => 1,
@@ -81,7 +91,7 @@ impl Apu {
             ch1_phase_accumulator: 0,
             ch1: Ch1 {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
-                duty: DutyCycle::Duty50,
+                duty: DutyCycle::from_duty_bits(0b10),
                 amplitude: Self::CH1_DEFAULT_AMPLITUDE,
                 sweep_period_steps: 0,
                 sweep_shift: 0,
