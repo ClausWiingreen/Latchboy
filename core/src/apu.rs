@@ -58,7 +58,6 @@ impl DutyCycle {
     }
 }
 
-
 #[derive(Debug, Clone)]
 struct Ch2 {
     frequency_hz: u32,
