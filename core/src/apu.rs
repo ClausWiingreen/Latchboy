@@ -46,6 +46,17 @@ impl DutyCycle {
     }
 }
 
+
+impl Ch1 {
+    const fn effective_sweep_period_steps(&self) -> u8 {
+        if self.sweep_period_steps == 0 {
+            8
+        } else {
+            self.sweep_period_steps
+        }
+    }
+}
+
 impl Default for Apu {
     fn default() -> Self {
         Self::new()
@@ -109,12 +120,13 @@ impl Apu {
         if !matches!(self.frame_step, 2 | 6) {
             return;
         }
-        if self.ch1.sweep_period_steps == 0 || self.ch1.sweep_shift == 0 {
+        if self.ch1.sweep_shift == 0 {
             return;
         }
 
+        let sweep_period = self.ch1.effective_sweep_period_steps();
         self.ch1.sweep_tick_counter = self.ch1.sweep_tick_counter.saturating_add(1);
-        if self.ch1.sweep_tick_counter < self.ch1.sweep_period_steps {
+        if self.ch1.sweep_tick_counter < sweep_period {
             return;
         }
         self.ch1.sweep_tick_counter = 0;
@@ -207,6 +219,19 @@ mod tests {
         apu.set_ch1_sweep(1, 2, true);
         let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 2);
         assert_eq!(apu.ch1_frequency_hz(), 330);
+    }
+
+    #[test]
+    fn ch1_sweep_period_zero_maps_to_eight_steps() {
+        let mut apu = Apu::new();
+        apu.set_ch1_frequency_hz(440);
+        apu.set_ch1_sweep(0, 1, false);
+
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 26); // 7 sweep ticks (steps 2/6)
+        assert_eq!(apu.ch1_frequency_hz(), 440);
+
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 4); // 8th sweep tick
+        assert_eq!(apu.ch1_frequency_hz(), 660);
     }
 
     #[test]
