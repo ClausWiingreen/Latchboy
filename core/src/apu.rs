@@ -77,7 +77,8 @@ mod tests {
     fn frame_sequencer_wraps_after_eight_steps() {
         let mut apu = Apu::new();
 
-        let advanced = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * u32::from(Apu::FRAME_SEQUENCER_STEPS));
+        let advanced =
+            apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * u32::from(Apu::FRAME_SEQUENCER_STEPS));
 
         assert_eq!(advanced, u32::from(Apu::FRAME_SEQUENCER_STEPS));
         assert_eq!(apu.frame_step(), 0);
