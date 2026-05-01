@@ -9,7 +9,9 @@ pub struct Apu {
     sample_phase: u64,
     sample_buffer: Vec<i16>,
     ch1_phase_accumulator: u32,
+    ch2_phase_accumulator: u32,
     ch1: Ch1,
+    ch2: Ch2,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +58,13 @@ impl DutyCycle {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Ch2 {
+    frequency_hz: u32,
+    duty: DutyCycle,
+    amplitude: i16,
+}
+
 impl Ch1 {
     const fn effective_sweep_period_steps(&self) -> u8 {
         if self.sweep_period_steps == 0 {
@@ -79,7 +88,9 @@ impl Apu {
     pub const OUTPUT_SAMPLE_RATE_HZ: u32 = 48_000;
 
     const CH1_DEFAULT_FREQUENCY_HZ: u32 = 440;
-    const CH1_DEFAULT_AMPLITUDE: i16 = 2_500;
+    const CH2_DEFAULT_FREQUENCY_HZ: u32 = 220;
+    const CH1_DEFAULT_AMPLITUDE: i16 = 1_250;
+    const CH2_DEFAULT_AMPLITUDE: i16 = 1_250;
 
     #[must_use]
     pub const fn new() -> Self {
@@ -89,6 +100,7 @@ impl Apu {
             sample_phase: 0,
             sample_buffer: Vec::new(),
             ch1_phase_accumulator: 0,
+            ch2_phase_accumulator: 0,
             ch1: Ch1 {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
@@ -97,6 +109,11 @@ impl Apu {
                 sweep_shift: 0,
                 sweep_negate: false,
                 sweep_tick_counter: 0,
+            },
+            ch2: Ch2 {
+                frequency_hz: Self::CH2_DEFAULT_FREQUENCY_HZ,
+                duty: DutyCycle::from_duty_bits(0b10),
+                amplitude: Self::CH2_DEFAULT_AMPLITUDE,
             },
         }
     }
@@ -131,7 +148,7 @@ impl Apu {
         let generated_samples = self.sample_phase / u64::from(Self::DMG_CLOCK_HZ);
         self.sample_phase %= u64::from(Self::DMG_CLOCK_HZ);
         for _ in 0..generated_samples {
-            let sample = self.next_ch1_sample();
+            let sample = self.next_mixed_sample();
             self.sample_buffer.push(sample);
         }
     }
@@ -160,6 +177,12 @@ impl Apu {
         self.ch1.frequency_hz = updated.clamp(1, 20_000);
     }
 
+    fn next_mixed_sample(&mut self) -> i16 {
+        let ch1 = self.next_ch1_sample();
+        let ch2 = self.next_ch2_sample();
+        ch1.saturating_add(ch2)
+    }
+
     fn next_ch1_sample(&mut self) -> i16 {
         self.ch1_phase_accumulator =
             (self.ch1_phase_accumulator + self.ch1.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
@@ -171,6 +194,20 @@ impl Apu {
             self.ch1.amplitude
         } else {
             -self.ch1.amplitude
+        }
+    }
+
+    fn next_ch2_sample(&mut self) -> i16 {
+        self.ch2_phase_accumulator =
+            (self.ch2_phase_accumulator + self.ch2.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
+
+        let duty_window = u32::from(self.ch2.duty.high_numerator())
+            * (Self::OUTPUT_SAMPLE_RATE_HZ / u32::from(self.ch2.duty.denominator()));
+
+        if self.ch2_phase_accumulator < duty_window {
+            self.ch2.amplitude
+        } else {
+            -self.ch2.amplitude
         }
     }
 
@@ -190,6 +227,21 @@ impl Apu {
     #[cfg(test)]
     fn ch1_frequency_hz(&self) -> u32 {
         self.ch1.frequency_hz
+    }
+
+    #[cfg(test)]
+    fn set_ch1_amplitude(&mut self, amplitude: i16) {
+        self.ch1.amplitude = amplitude;
+    }
+
+    #[cfg(test)]
+    fn set_ch2_frequency_hz(&mut self, frequency_hz: u32) {
+        self.ch2.frequency_hz = frequency_hz;
+    }
+
+    #[cfg(test)]
+    fn set_ch2_duty(&mut self, duty: DutyCycle) {
+        self.ch2.duty = duty;
     }
 
     #[must_use]
@@ -292,12 +344,15 @@ mod tests {
     }
 
     #[test]
-    fn ch1_generates_square_wave_with_non_silent_samples() {
+    fn mixed_ch1_ch2_output_contains_expected_amplitudes() {
         let mut apu = Apu::new();
         apu.ch1.duty = DutyCycle::Duty50;
+        apu.set_ch1_amplitude(0);
+        apu.set_ch2_frequency_hz(220);
+        apu.set_ch2_duty(DutyCycle::Duty25);
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
-        assert!(samples.iter().all(|sample| sample.abs() == 2_500));
+        assert!(samples.iter().all(|sample| sample.abs() == 1_250));
     }
 }

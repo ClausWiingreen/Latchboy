@@ -353,7 +353,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Sample generation and output buffering.
 - [ ] **Channel implementation**
   - [x] CH1: square + sweep.
-  - [ ] CH2: square.
+  - [x] CH2: square.
   - [ ] CH3: wave channel.
   - [ ] CH4: noise channel.
 - [ ] **Mixer and control registers**
