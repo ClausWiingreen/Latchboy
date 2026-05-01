@@ -46,7 +46,6 @@ impl DutyCycle {
     }
 }
 
-
 impl Ch1 {
     const fn effective_sweep_period_steps(&self) -> u8 {
         if self.sweep_period_steps == 0 {
@@ -94,17 +93,30 @@ impl Apu {
 
     #[must_use]
     pub fn tick(&mut self, t_cycles: u32) -> u32 {
-        let total_t_cycles = u64::from(self.t_cycle_counter) + u64::from(t_cycles);
-        let period = u64::from(Self::FRAME_SEQUENCER_PERIOD_T_CYCLES);
+        let mut remaining_t_cycles = t_cycles;
+        let mut advanced_steps = 0_u32;
 
-        let advanced_steps = (total_t_cycles / period) as u32;
-        self.t_cycle_counter = (total_t_cycles % period) as u32;
+        while remaining_t_cycles > 0 {
+            let until_frame_step =
+                Self::FRAME_SEQUENCER_PERIOD_T_CYCLES.saturating_sub(self.t_cycle_counter);
+            let segment_t_cycles = remaining_t_cycles.min(until_frame_step);
 
-        for _ in 0..advanced_steps {
-            self.frame_step = (self.frame_step + 1) % Self::FRAME_SEQUENCER_STEPS;
-            self.apply_ch1_sweep_on_frame_step();
+            self.emit_ch1_samples_for_t_cycles(segment_t_cycles);
+            self.t_cycle_counter += segment_t_cycles;
+            remaining_t_cycles -= segment_t_cycles;
+
+            if self.t_cycle_counter == Self::FRAME_SEQUENCER_PERIOD_T_CYCLES {
+                self.t_cycle_counter = 0;
+                self.frame_step = (self.frame_step + 1) % Self::FRAME_SEQUENCER_STEPS;
+                self.apply_ch1_sweep_on_frame_step();
+                advanced_steps += 1;
+            }
         }
 
+        advanced_steps
+    }
+
+    fn emit_ch1_samples_for_t_cycles(&mut self, t_cycles: u32) {
         self.sample_phase += u64::from(t_cycles) * u64::from(Self::OUTPUT_SAMPLE_RATE_HZ);
         let generated_samples = self.sample_phase / u64::from(Self::DMG_CLOCK_HZ);
         self.sample_phase %= u64::from(Self::DMG_CLOCK_HZ);
@@ -112,8 +124,6 @@ impl Apu {
             let sample = self.next_ch1_sample();
             self.sample_buffer.push(sample);
         }
-
-        advanced_steps
     }
 
     fn apply_ch1_sweep_on_frame_step(&mut self) {
@@ -192,16 +202,36 @@ mod tests {
     use super::{Apu, DutyCycle};
 
     #[test]
-    fn frame_sequencer_does_not_advance_before_threshold() { let mut apu = Apu::new(); assert_eq!(apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES - 1),0); assert_eq!(apu.frame_step(),0);} 
+    fn frame_sequencer_does_not_advance_before_threshold() {
+        let mut apu = Apu::new();
+        assert_eq!(apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES - 1), 0);
+        assert_eq!(apu.frame_step(), 0);
+    }
 
     #[test]
-    fn frame_sequencer_advances_once_at_threshold() { let mut apu = Apu::new(); assert_eq!(apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES),1); assert_eq!(apu.frame_step(),1);} 
+    fn frame_sequencer_advances_once_at_threshold() {
+        let mut apu = Apu::new();
+        assert_eq!(apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES), 1);
+        assert_eq!(apu.frame_step(), 1);
+    }
 
     #[test]
-    fn frame_sequencer_wraps_after_eight_steps() { let mut apu=Apu::new(); let adv=apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES*u32::from(Apu::FRAME_SEQUENCER_STEPS)); assert_eq!(adv,u32::from(Apu::FRAME_SEQUENCER_STEPS)); assert_eq!(apu.frame_step(),0);} 
+    fn frame_sequencer_wraps_after_eight_steps() {
+        let mut apu = Apu::new();
+        let adv =
+            apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * u32::from(Apu::FRAME_SEQUENCER_STEPS));
+        assert_eq!(adv, u32::from(Apu::FRAME_SEQUENCER_STEPS));
+        assert_eq!(apu.frame_step(), 0);
+    }
 
     #[test]
-    fn sample_generation_preserves_fractional_remainder_across_ticks() { let mut apu=Apu::new(); let _=apu.tick(87); assert_eq!(apu.queued_samples(),0); let _=apu.tick(1); assert_eq!(apu.queued_samples(),1);} 
+    fn sample_generation_preserves_fractional_remainder_across_ticks() {
+        let mut apu = Apu::new();
+        let _ = apu.tick(87);
+        assert_eq!(apu.queued_samples(), 0);
+        let _ = apu.tick(1);
+        assert_eq!(apu.queued_samples(), 1);
+    }
 
     #[test]
     fn ch1_sweep_increases_frequency_on_sweep_ticks() {
@@ -232,6 +262,23 @@ mod tests {
 
         let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 4); // 8th sweep tick
         assert_eq!(apu.ch1_frequency_hz(), 660);
+    }
+
+    #[test]
+    fn sweep_timing_is_chunk_size_independent_for_sample_emission() {
+        let mut small_ticks = Apu::new();
+        small_ticks.set_ch1_frequency_hz(440);
+        small_ticks.set_ch1_sweep(1, 1, false);
+
+        let mut large_tick = small_ticks.clone();
+        let total_cycles = Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 4;
+
+        for _ in 0..total_cycles {
+            let _ = small_ticks.tick(1);
+        }
+        let _ = large_tick.tick(total_cycles);
+
+        assert_eq!(small_ticks.drain_samples(), large_tick.drain_samples());
     }
 
     #[test]
