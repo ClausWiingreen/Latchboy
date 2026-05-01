@@ -1,11 +1,14 @@
-/// Approximate DMG APU frame sequencer.
+/// Approximate DMG APU frame sequencer plus initial audio sample buffering.
 ///
-/// The frame sequencer advances at 512 Hz (one step every 8192 T-cycles)
-/// and loops over 8 steps.
+/// This milestone provides timing/domain scaffolding only: generated samples are
+/// currently silence, but they are produced at a deterministic cadence and queued
+/// for frontend consumption.
 #[derive(Debug, Clone)]
 pub struct Apu {
     frame_step: u8,
     t_cycle_counter: u32,
+    sample_phase: u64,
+    sample_buffer: Vec<i16>,
 }
 
 impl Default for Apu {
@@ -17,12 +20,16 @@ impl Default for Apu {
 impl Apu {
     pub const FRAME_SEQUENCER_PERIOD_T_CYCLES: u32 = 8_192;
     pub const FRAME_SEQUENCER_STEPS: u8 = 8;
+    pub const DMG_CLOCK_HZ: u32 = 4_194_304;
+    pub const OUTPUT_SAMPLE_RATE_HZ: u32 = 48_000;
 
     #[must_use]
     pub const fn new() -> Self {
         Self {
             frame_step: 0,
             t_cycle_counter: 0,
+            sample_phase: 0,
+            sample_buffer: Vec::new(),
         }
     }
 
@@ -39,12 +46,28 @@ impl Apu {
         self.frame_step = ((u32::from(self.frame_step) + advanced_steps)
             % u32::from(Self::FRAME_SEQUENCER_STEPS)) as u8;
 
+        self.sample_phase += u64::from(t_cycles) * u64::from(Self::OUTPUT_SAMPLE_RATE_HZ);
+        let generated_samples = self.sample_phase / u64::from(Self::DMG_CLOCK_HZ);
+        self.sample_phase %= u64::from(Self::DMG_CLOCK_HZ);
+        for _ in 0..generated_samples {
+            self.sample_buffer.push(0);
+        }
+
         advanced_steps
     }
 
     #[must_use]
     pub const fn frame_step(&self) -> u8 {
         self.frame_step
+    }
+
+    #[must_use]
+    pub fn queued_samples(&self) -> usize {
+        self.sample_buffer.len()
+    }
+
+    pub fn drain_samples(&mut self) -> Vec<i16> {
+        self.sample_buffer.drain(..).collect()
     }
 }
 
@@ -93,5 +116,30 @@ mod tests {
             / u64::from(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES);
 
         assert_eq!(u64::from(advanced), expected);
+    }
+
+    #[test]
+    fn tick_queues_silence_samples_at_fixed_cadence() {
+        let mut apu = Apu::new();
+
+        // 4 exact sample periods worth of t-cycles, plus one cycle short of a fifth.
+        let cycles_per_four_samples =
+            (u64::from(Apu::DMG_CLOCK_HZ) * 4) / u64::from(Apu::OUTPUT_SAMPLE_RATE_HZ);
+        let _ = apu.tick((cycles_per_four_samples + 86) as u32);
+        assert_eq!(apu.queued_samples(), 4);
+
+        let samples = apu.drain_samples();
+        assert_eq!(samples, vec![0, 0, 0, 0]);
+        assert_eq!(apu.queued_samples(), 0);
+    }
+
+    #[test]
+    fn sample_generation_preserves_fractional_remainder_across_ticks() {
+        let mut apu = Apu::new();
+
+        let _ = apu.tick(87);
+        assert_eq!(apu.queued_samples(), 0);
+        let _ = apu.tick(1);
+        assert_eq!(apu.queued_samples(), 1);
     }
 }

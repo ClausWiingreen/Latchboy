@@ -348,9 +348,9 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 ## Milestone 7 — APU (Audio)
 
-- [ ] **Audio architecture setup**
+- [x] **Audio architecture setup**
   - [x] Frame sequencer implementation.
-  - [ ] Sample generation and output buffering.
+  - [x] Sample generation and output buffering.
 - [ ] **Channel implementation**
   - [ ] CH1: square + sweep.
   - [ ] CH2: square.
