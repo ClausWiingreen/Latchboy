@@ -82,6 +82,7 @@ mod tests {
         assert_eq!(advanced, u32::from(Apu::FRAME_SEQUENCER_STEPS));
         assert_eq!(apu.frame_step(), 0);
     }
+
     #[test]
     fn frame_sequencer_handles_large_tick_without_losing_steps() {
         let mut apu = Apu::new();
@@ -93,5 +94,4 @@ mod tests {
 
         assert_eq!(u64::from(advanced), expected);
     }
-
 }
