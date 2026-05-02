@@ -354,7 +354,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Channel implementation**
   - [x] CH1: square + sweep.
   - [x] CH2: square.
-  - [ ] CH3: wave channel.
+  - [x] CH3: wave channel.
   - [ ] CH4: noise channel.
 - [ ] **Mixer and control registers**
   - [ ] NR50/NR51/NR52 behavior.
