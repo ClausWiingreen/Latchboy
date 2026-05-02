@@ -10,8 +10,11 @@ pub struct Apu {
     sample_buffer: Vec<i16>,
     ch1_phase_accumulator: u32,
     ch2_phase_accumulator: u32,
+    ch3_phase_accumulator: u32,
+    ch3_wave_index: u8,
     ch1: Ch1,
     ch2: Ch2,
+    ch3: Ch3,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +68,14 @@ struct Ch2 {
     amplitude: i16,
 }
 
+#[derive(Debug, Clone)]
+struct Ch3 {
+    frequency_hz: u32,
+    output_level_shift: u8,
+    amplitude: i16,
+    wave_ram: [u8; 32],
+}
+
 impl Ch1 {
     const fn effective_sweep_period_steps(&self) -> u8 {
         if self.sweep_period_steps == 0 {
@@ -89,6 +100,7 @@ impl Apu {
 
     const CH1_DEFAULT_FREQUENCY_HZ: u32 = 440;
     const CH2_DEFAULT_FREQUENCY_HZ: u32 = 220;
+    const CH3_DEFAULT_FREQUENCY_HZ: u32 = 330;
     const CH1_DEFAULT_AMPLITUDE: i16 = 1_250;
     const CH2_DEFAULT_AMPLITUDE: i16 = 1_250;
 
@@ -101,6 +113,8 @@ impl Apu {
             sample_buffer: Vec::new(),
             ch1_phase_accumulator: 0,
             ch2_phase_accumulator: 0,
+            ch3_phase_accumulator: 0,
+            ch3_wave_index: 0,
             ch1: Ch1 {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
@@ -114,6 +128,15 @@ impl Apu {
                 frequency_hz: Self::CH2_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
                 amplitude: Self::CH2_DEFAULT_AMPLITUDE,
+            },
+            ch3: Ch3 {
+                frequency_hz: Self::CH3_DEFAULT_FREQUENCY_HZ,
+                output_level_shift: 1,
+                amplitude: 1_250,
+                wave_ram: [
+                    0, 2, 4, 6, 8, 10, 12, 14, 15, 13, 11, 9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 10,
+                    12, 14, 15, 13, 11, 9, 7, 5, 3, 1,
+                ],
             },
         }
     }
@@ -180,7 +203,8 @@ impl Apu {
     fn next_mixed_sample(&mut self) -> i16 {
         let ch1 = self.next_ch1_sample();
         let ch2 = self.next_ch2_sample();
-        ch1.saturating_add(ch2)
+        let ch3 = self.next_ch3_sample();
+        ch1.saturating_add(ch2).saturating_add(ch3)
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
@@ -209,6 +233,27 @@ impl Apu {
         } else {
             -self.ch2.amplitude
         }
+    }
+
+    fn next_ch3_sample(&mut self) -> i16 {
+        self.ch3_phase_accumulator =
+            (self.ch3_phase_accumulator + self.ch3.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
+
+        let step_width = Self::OUTPUT_SAMPLE_RATE_HZ / 32;
+        while self.ch3_phase_accumulator >= step_width {
+            self.ch3_phase_accumulator -= step_width;
+            self.ch3_wave_index = (self.ch3_wave_index + 1) % 32;
+        }
+
+        let raw = i16::from(self.ch3.wave_ram[usize::from(self.ch3_wave_index)]) - 8;
+        let shifted = match self.ch3.output_level_shift {
+            0 => 0,
+            1 => raw,
+            2 => raw / 2,
+            3 => raw / 4,
+            _ => raw,
+        };
+        shifted.saturating_mul(self.ch3.amplitude / 8)
     }
 
     #[cfg(test)]
@@ -242,6 +287,23 @@ impl Apu {
     #[cfg(test)]
     fn set_ch2_duty(&mut self, duty: DutyCycle) {
         self.ch2.duty = duty;
+    }
+
+    #[cfg(test)]
+    fn set_ch3_level_shift(&mut self, output_level_shift: u8) {
+        self.ch3.output_level_shift = output_level_shift;
+    }
+
+    #[cfg(test)]
+    fn set_ch3_amplitude(&mut self, amplitude: i16) {
+        self.ch3.amplitude = amplitude;
+    }
+
+    #[cfg(test)]
+    fn set_ch3_wave_ram(&mut self, wave_ram: [u8; 32]) {
+        self.ch3.wave_ram = wave_ram;
+        self.ch3_wave_index = 0;
+        self.ch3_phase_accumulator = 0;
     }
 
     #[must_use]
@@ -350,9 +412,33 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.set_ch2_frequency_hz(220);
         apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch3_level_shift(0);
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| sample.abs() == 1_250));
+    }
+
+    #[test]
+    fn ch3_wave_channel_obeys_output_level_control() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(0);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_amplitude(800);
+        apu.set_ch3_wave_ram([15; 32]);
+
+        apu.set_ch3_level_shift(1);
+        let _ = apu.tick(400);
+        let full = apu.drain_samples();
+        assert!(!full.is_empty());
+        let full_peak = full.iter().map(|s| s.abs()).max().unwrap_or(0);
+
+        apu.set_ch3_level_shift(3);
+        let _ = apu.tick(400);
+        let quarter = apu.drain_samples();
+        assert!(!quarter.is_empty());
+        let quarter_peak = quarter.iter().map(|s| s.abs()).max().unwrap_or(0);
+
+        assert!(quarter_peak < full_peak);
     }
 }
