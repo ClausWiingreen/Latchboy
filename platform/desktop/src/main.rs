@@ -1,4 +1,5 @@
 use std::env;
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -403,9 +404,16 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
         (&args.key_down, JoypadButton::Down),
     ];
     let mut keymap = Vec::with_capacity(mappings.len());
+    let mut assigned_keys: HashMap<Keycode, JoypadButton> = HashMap::new();
     for (key_name, button) in mappings {
         let key = Keycode::from_name(key_name)
             .ok_or_else(|| format!("unknown key '{key_name}' for {:?}", button))?;
+        if let Some(existing_button) = assigned_keys.insert(key, button) {
+            return Err(format!(
+                "duplicate key binding '{key_name}' for {:?} and {:?}",
+                existing_button, button
+            ));
+        }
         keymap.push((key, button));
     }
     Ok(keymap)
@@ -526,7 +534,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
+    use super::{build_keymap, DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
     use clap::Parser;
     use std::path::PathBuf;
 
@@ -567,5 +575,20 @@ mod tests {
         assert!(args.vsync);
         assert!(!args.no_vsync);
         assert!(args.vsync_enabled());
+    }
+
+    #[test]
+    fn duplicate_key_mappings_are_rejected() {
+        let args = DesktopArgs::try_parse_from([
+            "latchboy-desktop",
+            "game.gb",
+            "--key-a",
+            "x",
+            "--key-b",
+            "x",
+        ])
+        .expect("args should parse");
+        let error = build_keymap(&args).expect_err("duplicate key binding should be rejected");
+        assert!(error.contains("duplicate key binding"));
     }
 }
