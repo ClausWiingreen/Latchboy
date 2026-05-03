@@ -351,7 +351,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [x] **Audio architecture setup**
   - [x] Frame sequencer implementation.
   - [x] Sample generation and output buffering.
-- [ ] **Channel implementation**
+- [x] **Channel implementation**
   - [x] CH1: square + sweep.
   - [x] CH2: square.
   - [x] CH3: wave channel.
