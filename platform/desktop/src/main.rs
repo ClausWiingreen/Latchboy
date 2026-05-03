@@ -42,8 +42,11 @@ struct DesktopArgs {
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), default_value_t = 1_024)]
     cycle_step: u32,
     /// Enable 60Hz presentation pacing (vsync-style frame limiting).
-    #[arg(long = "vsync", default_value_t = true, action = ArgAction::Set)]
+    #[arg(long = "vsync", action = ArgAction::SetTrue, default_value_t = true, overrides_with = "no_vsync")]
     vsync: bool,
+    /// Disable 60Hz presentation pacing.
+    #[arg(long = "no-vsync", action = ArgAction::SetTrue, overrides_with = "vsync")]
+    no_vsync: bool,
     /// Optional directory to dump each presented frame as PNG while running headless.
     #[arg(long)]
     frame_output_dir: Option<PathBuf>,
@@ -63,6 +66,12 @@ struct DesktopArgs {
         conflicts_with = "frame_output_every"
     )]
     frame_output_last_only: bool,
+}
+
+impl DesktopArgs {
+    fn vsync_enabled(&self) -> bool {
+        !self.no_vsync && self.vsync
+    }
 }
 
 impl Drop for SaveOnDrop {
@@ -334,6 +343,7 @@ fn init_tracing() {
 fn main() -> ExitCode {
     init_tracing();
     let args = DesktopArgs::parse();
+    let vsync_enabled = args.vsync_enabled();
     let rom_path = args.rom_path;
     info!("desktop runner starting");
 
@@ -395,7 +405,7 @@ fn main() -> ExitCode {
         },
     });
 
-    let mut surface = match SdlPresenter::new(frame_budget, frame_capture, args.vsync) {
+    let mut surface = match SdlPresenter::new(frame_budget, frame_capture, vsync_enabled) {
         Ok(surface) => surface,
         Err(error) => {
             eprintln!("error: failed to initialize output surface: {error}");
@@ -438,7 +448,8 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameCaptureConfig, FrameCaptureMode};
+    use super::{DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
+    use clap::Parser;
     use std::path::PathBuf;
 
     #[test]
@@ -461,5 +472,22 @@ mod tests {
         };
         assert!(!config.should_capture(1));
         assert!(!config.should_capture(99));
+    }
+
+    #[test]
+    fn cli_accepts_explicit_no_vsync_flag() {
+        let args = DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb", "--no-vsync"])
+            .expect("--no-vsync should be accepted");
+        assert!(args.no_vsync);
+        assert!(!args.vsync_enabled());
+    }
+
+    #[test]
+    fn cli_defaults_to_vsync_enabled() {
+        let args = DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb"])
+            .expect("default args should parse");
+        assert!(args.vsync);
+        assert!(!args.no_vsync);
+        assert!(args.vsync_enabled());
     }
 }
