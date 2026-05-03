@@ -214,14 +214,14 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
         presenter
             .poll_events()
             .map_err(EmulationRunError::Present)?;
-        for (button, pressed) in presenter.drain_input_events() {
-            emulator.set_button_pressed(button, pressed);
-        }
         for event in presenter.drain_runtime_events() {
             if matches!(event, RuntimeEvent::Reset) {
                 emulator.reset();
                 resets_triggered = resets_triggered.saturating_add(1);
             }
+        }
+        for (button, pressed) in presenter.drain_input_events() {
+            emulator.set_button_pressed(button, pressed);
         }
         if !presenter.is_open() {
             break;
@@ -253,14 +253,14 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
             presenter
                 .poll_events()
                 .map_err(EmulationRunError::Present)?;
-            for (button, pressed) in presenter.drain_input_events() {
-                emulator.set_button_pressed(button, pressed);
-            }
             for event in presenter.drain_runtime_events() {
                 if matches!(event, RuntimeEvent::Reset) {
                     emulator.reset();
                     resets_triggered = resets_triggered.saturating_add(1);
                 }
+            }
+            for (button, pressed) in presenter.drain_input_events() {
+                emulator.set_button_pressed(button, pressed);
             }
             if !presenter.is_open() {
                 return Ok(EmulationRunStats {
