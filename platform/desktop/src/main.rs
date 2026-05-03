@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use latchboy_core::{
     cartridge::Cartridge, Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH,
 };
@@ -41,6 +41,9 @@ struct DesktopArgs {
     /// CPU cycle step used for each emulation loop iteration.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), default_value_t = 1_024)]
     cycle_step: u32,
+    /// Enable 60Hz presentation pacing (vsync-style frame limiting).
+    #[arg(long = "vsync", default_value_t = true, action = ArgAction::Set)]
+    vsync: bool,
     /// Optional directory to dump each presented frame as PNG while running headless.
     #[arg(long)]
     frame_output_dir: Option<PathBuf>,
@@ -91,7 +94,7 @@ struct SdlPresenter {
     max_frames: u64,
     close_requested: bool,
     frame_capture: Option<FrameCaptureConfig>,
-    target_frame_duration: Duration,
+    target_frame_duration: Option<Duration>,
     next_frame_deadline: Option<Instant>,
 }
 
@@ -107,7 +110,11 @@ impl SdlPresenter {
             .build()
     }
 
-    fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
+    fn new(
+        max_frames: u64,
+        frame_capture: Option<FrameCaptureConfig>,
+        vsync: bool,
+    ) -> io::Result<Self> {
         if let Some(capture) = &frame_capture {
             fs::create_dir_all(&capture.output_dir)?;
         }
@@ -126,7 +133,7 @@ impl SdlPresenter {
             max_frames,
             close_requested: false,
             frame_capture,
-            target_frame_duration: Duration::from_secs_f64(1.0 / 60.0),
+            target_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
             next_frame_deadline: None,
         })
     }
@@ -203,7 +210,7 @@ impl FramePresenter for SdlPresenter {
 
         self.buffer.copy_from_slice(surface);
         let now = Instant::now();
-        if let Some(deadline) = self.next_frame_deadline {
+        if let (Some(deadline), Some(_)) = (self.next_frame_deadline, self.target_frame_duration) {
             if deadline > now {
                 thread::sleep(deadline - now);
             }
@@ -292,9 +299,10 @@ impl FramePresenter for SdlPresenter {
         }
 
         self.presented_frames += 1;
-        self.next_frame_deadline = Some(
-            self.next_frame_deadline.unwrap_or_else(Instant::now) + self.target_frame_duration,
-        );
+        if let Some(target_frame_duration) = self.target_frame_duration {
+            self.next_frame_deadline =
+                Some(self.next_frame_deadline.unwrap_or_else(Instant::now) + target_frame_duration);
+        }
         Ok(())
     }
 }
@@ -387,7 +395,7 @@ fn main() -> ExitCode {
         },
     });
 
-    let mut surface = match SdlPresenter::new(frame_budget, frame_capture) {
+    let mut surface = match SdlPresenter::new(frame_budget, frame_capture, args.vsync) {
         Ok(surface) => surface,
         Err(error) => {
             eprintln!("error: failed to initialize output surface: {error}");
