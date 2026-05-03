@@ -433,6 +433,12 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
                 button
             ));
         }
+        if key == Keycode::F5 {
+            return Err(format!(
+                "key '{key_name}' is reserved for runtime reset and cannot be mapped to {:?}",
+                button
+            ));
+        }
         if let Some(existing_button) = assigned_keys.insert(key, button) {
             return Err(format!(
                 "duplicate key binding '{key_name}' for {:?} and {:?}",
@@ -658,5 +664,13 @@ mod tests {
                 .expect("args should parse");
         let error = build_keymap(&args).expect_err("escape should be rejected as a mapping");
         assert!(error.contains("reserved for quit"));
+    }
+
+    #[test]
+    fn f5_key_mapping_is_rejected() {
+        let args = DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb", "--key-a", "f5"])
+            .expect("args should parse");
+        let error = build_keymap(&args).expect_err("f5 should be rejected as a mapping");
+        assert!(error.contains("reserved for runtime reset"));
     }
 }
