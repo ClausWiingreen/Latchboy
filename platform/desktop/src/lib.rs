@@ -1,5 +1,6 @@
 pub mod savefile;
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
@@ -181,6 +182,26 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
 ) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
+    let mut save_state_slots = HashMap::<u8, Emulator>::new();
+    run_emulation_loop_with_stats_and_state(
+        emulator,
+        presenter,
+        cycle_step,
+        frame_limit,
+        iteration_limit,
+        &mut save_state_slots,
+    )
+}
+
+/// Runs emulation loop with caller-owned runtime state slots that can persist across invocations.
+pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
+    emulator: &mut Emulator,
+    presenter: &mut P,
+    cycle_step: u32,
+    frame_limit: Option<u64>,
+    iteration_limit: Option<u64>,
+    save_state_slots: &mut HashMap<u8, Emulator>,
+) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
     if cycle_step == 0 {
         return Err(EmulationRunError::InvalidCycleStep);
     }
@@ -206,7 +227,6 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
     let mut resets_triggered = 0u64;
-    let mut save_state_slots = std::collections::HashMap::<u8, Emulator>::new();
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -328,4 +348,78 @@ pub fn run_emulation_loop<P: FramePresenter>(
         iteration_limit,
     )?
     .frames_presented)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeEvent};
+    use latchboy_core::Emulator;
+    use std::collections::HashMap;
+    use std::convert::Infallible;
+
+    struct RuntimeEventOnlyPresenter {
+        open: bool,
+        events: Vec<RuntimeEvent>,
+    }
+
+    impl FramePresenter for RuntimeEventOnlyPresenter {
+        type Error = Infallible;
+
+        fn is_open(&self) -> bool {
+            self.open
+        }
+
+        fn poll_events(&mut self) -> Result<(), Self::Error> {
+            self.open = false;
+            Ok(())
+        }
+
+        fn drain_runtime_events(&mut self) -> Vec<RuntimeEvent> {
+            std::mem::take(&mut self.events)
+        }
+
+        fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn runtime_state_slots_persist_across_loop_invocations() {
+        let mut emulator = Emulator::new();
+        let mut slots = HashMap::<u8, Emulator>::new();
+
+        emulator.step_cycles(1_024);
+        let expected = emulator.clone();
+        let mut save_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SaveState { slot: 1 }],
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut save_presenter,
+            1,
+            None,
+            Some(1),
+            &mut slots,
+        )
+        .expect("save event should be handled");
+
+        emulator.reset();
+
+        let mut load_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::LoadState { slot: 1 }],
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut load_presenter,
+            1,
+            None,
+            Some(1),
+            &mut slots,
+        )
+        .expect("load event should be handled");
+
+        assert_eq!(emulator, expected);
+    }
 }

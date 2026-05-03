@@ -18,7 +18,7 @@ use latchboy_desktop::savefile::{
     should_persist_after_load,
 };
 use latchboy_desktop::{
-    run_emulation_loop_with_stats, write_rgb_surface_to_png, FramePresenter, RuntimeEvent,
+    run_emulation_loop_with_stats_and_state, write_rgb_surface_to_png, FramePresenter, RuntimeEvent,
 };
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -569,6 +569,7 @@ fn main() -> ExitCode {
         .flatten();
     let mut frames_presented = 0u64;
     let mut remaining_iteration_budget = Some(iteration_budget);
+    let mut runtime_save_state_slots = HashMap::<u8, Emulator>::new();
 
     loop {
         let remaining_frames = frame_budget.saturating_sub(frames_presented);
@@ -580,12 +581,13 @@ fn main() -> ExitCode {
             .map(|interval| remaining_frames.min(interval.get()))
             .unwrap_or(remaining_frames);
 
-        let chunk_result = match run_emulation_loop_with_stats(
+        let chunk_result = match run_emulation_loop_with_stats_and_state(
             &mut runtime.emulator,
             &mut surface,
             args.cycle_step,
             Some(chunk_limit),
             remaining_iteration_budget,
+            &mut runtime_save_state_slots,
         ) {
             Ok(stats) => stats,
             Err(error) => {
