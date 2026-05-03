@@ -372,7 +372,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 - [ ] **Desktop frontend**
   - [x] Window creation, frame blit, vsync toggle.
-  - [ ] Keyboard/gamepad mapping and remapping.
+  - [x] Keyboard/gamepad mapping and remapping.
 - [ ] **Runtime features**
   - [ ] Cartridge save-file management (`.sav`) wired to battery-backed RAM APIs.
   - [ ] Auto-load saves on ROM open and flush saves on shutdown/reset/periodic checkpoint.

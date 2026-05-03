@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
@@ -8,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use clap::{ArgAction, Parser};
 use latchboy_core::{
-    cartridge::Cartridge, Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH,
+    cartridge::Cartridge, Emulator, JoypadButton, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN,
+    FRAMEBUFFER_WIDTH,
 };
 use latchboy_desktop::savefile::{
     load_save_data_if_available, persist_save_data, save_path_from_rom_path,
@@ -66,6 +68,22 @@ struct DesktopArgs {
         conflicts_with = "frame_output_every"
     )]
     frame_output_last_only: bool,
+    #[arg(long, default_value = "x")]
+    key_a: String,
+    #[arg(long, default_value = "z")]
+    key_b: String,
+    #[arg(long, default_value = "backspace")]
+    key_select: String,
+    #[arg(long, default_value = "return")]
+    key_start: String,
+    #[arg(long, default_value = "right")]
+    key_right: String,
+    #[arg(long, default_value = "left")]
+    key_left: String,
+    #[arg(long, default_value = "up")]
+    key_up: String,
+    #[arg(long, default_value = "down")]
+    key_down: String,
 }
 
 impl DesktopArgs {
@@ -105,6 +123,8 @@ struct SdlPresenter {
     frame_capture: Option<FrameCaptureConfig>,
     target_frame_duration: Option<Duration>,
     next_frame_deadline: Option<Instant>,
+    keymap: Vec<(Keycode, JoypadButton)>,
+    pending_input_events: Vec<(JoypadButton, bool)>,
 }
 
 impl SdlPresenter {
@@ -123,6 +143,7 @@ impl SdlPresenter {
         max_frames: u64,
         frame_capture: Option<FrameCaptureConfig>,
         vsync: bool,
+        keymap: Vec<(Keycode, JoypadButton)>,
     ) -> io::Result<Self> {
         if let Some(capture) = &frame_capture {
             fs::create_dir_all(&capture.output_dir)?;
@@ -144,6 +165,8 @@ impl SdlPresenter {
             frame_capture,
             target_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
             next_frame_deadline: None,
+            keymap,
+            pending_input_events: Vec::new(),
         })
     }
 
@@ -196,6 +219,7 @@ impl FramePresenter for SdlPresenter {
     }
 
     fn poll_events(&mut self) -> Result<(), Self::Error> {
+        let keymap = self.keymap.clone();
         for event in self.event_pump.poll_iter() {
             match event {
                 Event::Quit { .. }
@@ -206,10 +230,38 @@ impl FramePresenter for SdlPresenter {
                     self.close_requested = true;
                     break;
                 }
+                Event::KeyDown {
+                    keycode: Some(key),
+                    repeat: false,
+                    ..
+                } => {
+                    if let Some(button) = keymap
+                        .iter()
+                        .find_map(|(mapped_key, button)| (*mapped_key == key).then_some(*button))
+                    {
+                        self.pending_input_events.push((button, true));
+                    }
+                }
+                Event::KeyUp {
+                    keycode: Some(key),
+                    repeat: false,
+                    ..
+                } => {
+                    if let Some(button) = keymap
+                        .iter()
+                        .find_map(|(mapped_key, button)| (*mapped_key == key).then_some(*button))
+                    {
+                        self.pending_input_events.push((button, false));
+                    }
+                }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    fn drain_input_events(&mut self) -> Vec<(JoypadButton, bool)> {
+        std::mem::take(&mut self.pending_input_events)
     }
 
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
@@ -340,9 +392,49 @@ fn init_tracing() {
         .try_init();
 }
 
+fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, String> {
+    let mappings = [
+        (&args.key_a, JoypadButton::A),
+        (&args.key_b, JoypadButton::B),
+        (&args.key_select, JoypadButton::Select),
+        (&args.key_start, JoypadButton::Start),
+        (&args.key_right, JoypadButton::Right),
+        (&args.key_left, JoypadButton::Left),
+        (&args.key_up, JoypadButton::Up),
+        (&args.key_down, JoypadButton::Down),
+    ];
+    let mut keymap = Vec::with_capacity(mappings.len());
+    let mut assigned_keys: HashMap<Keycode, JoypadButton> = HashMap::new();
+    for (key_name, button) in mappings {
+        let key = Keycode::from_name(key_name)
+            .ok_or_else(|| format!("unknown key '{key_name}' for {:?}", button))?;
+        if key == Keycode::Escape {
+            return Err(format!(
+                "key '{key_name}' is reserved for quit and cannot be mapped to {:?}",
+                button
+            ));
+        }
+        if let Some(existing_button) = assigned_keys.insert(key, button) {
+            return Err(format!(
+                "duplicate key binding '{key_name}' for {:?} and {:?}",
+                existing_button, button
+            ));
+        }
+        keymap.push((key, button));
+    }
+    Ok(keymap)
+}
+
 fn main() -> ExitCode {
     init_tracing();
     let args = DesktopArgs::parse();
+    let keymap = match build_keymap(&args) {
+        Ok(keymap) => keymap,
+        Err(error) => {
+            eprintln!("error: invalid key mapping: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let vsync_enabled = args.vsync_enabled();
     let rom_path = args.rom_path;
     info!("desktop runner starting");
@@ -405,7 +497,7 @@ fn main() -> ExitCode {
         },
     });
 
-    let mut surface = match SdlPresenter::new(frame_budget, frame_capture, vsync_enabled) {
+    let mut surface = match SdlPresenter::new(frame_budget, frame_capture, vsync_enabled, keymap) {
         Ok(surface) => surface,
         Err(error) => {
             eprintln!("error: failed to initialize output surface: {error}");
@@ -448,7 +540,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
+    use super::{build_keymap, DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
     use clap::Parser;
     use std::path::PathBuf;
 
@@ -489,5 +581,29 @@ mod tests {
         assert!(args.vsync);
         assert!(!args.no_vsync);
         assert!(args.vsync_enabled());
+    }
+
+    #[test]
+    fn duplicate_key_mappings_are_rejected() {
+        let args = DesktopArgs::try_parse_from([
+            "latchboy-desktop",
+            "game.gb",
+            "--key-a",
+            "x",
+            "--key-b",
+            "x",
+        ])
+        .expect("args should parse");
+        let error = build_keymap(&args).expect_err("duplicate key binding should be rejected");
+        assert!(error.contains("duplicate key binding"));
+    }
+
+    #[test]
+    fn escape_key_mapping_is_rejected() {
+        let args =
+            DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb", "--key-start", "escape"])
+                .expect("args should parse");
+        let error = build_keymap(&args).expect_err("escape should be rejected as a mapping");
+        assert!(error.contains("reserved for quit"));
     }
 }
