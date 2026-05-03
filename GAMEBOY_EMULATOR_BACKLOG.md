@@ -359,8 +359,8 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [x] **Mixer and control registers**
   - [x] NR50/NR51/NR52 behavior.
   - [x] Stereo routing and master enable.
-- [ ] **Sync with emulation clock**
-  - [ ] Avoid underruns and drift.
+- [x] **Sync with emulation clock**
+  - [x] Avoid underruns and drift.
 
 **Acceptance criteria**
 - Audio test ROMs pass core checks.
