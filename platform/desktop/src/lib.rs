@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
-use latchboy_core::{Emulator, FRAMEBUFFER_LEN};
+use latchboy_core::{Emulator, JoypadButton, FRAMEBUFFER_LEN};
 use png::{BitDepth, ColorType, Encoder};
 use thiserror::Error;
 
@@ -138,6 +138,9 @@ pub trait FramePresenter {
 
     fn is_open(&self) -> bool;
     fn poll_events(&mut self) -> Result<(), Self::Error>;
+    fn drain_input_events(&mut self) -> Vec<(JoypadButton, bool)> {
+        Vec::new()
+    }
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error>;
 }
 
@@ -195,6 +198,9 @@ pub fn run_emulation_loop<P: FramePresenter>(
         presenter
             .poll_events()
             .map_err(EmulationRunError::Present)?;
+        for (button, pressed) in presenter.drain_input_events() {
+            emulator.set_button_pressed(button, pressed);
+        }
         if !presenter.is_open() {
             break;
         }
@@ -217,6 +223,9 @@ pub fn run_emulation_loop<P: FramePresenter>(
             presenter
                 .poll_events()
                 .map_err(EmulationRunError::Present)?;
+            for (button, pressed) in presenter.drain_input_events() {
+                emulator.set_button_pressed(button, pressed);
+            }
             if !presenter.is_open() {
                 return Ok(frames_presented);
             }
