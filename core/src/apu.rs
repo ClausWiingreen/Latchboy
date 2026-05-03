@@ -161,7 +161,7 @@ impl Apu {
             },
             nr50: 0x77,
             nr51: 0xF3,
-            nr52: 0x80,
+            nr52: 0xF1,
         }
     }
 
@@ -276,9 +276,9 @@ impl Apu {
             0xFF24 => Some(self.nr50),
             0xFF25 => Some(self.nr51),
             0xFF26 => Some(if self.apu_power_enabled() {
-                self.nr52 | self.channel_status_flags()
+                self.nr52 | self.channel_status_flags() | 0x70
             } else {
-                self.nr52
+                self.nr52 | 0x70
             }),
             _ => None,
         }
@@ -684,7 +684,7 @@ mod tests {
         apu.set_ch4_enabled(true);
 
         assert!(apu.write_register(0xFF26, 0x00));
-        assert_eq!(apu.read_register(0xFF26), Some(0x00));
+        assert_eq!(apu.read_register(0xFF26), Some(0x70));
     }
 
     #[test]
@@ -701,5 +701,24 @@ mod tests {
 
         assert_eq!(apu.read_register(0xFF24), Some(0x12));
         assert_eq!(apu.read_register(0xFF25), Some(0x34));
+    }
+
+    #[test]
+    fn nr52_read_keeps_reserved_bits_set_when_powered_on_or_off() {
+        let mut apu = Apu::new();
+        let powered_on = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(powered_on & 0x70, 0x70);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        let powered_off = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(powered_off & 0x70, 0x70);
+    }
+
+    #[test]
+    fn nr52_initializes_with_dmg_reset_upper_nibble() {
+        let apu = Apu::new();
+        let nr52 = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(nr52 & 0xF0, 0xF0);
+        assert_ne!(nr52 & 0x01, 0);
     }
 }
