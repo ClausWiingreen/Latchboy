@@ -113,6 +113,8 @@ impl Apu {
     pub const FRAME_SEQUENCER_STEPS: u8 = 8;
     pub const DMG_CLOCK_HZ: u32 = 4_194_304;
     pub const OUTPUT_SAMPLE_RATE_HZ: u32 = 48_000;
+    pub const OUTPUT_QUEUE_TARGET_SAMPLES: usize = 2_048;
+    pub const OUTPUT_QUEUE_MAX_SAMPLES: usize = 4_096;
 
     const CH1_DEFAULT_FREQUENCY_HZ: u32 = 440;
     const CH2_DEFAULT_FREQUENCY_HZ: u32 = 220;
@@ -203,6 +205,11 @@ impl Apu {
         for _ in 0..generated_samples {
             let sample = self.next_mixed_sample();
             self.sample_buffer.push(sample);
+        }
+
+        if self.sample_buffer.len() > Self::OUTPUT_QUEUE_MAX_SAMPLES {
+            let overflow = self.sample_buffer.len() - Self::OUTPUT_QUEUE_MAX_SAMPLES;
+            self.sample_buffer.drain(..overflow);
         }
     }
 
@@ -527,6 +534,29 @@ impl Apu {
     pub fn drain_samples(&mut self) -> Vec<i16> {
         self.sample_buffer.drain(..).collect()
     }
+
+    /// Drain exactly `requested_samples` for an audio device callback.
+    ///
+    /// - If too many samples are queued, oldest samples are dropped first to keep
+    ///   output latency bounded and avoid long-term A/V drift.
+    /// - If too few samples are queued, output is padded with silence to avoid
+    ///   callback underruns.
+    pub fn pull_output_samples(&mut self, requested_samples: usize) -> Vec<i16> {
+        if self.sample_buffer.len() > Self::OUTPUT_QUEUE_TARGET_SAMPLES {
+            let keep = Self::OUTPUT_QUEUE_TARGET_SAMPLES.max(requested_samples);
+            let drop = self.sample_buffer.len().saturating_sub(keep);
+            if drop > 0 {
+                self.sample_buffer.drain(..drop);
+            }
+        }
+
+        let available = requested_samples.min(self.sample_buffer.len());
+        let mut output: Vec<i16> = self.sample_buffer.drain(..available).collect();
+        if output.len() < requested_samples {
+            output.resize(requested_samples, 0);
+        }
+        output
+    }
 }
 
 #[cfg(test)]
@@ -563,6 +593,32 @@ mod tests {
         assert_eq!(apu.queued_samples(), 0);
         let _ = apu.tick(1);
         assert_eq!(apu.queued_samples(), 1);
+    }
+
+    #[test]
+    fn pull_output_samples_zero_pads_when_queue_is_short() {
+        let mut apu = Apu::new();
+        let out = apu.pull_output_samples(16);
+        assert_eq!(out.len(), 16);
+        assert!(out.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn pull_output_samples_drops_oldest_samples_when_queue_is_too_deep() {
+        let mut apu = Apu::new();
+        apu.sample_buffer = (0..(Apu::OUTPUT_QUEUE_TARGET_SAMPLES + 10))
+            .map(|i| i as i16)
+            .collect();
+
+        let out = apu.pull_output_samples(8);
+        assert_eq!(out, vec![10, 11, 12, 13, 14, 15, 16, 17]);
+    }
+
+    #[test]
+    fn sample_queue_is_hard_clamped_to_prevent_unbounded_growth() {
+        let mut apu = Apu::new();
+        let _ = apu.tick(Apu::DMG_CLOCK_HZ * 2);
+        assert!(apu.queued_samples() <= Apu::OUTPUT_QUEUE_MAX_SAMPLES);
     }
 
     #[test]
