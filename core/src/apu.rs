@@ -344,6 +344,9 @@ impl Apu {
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
+        if !self.ch1.enabled {
+            return 0;
+        }
         self.ch1_phase_accumulator =
             (self.ch1_phase_accumulator + self.ch1.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
 
