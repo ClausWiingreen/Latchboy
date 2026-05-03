@@ -1,5 +1,5 @@
-use std::env;
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -408,6 +408,12 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
     for (key_name, button) in mappings {
         let key = Keycode::from_name(key_name)
             .ok_or_else(|| format!("unknown key '{key_name}' for {:?}", button))?;
+        if key == Keycode::Escape {
+            return Err(format!(
+                "key '{key_name}' is reserved for quit and cannot be mapped to {:?}",
+                button
+            ));
+        }
         if let Some(existing_button) = assigned_keys.insert(key, button) {
             return Err(format!(
                 "duplicate key binding '{key_name}' for {:?} and {:?}",
@@ -590,5 +596,14 @@ mod tests {
         .expect("args should parse");
         let error = build_keymap(&args).expect_err("duplicate key binding should be rejected");
         assert!(error.contains("duplicate key binding"));
+    }
+
+    #[test]
+    fn escape_key_mapping_is_rejected() {
+        let args =
+            DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb", "--key-start", "escape"])
+                .expect("args should parse");
+        let error = build_keymap(&args).expect_err("escape should be rejected as a mapping");
+        assert!(error.contains("reserved for quit"));
     }
 }
