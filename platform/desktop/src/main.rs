@@ -17,7 +17,9 @@ use latchboy_desktop::savefile::{
     load_save_data_if_available, persist_save_data, save_path_from_rom_path,
     should_persist_after_load,
 };
-use latchboy_desktop::{run_emulation_loop_with_stats, write_rgb_surface_to_png, FramePresenter};
+use latchboy_desktop::{
+    run_emulation_loop_with_stats, write_rgb_surface_to_png, FramePresenter, RuntimeEvent,
+};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -126,6 +128,7 @@ struct SdlPresenter {
     next_frame_deadline: Option<Instant>,
     keymap: Vec<(Keycode, JoypadButton)>,
     pending_input_events: Vec<(JoypadButton, bool)>,
+    pending_runtime_events: Vec<RuntimeEvent>,
 }
 
 impl SdlPresenter {
@@ -168,6 +171,7 @@ impl SdlPresenter {
             next_frame_deadline: None,
             keymap,
             pending_input_events: Vec::new(),
+            pending_runtime_events: Vec::new(),
         })
     }
 
@@ -236,6 +240,9 @@ impl FramePresenter for SdlPresenter {
                     repeat: false,
                     ..
                 } => {
+                    if key == Keycode::F5 {
+                        self.pending_runtime_events.push(RuntimeEvent::Reset);
+                    }
                     if let Some(button) = keymap
                         .iter()
                         .find_map(|(mapped_key, button)| (*mapped_key == key).then_some(*button))
@@ -263,6 +270,10 @@ impl FramePresenter for SdlPresenter {
 
     fn drain_input_events(&mut self) -> Vec<(JoypadButton, bool)> {
         std::mem::take(&mut self.pending_input_events)
+    }
+
+    fn drain_runtime_events(&mut self) -> Vec<RuntimeEvent> {
+        std::mem::take(&mut self.pending_runtime_events)
     }
 
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
@@ -422,6 +433,12 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
                 button
             ));
         }
+        if key == Keycode::F5 {
+            return Err(format!(
+                "key '{key_name}' is reserved for runtime reset and cannot be mapped to {:?}",
+                button
+            ));
+        }
         if let Some(existing_button) = assigned_keys.insert(key, button) {
             return Err(format!(
                 "duplicate key binding '{key_name}' for {:?} and {:?}",
@@ -550,6 +567,11 @@ fn main() -> ExitCode {
         if let Some(remaining) = &mut remaining_iteration_budget {
             *remaining = remaining.saturating_sub(chunk_result.iterations);
         }
+
+        if persist_enabled && chunk_result.resets_triggered != 0 {
+            persist_save_data(runtime.emulator.cartridge(), &runtime.save_path);
+        }
+
         if chunk_result.frames_presented == 0 {
             break;
         }
@@ -642,5 +664,13 @@ mod tests {
                 .expect("args should parse");
         let error = build_keymap(&args).expect_err("escape should be rejected as a mapping");
         assert!(error.contains("reserved for quit"));
+    }
+
+    #[test]
+    fn f5_key_mapping_is_rejected() {
+        let args = DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb", "--key-a", "f5"])
+            .expect("args should parse");
+        let error = build_keymap(&args).expect_err("f5 should be rejected as a mapping");
+        assert!(error.contains("reserved for runtime reset"));
     }
 }
