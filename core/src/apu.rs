@@ -285,7 +285,7 @@ impl Apu {
         self.ch4_phase_accumulator = self
             .ch4_phase_accumulator
             .saturating_add(self.ch4.frequency_hz);
-        let step_width = Self::OUTPUT_SAMPLE_RATE_HZ / 64;
+        let step_width = Self::OUTPUT_SAMPLE_RATE_HZ;
         while self.ch4_phase_accumulator >= step_width {
             self.ch4_phase_accumulator -= step_width;
             let feedback = (self.ch4_lfsr ^ (self.ch4_lfsr >> 1)) & 1;
@@ -508,10 +508,10 @@ mod tests {
         apu.ch2.amplitude = 0;
         apu.set_ch3_amplitude(0);
         apu.set_ch4_amplitude(700);
-        apu.set_ch4_frequency_hz(2_048);
+        apu.set_ch4_frequency_hz(Apu::OUTPUT_SAMPLE_RATE_HZ);
         apu.set_ch4_enabled(true);
 
-        let _ = apu.tick(4_194);
+        let _ = apu.tick(Apu::DMG_CLOCK_HZ / 5);
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
         assert!(samples.iter().any(|s| *s > 0));
