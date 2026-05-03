@@ -307,6 +307,10 @@ impl Apu {
             0xFF26 => {
                 let was_powered = self.apu_power_enabled();
                 self.nr52 = value & 0x80;
+                if !was_powered && self.apu_power_enabled() {
+                    self.frame_step = 0;
+                    self.t_cycle_counter = 0;
+                }
                 if was_powered && !self.apu_power_enabled() {
                     self.power_off_reset();
                 }
@@ -774,5 +778,20 @@ mod tests {
         let nr52 = apu.read_register(0xFF26).unwrap_or(0);
         assert_eq!(nr52 & 0xF0, 0xF0);
         assert_ne!(nr52 & 0x01, 0);
+    }
+
+    #[test]
+    fn nr52_power_reenable_resets_frame_sequencer_phase() {
+        let mut apu = Apu::new();
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 3);
+        assert_ne!(apu.frame_step(), 0);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert!(apu.write_register(0xFF26, 0x80));
+        assert_eq!(apu.frame_step(), 0);
+
+        let advanced = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES);
+        assert_eq!(advanced, 1);
+        assert_eq!(apu.frame_step(), 1);
     }
 }
