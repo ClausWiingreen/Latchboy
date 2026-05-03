@@ -17,7 +17,7 @@ use latchboy_desktop::savefile::{
     load_save_data_if_available, persist_save_data, save_path_from_rom_path,
     should_persist_after_load,
 };
-use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresenter};
+use latchboy_desktop::{run_emulation_loop_with_stats, write_rgb_surface_to_png, FramePresenter};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -520,6 +520,7 @@ fn main() -> ExitCode {
         .then(save_checkpoint_interval_from_env)
         .flatten();
     let mut frames_presented = 0u64;
+    let mut remaining_iteration_budget = Some(iteration_budget);
 
     loop {
         let remaining_frames = frame_budget.saturating_sub(frames_presented);
@@ -531,22 +532,25 @@ fn main() -> ExitCode {
             .map(|interval| remaining_frames.min(interval.get()))
             .unwrap_or(remaining_frames);
 
-        let chunk_frames = match run_emulation_loop(
+        let chunk_result = match run_emulation_loop_with_stats(
             &mut runtime.emulator,
             &mut surface,
             args.cycle_step,
             Some(chunk_limit),
-            Some(iteration_budget),
+            remaining_iteration_budget,
         ) {
-            Ok(frames) => frames,
+            Ok(stats) => stats,
             Err(error) => {
                 eprintln!("error: emulation loop aborted: {error}");
                 return ExitCode::FAILURE;
             }
         };
 
-        frames_presented = frames_presented.saturating_add(chunk_frames);
-        if chunk_frames == 0 {
+        frames_presented = frames_presented.saturating_add(chunk_result.frames_presented);
+        if let Some(remaining) = &mut remaining_iteration_budget {
+            *remaining = remaining.saturating_sub(chunk_result.iterations);
+        }
+        if chunk_result.frames_presented == 0 {
             break;
         }
 
