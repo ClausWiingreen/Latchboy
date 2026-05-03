@@ -462,6 +462,10 @@ impl Apu {
         self.ch1.amplitude = amplitude;
     }
 
+    pub fn set_ch1_enabled(&mut self, enabled: bool) {
+        self.ch1.enabled = enabled;
+    }
+
     #[cfg(test)]
     fn set_ch2_frequency_hz(&mut self, frequency_hz: u32) {
         self.ch2.frequency_hz = frequency_hz;
@@ -853,5 +857,23 @@ mod tests {
         assert_eq!(apu.ch3.amplitude, 1_250);
         assert_eq!(apu.ch4.frequency_hz, Apu::CH4_DEFAULT_FREQUENCY_HZ);
         assert_eq!(apu.ch4.amplitude, 0);
+    }
+
+    #[test]
+    fn ch1_can_be_reenabled_after_nr52_power_cycle() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x77));
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert!(apu.write_register(0xFF26, 0x80));
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x77));
+        apu.set_ch1_enabled(true);
+
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().any(|sample| *sample != 0));
     }
 }
