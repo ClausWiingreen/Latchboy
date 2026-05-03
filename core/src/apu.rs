@@ -324,7 +324,7 @@ impl Apu {
         let ch1 = u8::from(self.ch1.enabled);
         let ch2 = u8::from(self.ch2.enabled) << 1;
         let ch3 = u8::from(self.ch3.enabled) << 2;
-        let ch4 = u8::from(self.ch4.enabled && self.ch4.amplitude != 0) << 3;
+        let ch4 = u8::from(self.ch4.enabled) << 3;
         ch1 | ch2 | ch3 | ch4
     }
 
@@ -757,6 +757,15 @@ mod tests {
         assert!(apu.write_register(0xFF26, 0x00));
         let powered_off = apu.read_register(0xFF26).unwrap_or(0);
         assert_eq!(powered_off & 0x70, 0x70);
+    }
+
+    #[test]
+    fn nr52_ch4_status_bit_tracks_enable_even_with_zero_amplitude() {
+        let mut apu = Apu::new();
+        apu.set_ch4_amplitude(0);
+        apu.set_ch4_enabled(true);
+        let nr52 = apu.read_register(0xFF26).unwrap_or(0);
+        assert_ne!(nr52 & 0x08, 0);
     }
 
     #[test]
