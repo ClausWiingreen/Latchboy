@@ -282,9 +282,9 @@ impl Apu {
             0xFF24 => Some(self.nr50),
             0xFF25 => Some(self.nr51),
             0xFF26 => Some(if self.apu_power_enabled() {
-                self.nr52 | self.channel_status_flags() | 0x70
+                (self.nr52 & 0x80) | self.channel_status_flags() | 0x70
             } else {
-                self.nr52 | 0x70
+                (self.nr52 & 0x80) | 0x70
             }),
             _ => None,
         }
@@ -340,6 +340,10 @@ impl Apu {
         self.ch3.enabled = false;
         self.ch4.enabled = false;
         self.ch1_phase_accumulator = 0;
+        self.ch1.sweep_period_steps = 0;
+        self.ch1.sweep_shift = 0;
+        self.ch1.sweep_negate = false;
+        self.ch1.sweep_tick_counter = 0;
         self.ch2_phase_accumulator = 0;
         self.ch3_phase_accumulator = 0;
         self.ch3_wave_index = 0;
@@ -764,6 +768,14 @@ mod tests {
     }
 
     #[test]
+    fn nr52_read_low_bits_are_derived_from_live_channel_state() {
+        let mut apu = Apu::new();
+        apu.ch1.enabled = false;
+        let nr52 = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(nr52 & 0x01, 0);
+    }
+
+    #[test]
     fn nr52_ch4_status_bit_tracks_enable_even_with_zero_amplitude() {
         let mut apu = Apu::new();
         apu.set_ch4_amplitude(0);
@@ -793,5 +805,16 @@ mod tests {
         let advanced = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES);
         assert_eq!(advanced, 1);
         assert_eq!(apu.frame_step(), 1);
+    }
+
+    #[test]
+    fn power_off_freezes_ch1_sweep_state_while_apu_is_disabled() {
+        let mut apu = Apu::new();
+        apu.set_ch1_frequency_hz(440);
+        apu.set_ch1_sweep(1, 1, false);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 8);
+        assert_eq!(apu.ch1_frequency_hz(), 440);
     }
 }
