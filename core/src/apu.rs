@@ -466,8 +466,7 @@ impl Apu {
     fn set_ch2_frequency_hz(&mut self, frequency_hz: u32) {
         self.ch2.frequency_hz = frequency_hz;
     }
-    #[cfg(test)]
-    fn set_ch2_enabled(&mut self, enabled: bool) {
+    pub fn set_ch2_enabled(&mut self, enabled: bool) {
         self.ch2.enabled = enabled;
     }
 
@@ -480,8 +479,7 @@ impl Apu {
     fn set_ch3_level_shift(&mut self, output_level_shift: u8) {
         self.ch3.output_level_shift = output_level_shift;
     }
-    #[cfg(test)]
-    fn set_ch3_enabled(&mut self, enabled: bool) {
+    pub fn set_ch3_enabled(&mut self, enabled: bool) {
         self.ch3.enabled = enabled;
     }
 
