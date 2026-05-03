@@ -83,6 +83,7 @@ struct Ch3 {
 struct Ch4 {
     frequency_hz: u32,
     amplitude: i16,
+    enabled: bool,
 }
 
 impl Ch1 {
@@ -152,7 +153,8 @@ impl Apu {
             },
             ch4: Ch4 {
                 frequency_hz: Self::CH4_DEFAULT_FREQUENCY_HZ,
-                amplitude: 900,
+                amplitude: 0,
+                enabled: false,
             },
         }
     }
@@ -220,7 +222,11 @@ impl Apu {
         let ch1 = self.next_ch1_sample();
         let ch2 = self.next_ch2_sample();
         let ch3 = self.next_ch3_sample();
-        let ch4 = self.next_ch4_sample();
+        let ch4 = if self.ch4.enabled {
+            self.next_ch4_sample()
+        } else {
+            0
+        };
         ch1.saturating_add(ch2)
             .saturating_add(ch3)
             .saturating_add(ch4)
@@ -276,15 +282,16 @@ impl Apu {
     }
 
     fn next_ch4_sample(&mut self) -> i16 {
-        self.ch4_phase_accumulator =
-            (self.ch4_phase_accumulator + self.ch4.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
-
+        self.ch4_phase_accumulator = self
+            .ch4_phase_accumulator
+            .saturating_add(self.ch4.frequency_hz);
         let step_width = Self::OUTPUT_SAMPLE_RATE_HZ / 64;
         while self.ch4_phase_accumulator >= step_width {
             self.ch4_phase_accumulator -= step_width;
             let feedback = (self.ch4_lfsr ^ (self.ch4_lfsr >> 1)) & 1;
             self.ch4_lfsr = (self.ch4_lfsr >> 1) | (feedback << 14);
         }
+        self.ch4_phase_accumulator %= Self::OUTPUT_SAMPLE_RATE_HZ;
 
         if self.ch4_lfsr & 1 == 0 {
             self.ch4.amplitude
@@ -351,6 +358,11 @@ impl Apu {
     #[cfg(test)]
     fn set_ch4_amplitude(&mut self, amplitude: i16) {
         self.ch4.amplitude = amplitude;
+    }
+
+    #[cfg(test)]
+    fn set_ch4_enabled(&mut self, enabled: bool) {
+        self.ch4.enabled = enabled;
     }
 
     #[must_use]
@@ -497,6 +509,7 @@ mod tests {
         apu.set_ch3_amplitude(0);
         apu.set_ch4_amplitude(700);
         apu.set_ch4_frequency_hz(2_048);
+        apu.set_ch4_enabled(true);
 
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
@@ -504,5 +517,19 @@ mod tests {
         assert!(samples.iter().any(|s| *s > 0));
         assert!(samples.iter().any(|s| *s < 0));
         assert!(samples.iter().all(|s| s.abs() == 700));
+    }
+
+    #[test]
+    fn ch4_is_muted_by_default_and_does_not_affect_existing_mix() {
+        let mut apu = Apu::new();
+        apu.ch1.duty = DutyCycle::Duty50;
+        apu.set_ch1_amplitude(0);
+        apu.set_ch2_frequency_hz(220);
+        apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch3_level_shift(0);
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| sample.abs() == 1_250));
     }
 }
