@@ -275,7 +275,11 @@ impl Apu {
         match address {
             0xFF24 => Some(self.nr50),
             0xFF25 => Some(self.nr51),
-            0xFF26 => Some(self.nr52 | self.channel_status_flags()),
+            0xFF26 => Some(if self.apu_power_enabled() {
+                self.nr52 | self.channel_status_flags()
+            } else {
+                self.nr52
+            }),
             _ => None,
         }
     }
@@ -283,11 +287,15 @@ impl Apu {
     pub fn write_register(&mut self, address: u16, value: u8) -> bool {
         match address {
             0xFF24 => {
-                self.nr50 = value;
+                if self.apu_power_enabled() {
+                    self.nr50 = value;
+                }
                 true
             }
             0xFF25 => {
-                self.nr51 = value;
+                if self.apu_power_enabled() {
+                    self.nr51 = value;
+                }
                 true
             }
             0xFF26 => {
@@ -296,6 +304,10 @@ impl Apu {
             }
             _ => false,
         }
+    }
+
+    const fn apu_power_enabled(&self) -> bool {
+        self.nr52 & 0x80 != 0
     }
 
     fn channel_status_flags(&self) -> u8 {
@@ -660,5 +672,34 @@ mod tests {
             .max()
             .unwrap_or(0);
         assert!(loud_peak > quiet_peak);
+    }
+
+    #[test]
+    fn nr52_read_clears_channel_status_bits_when_powered_off() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(500);
+        apu.ch2.amplitude = 300;
+        apu.set_ch3_amplitude(400);
+        apu.set_ch4_amplitude(200);
+        apu.set_ch4_enabled(true);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert_eq!(apu.read_register(0xFF26), Some(0x00));
+    }
+
+    #[test]
+    fn nr50_nr51_writes_are_ignored_while_powered_off() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF24, 0x12));
+        assert!(apu.write_register(0xFF25, 0x34));
+        assert_eq!(apu.read_register(0xFF24), Some(0x12));
+        assert_eq!(apu.read_register(0xFF25), Some(0x34));
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert!(apu.write_register(0xFF24, 0xAB));
+        assert!(apu.write_register(0xFF25, 0xCD));
+
+        assert_eq!(apu.read_register(0xFF24), Some(0x12));
+        assert_eq!(apu.read_register(0xFF25), Some(0x34));
     }
 }
