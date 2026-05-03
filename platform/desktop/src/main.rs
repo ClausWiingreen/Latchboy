@@ -243,6 +243,14 @@ impl FramePresenter for SdlPresenter {
                     if key == Keycode::F5 {
                         self.pending_runtime_events.push(RuntimeEvent::Reset);
                     }
+                    if let Some(slot) = runtime_save_slot_for_key(key) {
+                        self.pending_runtime_events
+                            .push(RuntimeEvent::SaveState { slot });
+                    }
+                    if let Some(slot) = runtime_load_slot_for_key(key) {
+                        self.pending_runtime_events
+                            .push(RuntimeEvent::LoadState { slot });
+                    }
                     if let Some(button) = keymap
                         .iter()
                         .find_map(|(mapped_key, button)| (*mapped_key == key).then_some(*button))
@@ -380,6 +388,23 @@ impl FramePresenter for SdlPresenter {
     }
 }
 
+fn runtime_save_slot_for_key(key: Keycode) -> Option<u8> {
+    match key {
+        Keycode::F1 => Some(1),
+        Keycode::F2 => Some(2),
+        Keycode::F3 => Some(3),
+        _ => None,
+    }
+}
+
+fn runtime_load_slot_for_key(key: Keycode) -> Option<u8> {
+    match key {
+        Keycode::F9 => Some(1),
+        Keycode::F10 => Some(2),
+        Keycode::F11 => Some(3),
+        _ => None,
+    }
+}
 fn save_checkpoint_interval_from_env() -> Option<NonZeroU64> {
     std::env::var("LATCHBOY_SAVE_CHECKPOINT_FRAMES")
         .ok()
@@ -436,6 +461,12 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
         if key == Keycode::F5 {
             return Err(format!(
                 "key '{key_name}' is reserved for runtime reset and cannot be mapped to {:?}",
+                button
+            ));
+        }
+        if runtime_save_slot_for_key(key).is_some() || runtime_load_slot_for_key(key).is_some() {
+            return Err(format!(
+                "key '{key_name}' is reserved for save/load state slots and cannot be mapped to {:?}",
                 button
             ));
         }
@@ -599,8 +630,12 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_keymap, DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
+    use super::{
+        build_keymap, runtime_load_slot_for_key, runtime_save_slot_for_key, DesktopArgs,
+        FrameCaptureConfig, FrameCaptureMode,
+    };
     use clap::Parser;
+    use sdl2::keyboard::Keycode;
     use std::path::PathBuf;
 
     #[test]
@@ -672,5 +707,15 @@ mod tests {
             .expect("args should parse");
         let error = build_keymap(&args).expect_err("f5 should be rejected as a mapping");
         assert!(error.contains("reserved for runtime reset"));
+    }
+
+    #[test]
+    fn runtime_state_slot_keys_are_mapped() {
+        assert_eq!(runtime_save_slot_for_key(Keycode::F1), Some(1));
+        assert_eq!(runtime_save_slot_for_key(Keycode::F2), Some(2));
+        assert_eq!(runtime_save_slot_for_key(Keycode::F3), Some(3));
+        assert_eq!(runtime_load_slot_for_key(Keycode::F9), Some(1));
+        assert_eq!(runtime_load_slot_for_key(Keycode::F10), Some(2));
+        assert_eq!(runtime_load_slot_for_key(Keycode::F11), Some(3));
     }
 }

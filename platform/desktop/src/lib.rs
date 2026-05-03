@@ -150,6 +150,8 @@ pub trait FramePresenter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeEvent {
     Reset,
+    SaveState { slot: u8 },
+    LoadState { slot: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,6 +206,7 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
     let mut resets_triggered = 0u64;
+    let mut save_state_slots = std::collections::HashMap::<u8, Emulator>::new();
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -215,9 +218,19 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
             .poll_events()
             .map_err(EmulationRunError::Present)?;
         for event in presenter.drain_runtime_events() {
-            if matches!(event, RuntimeEvent::Reset) {
-                emulator.reset();
-                resets_triggered = resets_triggered.saturating_add(1);
+            match event {
+                RuntimeEvent::Reset => {
+                    emulator.reset();
+                    resets_triggered = resets_triggered.saturating_add(1);
+                }
+                RuntimeEvent::SaveState { slot } => {
+                    save_state_slots.insert(slot, emulator.clone());
+                }
+                RuntimeEvent::LoadState { slot } => {
+                    if let Some(saved) = save_state_slots.get(&slot) {
+                        *emulator = saved.clone();
+                    }
+                }
             }
         }
         for (button, pressed) in presenter.drain_input_events() {
@@ -254,9 +267,19 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
                 .poll_events()
                 .map_err(EmulationRunError::Present)?;
             for event in presenter.drain_runtime_events() {
-                if matches!(event, RuntimeEvent::Reset) {
-                    emulator.reset();
-                    resets_triggered = resets_triggered.saturating_add(1);
+                match event {
+                    RuntimeEvent::Reset => {
+                        emulator.reset();
+                        resets_triggered = resets_triggered.saturating_add(1);
+                    }
+                    RuntimeEvent::SaveState { slot } => {
+                        save_state_slots.insert(slot, emulator.clone());
+                    }
+                    RuntimeEvent::LoadState { slot } => {
+                        if let Some(saved) = save_state_slots.get(&slot) {
+                            *emulator = saved.clone();
+                        }
+                    }
                 }
             }
             for (button, pressed) in presenter.drain_input_events() {
