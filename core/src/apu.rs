@@ -335,9 +335,20 @@ impl Apu {
     fn power_off_reset(&mut self) {
         self.nr50 = 0;
         self.nr51 = 0;
+        self.ch1.frequency_hz = Self::CH1_DEFAULT_FREQUENCY_HZ;
+        self.ch1.duty = DutyCycle::from_duty_bits(0b10);
+        self.ch1.amplitude = Self::CH1_DEFAULT_AMPLITUDE;
         self.ch1.enabled = false;
+        self.ch2.frequency_hz = Self::CH2_DEFAULT_FREQUENCY_HZ;
+        self.ch2.duty = DutyCycle::from_duty_bits(0b10);
+        self.ch2.amplitude = Self::CH2_DEFAULT_AMPLITUDE;
         self.ch2.enabled = false;
+        self.ch3.frequency_hz = Self::CH3_DEFAULT_FREQUENCY_HZ;
+        self.ch3.output_level_shift = 1;
+        self.ch3.amplitude = 1_250;
         self.ch3.enabled = false;
+        self.ch4.frequency_hz = Self::CH4_DEFAULT_FREQUENCY_HZ;
+        self.ch4.amplitude = 0;
         self.ch4.enabled = false;
         self.ch1_phase_accumulator = 0;
         self.ch1.sweep_period_steps = 0;
@@ -816,5 +827,33 @@ mod tests {
         assert!(apu.write_register(0xFF26, 0x00));
         let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 8);
         assert_eq!(apu.ch1_frequency_hz(), 440);
+    }
+
+    #[test]
+    fn power_off_clears_channel_config_to_defaults() {
+        let mut apu = Apu::new();
+        apu.set_ch1_frequency_hz(2_000);
+        apu.set_ch1_amplitude(50);
+        apu.set_ch2_frequency_hz(1_333);
+        apu.set_ch2_duty(DutyCycle::Duty75);
+        apu.ch2.amplitude = 75;
+        apu.ch3.frequency_hz = 999;
+        apu.set_ch3_level_shift(3);
+        apu.set_ch3_amplitude(42);
+        apu.set_ch4_frequency_hz(777);
+        apu.set_ch4_amplitude(24);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+
+        assert_eq!(apu.ch1.frequency_hz, Apu::CH1_DEFAULT_FREQUENCY_HZ);
+        assert_eq!(apu.ch1.amplitude, Apu::CH1_DEFAULT_AMPLITUDE);
+        assert_eq!(apu.ch2.frequency_hz, Apu::CH2_DEFAULT_FREQUENCY_HZ);
+        assert!(matches!(apu.ch2.duty, DutyCycle::Duty50));
+        assert_eq!(apu.ch2.amplitude, Apu::CH2_DEFAULT_AMPLITUDE);
+        assert_eq!(apu.ch3.frequency_hz, Apu::CH3_DEFAULT_FREQUENCY_HZ);
+        assert_eq!(apu.ch3.output_level_shift, 1);
+        assert_eq!(apu.ch3.amplitude, 1_250);
+        assert_eq!(apu.ch4.frequency_hz, Apu::CH4_DEFAULT_FREQUENCY_HZ);
+        assert_eq!(apu.ch4.amplitude, 0);
     }
 }
