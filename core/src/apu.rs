@@ -18,6 +18,9 @@ pub struct Apu {
     ch2: Ch2,
     ch3: Ch3,
     ch4: Ch4,
+    nr50: u8,
+    nr51: u8,
+    nr52: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +28,7 @@ struct Ch1 {
     frequency_hz: u32,
     duty: DutyCycle,
     amplitude: i16,
+    enabled: bool,
     sweep_period_steps: u8,
     sweep_shift: u8,
     sweep_negate: bool,
@@ -69,6 +73,7 @@ struct Ch2 {
     frequency_hz: u32,
     duty: DutyCycle,
     amplitude: i16,
+    enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +81,7 @@ struct Ch3 {
     frequency_hz: u32,
     output_level_shift: u8,
     amplitude: i16,
+    enabled: bool,
     wave_ram: [u8; 32],
 }
 
@@ -132,6 +138,7 @@ impl Apu {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
                 amplitude: Self::CH1_DEFAULT_AMPLITUDE,
+                enabled: true,
                 sweep_period_steps: 0,
                 sweep_shift: 0,
                 sweep_negate: false,
@@ -141,11 +148,13 @@ impl Apu {
                 frequency_hz: Self::CH2_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
                 amplitude: Self::CH2_DEFAULT_AMPLITUDE,
+                enabled: false,
             },
             ch3: Ch3 {
                 frequency_hz: Self::CH3_DEFAULT_FREQUENCY_HZ,
                 output_level_shift: 1,
                 amplitude: 1_250,
+                enabled: false,
                 wave_ram: [
                     0, 2, 4, 6, 8, 10, 12, 14, 15, 13, 11, 9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 10, 12,
                     14, 15, 13, 11, 9, 7, 5, 3, 1,
@@ -156,6 +165,9 @@ impl Apu {
                 amplitude: 0,
                 enabled: false,
             },
+            nr50: 0x77,
+            nr51: 0xF3,
+            nr52: 0xF1,
         }
     }
 
@@ -219,6 +231,10 @@ impl Apu {
     }
 
     fn next_mixed_sample(&mut self) -> i16 {
+        if self.nr52 & 0x80 == 0 {
+            return 0;
+        }
+
         let ch1 = self.next_ch1_sample();
         let ch2 = self.next_ch2_sample();
         let ch3 = self.next_ch3_sample();
@@ -227,12 +243,129 @@ impl Apu {
         } else {
             0
         };
-        ch1.saturating_add(ch2)
-            .saturating_add(ch3)
-            .saturating_add(ch4)
+
+        let left = self.mix_stereo_side(true, ch1, ch2, ch3, ch4);
+        let right = self.mix_stereo_side(false, ch1, ch2, ch3, ch4);
+
+        ((i32::from(left) + i32::from(right)) / 2) as i16
+    }
+
+    fn mix_stereo_side(&self, is_left: bool, ch1: i16, ch2: i16, ch3: i16, ch4: i16) -> i16 {
+        let routing_shift = if is_left { 4 } else { 0 };
+        let channel_mask = (self.nr51 >> routing_shift) & 0x0F;
+        let mut mixed = 0_i16;
+        if channel_mask & 0x01 != 0 {
+            mixed = mixed.saturating_add(ch1);
+        }
+        if channel_mask & 0x02 != 0 {
+            mixed = mixed.saturating_add(ch2);
+        }
+        if channel_mask & 0x04 != 0 {
+            mixed = mixed.saturating_add(ch3);
+        }
+        if channel_mask & 0x08 != 0 {
+            mixed = mixed.saturating_add(ch4);
+        }
+
+        let volume = if is_left {
+            (self.nr50 >> 4) & 0x07
+        } else {
+            self.nr50 & 0x07
+        };
+
+        let scaled = (i32::from(mixed) * i32::from(volume + 1)) / 8;
+        scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    }
+
+    pub fn read_register(&self, address: u16) -> Option<u8> {
+        match address {
+            0xFF24 => Some(self.nr50),
+            0xFF25 => Some(self.nr51),
+            0xFF26 => Some(if self.apu_power_enabled() {
+                (self.nr52 & 0x80) | self.channel_status_flags() | 0x70
+            } else {
+                (self.nr52 & 0x80) | 0x70
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn write_register(&mut self, address: u16, value: u8) -> bool {
+        match address {
+            0xFF24 => {
+                if self.apu_power_enabled() {
+                    self.nr50 = value;
+                }
+                true
+            }
+            0xFF25 => {
+                if self.apu_power_enabled() {
+                    self.nr51 = value;
+                }
+                true
+            }
+            0xFF26 => {
+                let was_powered = self.apu_power_enabled();
+                self.nr52 = value & 0x80;
+                if !was_powered && self.apu_power_enabled() {
+                    self.frame_step = 0;
+                    self.t_cycle_counter = 0;
+                }
+                if was_powered && !self.apu_power_enabled() {
+                    self.power_off_reset();
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    const fn apu_power_enabled(&self) -> bool {
+        self.nr52 & 0x80 != 0
+    }
+
+    fn channel_status_flags(&self) -> u8 {
+        let ch1 = u8::from(self.ch1.enabled);
+        let ch2 = u8::from(self.ch2.enabled) << 1;
+        let ch3 = u8::from(self.ch3.enabled) << 2;
+        let ch4 = u8::from(self.ch4.enabled) << 3;
+        ch1 | ch2 | ch3 | ch4
+    }
+
+    fn power_off_reset(&mut self) {
+        self.nr50 = 0;
+        self.nr51 = 0;
+        self.ch1.frequency_hz = Self::CH1_DEFAULT_FREQUENCY_HZ;
+        self.ch1.duty = DutyCycle::from_duty_bits(0b10);
+        self.ch1.amplitude = Self::CH1_DEFAULT_AMPLITUDE;
+        self.ch1.enabled = false;
+        self.ch2.frequency_hz = Self::CH2_DEFAULT_FREQUENCY_HZ;
+        self.ch2.duty = DutyCycle::from_duty_bits(0b10);
+        self.ch2.amplitude = Self::CH2_DEFAULT_AMPLITUDE;
+        self.ch2.enabled = false;
+        self.ch3.frequency_hz = Self::CH3_DEFAULT_FREQUENCY_HZ;
+        self.ch3.output_level_shift = 1;
+        self.ch3.amplitude = 1_250;
+        self.ch3.enabled = false;
+        self.ch4.frequency_hz = Self::CH4_DEFAULT_FREQUENCY_HZ;
+        self.ch4.amplitude = 0;
+        self.ch4.enabled = false;
+        self.ch1_phase_accumulator = 0;
+        self.ch1.sweep_period_steps = 0;
+        self.ch1.sweep_shift = 0;
+        self.ch1.sweep_negate = false;
+        self.ch1.sweep_tick_counter = 0;
+        self.ch2_phase_accumulator = 0;
+        self.ch3_phase_accumulator = 0;
+        self.ch3_wave_index = 0;
+        self.ch4_phase_accumulator = 0;
+        self.ch4_lfsr = 0x7FFF;
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
+        if !self.ch1.enabled {
+            return 0;
+        }
         self.ch1_phase_accumulator =
             (self.ch1_phase_accumulator + self.ch1.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
 
@@ -247,6 +380,9 @@ impl Apu {
     }
 
     fn next_ch2_sample(&mut self) -> i16 {
+        if !self.ch2.enabled {
+            return 0;
+        }
         self.ch2_phase_accumulator =
             (self.ch2_phase_accumulator + self.ch2.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
 
@@ -261,6 +397,9 @@ impl Apu {
     }
 
     fn next_ch3_sample(&mut self) -> i16 {
+        if !self.ch3.enabled {
+            return 0;
+        }
         self.ch3_phase_accumulator =
             (self.ch3_phase_accumulator + self.ch3.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
 
@@ -323,9 +462,16 @@ impl Apu {
         self.ch1.amplitude = amplitude;
     }
 
+    pub fn set_ch1_enabled(&mut self, enabled: bool) {
+        self.ch1.enabled = enabled;
+    }
+
     #[cfg(test)]
     fn set_ch2_frequency_hz(&mut self, frequency_hz: u32) {
         self.ch2.frequency_hz = frequency_hz;
+    }
+    pub fn set_ch2_enabled(&mut self, enabled: bool) {
+        self.ch2.enabled = enabled;
     }
 
     #[cfg(test)]
@@ -336,6 +482,9 @@ impl Apu {
     #[cfg(test)]
     fn set_ch3_level_shift(&mut self, output_level_shift: u8) {
         self.ch3.output_level_shift = output_level_shift;
+    }
+    pub fn set_ch3_enabled(&mut self, enabled: bool) {
+        self.ch3.enabled = enabled;
     }
 
     #[cfg(test)]
@@ -471,6 +620,7 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.set_ch2_frequency_hz(220);
         apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch2_enabled(true);
         apu.set_ch3_level_shift(0);
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
@@ -484,6 +634,7 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.ch2.amplitude = 0;
         apu.set_ch3_amplitude(800);
+        apu.set_ch3_enabled(true);
         apu.set_ch3_wave_ram([15; 32]);
 
         apu.set_ch3_level_shift(1);
@@ -510,6 +661,7 @@ mod tests {
         apu.set_ch4_amplitude(700);
         apu.set_ch4_frequency_hz(Apu::OUTPUT_SAMPLE_RATE_HZ);
         apu.set_ch4_enabled(true);
+        assert!(apu.write_register(0xFF25, 0x88));
 
         let _ = apu.tick(Apu::DMG_CLOCK_HZ / 5);
         let samples = apu.drain_samples();
@@ -526,10 +678,202 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.set_ch2_frequency_hz(220);
         apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch2_enabled(true);
         apu.set_ch3_level_shift(0);
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| sample.abs() == 1_250));
+    }
+
+    #[test]
+    fn nr52_master_enable_mutes_all_output_when_disabled() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF26, 0x00));
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn nr51_channel_routing_can_isolate_single_channel() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(900);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_amplitude(0);
+        apu.set_ch4_amplitude(0);
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x77));
+
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| sample.abs() == 900));
+    }
+
+    #[test]
+    fn nr50_volume_scales_output_amplitude() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(800);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_amplitude(0);
+        apu.set_ch4_amplitude(0);
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x00));
+        let _ = apu.tick(4_194);
+        let quiet_peak = apu
+            .drain_samples()
+            .iter()
+            .map(|s| s.abs())
+            .max()
+            .unwrap_or(0);
+
+        assert!(apu.write_register(0xFF24, 0x77));
+        let _ = apu.tick(4_194);
+        let loud_peak = apu
+            .drain_samples()
+            .iter()
+            .map(|s| s.abs())
+            .max()
+            .unwrap_or(0);
+        assert!(loud_peak > quiet_peak);
+    }
+
+    #[test]
+    fn nr52_read_clears_channel_status_bits_when_powered_off() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(500);
+        apu.ch2.amplitude = 300;
+        apu.set_ch3_amplitude(400);
+        apu.set_ch4_amplitude(200);
+        apu.set_ch4_enabled(true);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert_eq!(apu.read_register(0xFF26), Some(0x70));
+    }
+
+    #[test]
+    fn nr50_nr51_writes_are_ignored_while_powered_off() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF24, 0x12));
+        assert!(apu.write_register(0xFF25, 0x34));
+        assert_eq!(apu.read_register(0xFF24), Some(0x12));
+        assert_eq!(apu.read_register(0xFF25), Some(0x34));
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert!(apu.write_register(0xFF24, 0xAB));
+        assert!(apu.write_register(0xFF25, 0xCD));
+
+        assert_eq!(apu.read_register(0xFF24), Some(0x00));
+        assert_eq!(apu.read_register(0xFF25), Some(0x00));
+    }
+
+    #[test]
+    fn nr52_read_keeps_reserved_bits_set_when_powered_on_or_off() {
+        let mut apu = Apu::new();
+        let powered_on = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(powered_on & 0x70, 0x70);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        let powered_off = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(powered_off & 0x70, 0x70);
+    }
+
+    #[test]
+    fn nr52_read_low_bits_are_derived_from_live_channel_state() {
+        let mut apu = Apu::new();
+        apu.ch1.enabled = false;
+        let nr52 = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(nr52 & 0x01, 0);
+    }
+
+    #[test]
+    fn nr52_ch4_status_bit_tracks_enable_even_with_zero_amplitude() {
+        let mut apu = Apu::new();
+        apu.set_ch4_amplitude(0);
+        apu.set_ch4_enabled(true);
+        let nr52 = apu.read_register(0xFF26).unwrap_or(0);
+        assert_ne!(nr52 & 0x08, 0);
+    }
+
+    #[test]
+    fn nr52_initializes_with_dmg_reset_upper_nibble() {
+        let apu = Apu::new();
+        let nr52 = apu.read_register(0xFF26).unwrap_or(0);
+        assert_eq!(nr52 & 0xF0, 0xF0);
+        assert_ne!(nr52 & 0x01, 0);
+    }
+
+    #[test]
+    fn nr52_power_reenable_resets_frame_sequencer_phase() {
+        let mut apu = Apu::new();
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 3);
+        assert_ne!(apu.frame_step(), 0);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert!(apu.write_register(0xFF26, 0x80));
+        assert_eq!(apu.frame_step(), 0);
+
+        let advanced = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES);
+        assert_eq!(advanced, 1);
+        assert_eq!(apu.frame_step(), 1);
+    }
+
+    #[test]
+    fn power_off_freezes_ch1_sweep_state_while_apu_is_disabled() {
+        let mut apu = Apu::new();
+        apu.set_ch1_frequency_hz(440);
+        apu.set_ch1_sweep(1, 1, false);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        let _ = apu.tick(Apu::FRAME_SEQUENCER_PERIOD_T_CYCLES * 8);
+        assert_eq!(apu.ch1_frequency_hz(), 440);
+    }
+
+    #[test]
+    fn power_off_clears_channel_config_to_defaults() {
+        let mut apu = Apu::new();
+        apu.set_ch1_frequency_hz(2_000);
+        apu.set_ch1_amplitude(50);
+        apu.set_ch2_frequency_hz(1_333);
+        apu.set_ch2_duty(DutyCycle::Duty75);
+        apu.ch2.amplitude = 75;
+        apu.ch3.frequency_hz = 999;
+        apu.set_ch3_level_shift(3);
+        apu.set_ch3_amplitude(42);
+        apu.set_ch4_frequency_hz(777);
+        apu.set_ch4_amplitude(24);
+
+        assert!(apu.write_register(0xFF26, 0x00));
+
+        assert_eq!(apu.ch1.frequency_hz, Apu::CH1_DEFAULT_FREQUENCY_HZ);
+        assert_eq!(apu.ch1.amplitude, Apu::CH1_DEFAULT_AMPLITUDE);
+        assert_eq!(apu.ch2.frequency_hz, Apu::CH2_DEFAULT_FREQUENCY_HZ);
+        assert!(matches!(apu.ch2.duty, DutyCycle::Duty50));
+        assert_eq!(apu.ch2.amplitude, Apu::CH2_DEFAULT_AMPLITUDE);
+        assert_eq!(apu.ch3.frequency_hz, Apu::CH3_DEFAULT_FREQUENCY_HZ);
+        assert_eq!(apu.ch3.output_level_shift, 1);
+        assert_eq!(apu.ch3.amplitude, 1_250);
+        assert_eq!(apu.ch4.frequency_hz, Apu::CH4_DEFAULT_FREQUENCY_HZ);
+        assert_eq!(apu.ch4.amplitude, 0);
+    }
+
+    #[test]
+    fn ch1_can_be_reenabled_after_nr52_power_cycle() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x77));
+
+        assert!(apu.write_register(0xFF26, 0x00));
+        assert!(apu.write_register(0xFF26, 0x80));
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x77));
+        apu.set_ch1_enabled(true);
+
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().any(|sample| *sample != 0));
     }
 }

@@ -127,3 +127,25 @@ Expose a deterministic, PPU-owned framebuffer from the core API:
   the framebuffer when that scanline exits Mode 3 (pixel-transfer) into Mode 0 (HBlank).
 - By the time scanline 143 completes and VBlank starts, the framebuffer contains a coherent full
   frame ready for frontend presentation.
+
+---
+
+## 7) APU NR52 Power-Cycle Sequencer Reset Contract
+
+### Decision
+When `NR52` (`FF26`) transitions from power-off (`bit 7 = 0`) to power-on (`bit 7 = 1`), reset
+the APU frame-sequencer phase immediately:
+
+- `frame_step = 0`
+- `t_cycle_counter = 0`
+
+### Why
+
+- Prevents power-cycles from resuming stale sequencer phase/timing.
+- Matches expected software behavior in titles that toggle `NR52` during audio reinitialization.
+- Avoids sweep/length timing desynchronization after an APU off/on cycle.
+
+### Consequences
+
+- APU timing state becomes deterministic across explicit `NR52` power re-enables.
+- Frontends/tests can rely on a clean sequencer restart boundary after audio power is restored.
