@@ -221,7 +221,9 @@ impl Apu {
         let ch2 = self.next_ch2_sample();
         let ch3 = self.next_ch3_sample();
         let ch4 = self.next_ch4_sample();
-        ch1.saturating_add(ch2).saturating_add(ch3).saturating_add(ch4)
+        ch1.saturating_add(ch2)
+            .saturating_add(ch3)
+            .saturating_add(ch4)
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
