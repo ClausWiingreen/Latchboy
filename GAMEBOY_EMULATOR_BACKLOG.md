@@ -355,7 +355,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] CH1: square + sweep.
   - [x] CH2: square.
   - [x] CH3: wave channel.
-  - [ ] CH4: noise channel.
+  - [x] CH4: noise channel.
 - [ ] **Mixer and control registers**
   - [ ] NR50/NR51/NR52 behavior.
   - [ ] Stereo routing and master enable.
