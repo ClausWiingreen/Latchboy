@@ -28,6 +28,7 @@ struct Ch1 {
     frequency_hz: u32,
     duty: DutyCycle,
     amplitude: i16,
+    enabled: bool,
     sweep_period_steps: u8,
     sweep_shift: u8,
     sweep_negate: bool,
@@ -72,6 +73,7 @@ struct Ch2 {
     frequency_hz: u32,
     duty: DutyCycle,
     amplitude: i16,
+    enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,7 @@ struct Ch3 {
     frequency_hz: u32,
     output_level_shift: u8,
     amplitude: i16,
+    enabled: bool,
     wave_ram: [u8; 32],
 }
 
@@ -135,6 +138,7 @@ impl Apu {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
                 amplitude: Self::CH1_DEFAULT_AMPLITUDE,
+                enabled: true,
                 sweep_period_steps: 0,
                 sweep_shift: 0,
                 sweep_negate: false,
@@ -144,11 +148,13 @@ impl Apu {
                 frequency_hz: Self::CH2_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
                 amplitude: Self::CH2_DEFAULT_AMPLITUDE,
+                enabled: false,
             },
             ch3: Ch3 {
                 frequency_hz: Self::CH3_DEFAULT_FREQUENCY_HZ,
                 output_level_shift: 1,
                 amplitude: 1_250,
+                enabled: false,
                 wave_ram: [
                     0, 2, 4, 6, 8, 10, 12, 14, 15, 13, 11, 9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 10, 12,
                     14, 15, 13, 11, 9, 7, 5, 3, 1,
@@ -299,7 +305,11 @@ impl Apu {
                 true
             }
             0xFF26 => {
+                let was_powered = self.apu_power_enabled();
                 self.nr52 = value & 0x80;
+                if was_powered && !self.apu_power_enabled() {
+                    self.power_off_reset();
+                }
                 true
             }
             _ => false,
@@ -311,11 +321,26 @@ impl Apu {
     }
 
     fn channel_status_flags(&self) -> u8 {
-        let ch1 = u8::from(self.ch1.amplitude != 0);
-        let ch2 = u8::from(self.ch2.amplitude != 0) << 1;
-        let ch3 = u8::from(self.ch3.amplitude != 0) << 2;
+        let ch1 = u8::from(self.ch1.enabled);
+        let ch2 = u8::from(self.ch2.enabled) << 1;
+        let ch3 = u8::from(self.ch3.enabled) << 2;
         let ch4 = u8::from(self.ch4.enabled && self.ch4.amplitude != 0) << 3;
         ch1 | ch2 | ch3 | ch4
+    }
+
+    fn power_off_reset(&mut self) {
+        self.nr50 = 0;
+        self.nr51 = 0;
+        self.ch1.enabled = false;
+        self.ch2.enabled = false;
+        self.ch3.enabled = false;
+        self.ch4.enabled = false;
+        self.ch1_phase_accumulator = 0;
+        self.ch2_phase_accumulator = 0;
+        self.ch3_phase_accumulator = 0;
+        self.ch3_wave_index = 0;
+        self.ch4_phase_accumulator = 0;
+        self.ch4_lfsr = 0x7FFF;
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
@@ -333,6 +358,9 @@ impl Apu {
     }
 
     fn next_ch2_sample(&mut self) -> i16 {
+        if !self.ch2.enabled {
+            return 0;
+        }
         self.ch2_phase_accumulator =
             (self.ch2_phase_accumulator + self.ch2.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
 
@@ -347,6 +375,9 @@ impl Apu {
     }
 
     fn next_ch3_sample(&mut self) -> i16 {
+        if !self.ch3.enabled {
+            return 0;
+        }
         self.ch3_phase_accumulator =
             (self.ch3_phase_accumulator + self.ch3.frequency_hz) % Self::OUTPUT_SAMPLE_RATE_HZ;
 
@@ -413,6 +444,10 @@ impl Apu {
     fn set_ch2_frequency_hz(&mut self, frequency_hz: u32) {
         self.ch2.frequency_hz = frequency_hz;
     }
+    #[cfg(test)]
+    fn set_ch2_enabled(&mut self, enabled: bool) {
+        self.ch2.enabled = enabled;
+    }
 
     #[cfg(test)]
     fn set_ch2_duty(&mut self, duty: DutyCycle) {
@@ -422,6 +457,10 @@ impl Apu {
     #[cfg(test)]
     fn set_ch3_level_shift(&mut self, output_level_shift: u8) {
         self.ch3.output_level_shift = output_level_shift;
+    }
+    #[cfg(test)]
+    fn set_ch3_enabled(&mut self, enabled: bool) {
+        self.ch3.enabled = enabled;
     }
 
     #[cfg(test)]
@@ -557,6 +596,7 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.set_ch2_frequency_hz(220);
         apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch2_enabled(true);
         apu.set_ch3_level_shift(0);
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
@@ -570,6 +610,7 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.ch2.amplitude = 0;
         apu.set_ch3_amplitude(800);
+        apu.set_ch3_enabled(true);
         apu.set_ch3_wave_ram([15; 32]);
 
         apu.set_ch3_level_shift(1);
@@ -613,6 +654,7 @@ mod tests {
         apu.set_ch1_amplitude(0);
         apu.set_ch2_frequency_hz(220);
         apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch2_enabled(true);
         apu.set_ch3_level_shift(0);
         let _ = apu.tick(4_194);
         let samples = apu.drain_samples();
@@ -699,8 +741,8 @@ mod tests {
         assert!(apu.write_register(0xFF24, 0xAB));
         assert!(apu.write_register(0xFF25, 0xCD));
 
-        assert_eq!(apu.read_register(0xFF24), Some(0x12));
-        assert_eq!(apu.read_register(0xFF25), Some(0x34));
+        assert_eq!(apu.read_register(0xFF24), Some(0x00));
+        assert_eq!(apu.read_register(0xFF25), Some(0x00));
     }
 
     #[test]
