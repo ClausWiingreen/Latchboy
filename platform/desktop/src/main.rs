@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::thread;
@@ -16,7 +17,7 @@ use latchboy_desktop::savefile::{
     load_save_data_if_available, persist_save_data, save_path_from_rom_path,
     should_persist_after_load,
 };
-use latchboy_desktop::{run_emulation_loop, write_rgb_surface_to_png, FramePresenter};
+use latchboy_desktop::{run_emulation_loop_with_stats, write_rgb_surface_to_png, FramePresenter};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -368,6 +369,13 @@ impl FramePresenter for SdlPresenter {
     }
 }
 
+fn save_checkpoint_interval_from_env() -> Option<NonZeroU64> {
+    std::env::var("LATCHBOY_SAVE_CHECKPOINT_FRAMES")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .and_then(NonZeroU64::new)
+}
+
 fn iteration_budget_for_frames(frame_budget: u64, cycle_step: u32) -> u64 {
     const DMG_FRAME_CYCLES: u64 = 70_224;
     let step = u64::from(cycle_step.max(1));
@@ -508,19 +516,48 @@ fn main() -> ExitCode {
     let frame_loop_span = info_span!("frame_loop");
     let _frame_loop_guard = frame_loop_span.enter();
     info!("frame loop starting");
-    let frames_presented = match run_emulation_loop(
-        &mut runtime.emulator,
-        &mut surface,
-        args.cycle_step,
-        Some(frame_budget),
-        Some(iteration_budget),
-    ) {
-        Ok(frames) => frames,
-        Err(error) => {
-            eprintln!("error: emulation loop aborted: {error}");
-            return ExitCode::FAILURE;
+    let checkpoint_interval = persist_enabled
+        .then(save_checkpoint_interval_from_env)
+        .flatten();
+    let mut frames_presented = 0u64;
+    let mut remaining_iteration_budget = Some(iteration_budget);
+
+    loop {
+        let remaining_frames = frame_budget.saturating_sub(frames_presented);
+        if remaining_frames == 0 || !surface.is_open() {
+            break;
         }
-    };
+
+        let chunk_limit = checkpoint_interval
+            .map(|interval| remaining_frames.min(interval.get()))
+            .unwrap_or(remaining_frames);
+
+        let chunk_result = match run_emulation_loop_with_stats(
+            &mut runtime.emulator,
+            &mut surface,
+            args.cycle_step,
+            Some(chunk_limit),
+            remaining_iteration_budget,
+        ) {
+            Ok(stats) => stats,
+            Err(error) => {
+                eprintln!("error: emulation loop aborted: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        frames_presented = frames_presented.saturating_add(chunk_result.frames_presented);
+        if let Some(remaining) = &mut remaining_iteration_budget {
+            *remaining = remaining.saturating_sub(chunk_result.iterations);
+        }
+        if chunk_result.frames_presented == 0 {
+            break;
+        }
+
+        if persist_enabled {
+            persist_save_data(runtime.emulator.cartridge(), &runtime.save_path);
+        }
+    }
     info!(frames_presented, "frame loop ended");
     if let Err(error) = surface.flush_final_frame_capture() {
         eprintln!("error: failed to flush final frame capture: {error}");

@@ -144,6 +144,12 @@ pub trait FramePresenter {
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmulationRunStats {
+    pub frames_presented: u64,
+    pub iterations: u64,
+}
+
 #[derive(Debug, Error)]
 pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
     #[error("cycle_step must be greater than zero")]
@@ -157,13 +163,13 @@ pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
 /// Runs a basic emulation loop and presents frames whenever VBlank marks a complete frame.
 ///
 /// Returns the number of frames presented.
-pub fn run_emulation_loop<P: FramePresenter>(
+pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     emulator: &mut Emulator,
     presenter: &mut P,
     cycle_step: u32,
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
-) -> Result<u64, EmulationRunError<P::Error>> {
+) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
     if cycle_step == 0 {
         return Err(EmulationRunError::InvalidCycleStep);
     }
@@ -212,12 +218,18 @@ pub fn run_emulation_loop<P: FramePresenter>(
         while cycles_remaining != 0 && presenter.is_open() {
             if let Some(limit) = iteration_limit {
                 if iterations >= limit {
-                    return Ok(frames_presented);
+                    return Ok(EmulationRunStats {
+                        frames_presented,
+                        iterations,
+                    });
                 }
             }
             if let Some(limit) = frame_limit {
                 if frames_presented >= limit {
-                    return Ok(frames_presented);
+                    return Ok(EmulationRunStats {
+                        frames_presented,
+                        iterations,
+                    });
                 }
             }
             presenter
@@ -227,7 +239,10 @@ pub fn run_emulation_loop<P: FramePresenter>(
                 emulator.set_button_pressed(button, pressed);
             }
             if !presenter.is_open() {
-                return Ok(frames_presented);
+                return Ok(EmulationRunStats {
+                    frames_presented,
+                    iterations,
+                });
             }
 
             if present_if_ready(emulator, presenter, &mut surface)? {
@@ -242,5 +257,26 @@ pub fn run_emulation_loop<P: FramePresenter>(
         }
     }
 
-    Ok(frames_presented)
+    Ok(EmulationRunStats {
+        frames_presented,
+        iterations,
+    })
+}
+
+/// Backward-compatible convenience wrapper that returns only frame count.
+pub fn run_emulation_loop<P: FramePresenter>(
+    emulator: &mut Emulator,
+    presenter: &mut P,
+    cycle_step: u32,
+    frame_limit: Option<u64>,
+    iteration_limit: Option<u64>,
+) -> Result<u64, EmulationRunError<P::Error>> {
+    Ok(run_emulation_loop_with_stats(
+        emulator,
+        presenter,
+        cycle_step,
+        frame_limit,
+        iteration_limit,
+    )?
+    .frames_presented)
 }
