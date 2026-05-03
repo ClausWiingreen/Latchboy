@@ -371,7 +371,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 ## Milestone 8 — Frontend, UX, and Debug Tooling
 
 - [ ] **Desktop frontend**
-  - [ ] Window creation, frame blit, vsync toggle.
+  - [x] Window creation, frame blit, vsync toggle.
   - [ ] Keyboard/gamepad mapping and remapping.
 - [ ] **Runtime features**
   - [ ] Cartridge save-file management (`.sav`) wired to battery-backed RAM APIs.

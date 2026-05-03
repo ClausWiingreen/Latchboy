@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 use latchboy_core::{
     cartridge::Cartridge, Emulator, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH,
 };
@@ -41,6 +41,12 @@ struct DesktopArgs {
     /// CPU cycle step used for each emulation loop iteration.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..), default_value_t = 1_024)]
     cycle_step: u32,
+    /// Enable 60Hz presentation pacing (vsync-style frame limiting).
+    #[arg(long = "vsync", action = ArgAction::SetTrue, default_value_t = true, overrides_with = "no_vsync")]
+    vsync: bool,
+    /// Disable 60Hz presentation pacing.
+    #[arg(long = "no-vsync", action = ArgAction::SetTrue, overrides_with = "vsync")]
+    no_vsync: bool,
     /// Optional directory to dump each presented frame as PNG while running headless.
     #[arg(long)]
     frame_output_dir: Option<PathBuf>,
@@ -60,6 +66,12 @@ struct DesktopArgs {
         conflicts_with = "frame_output_every"
     )]
     frame_output_last_only: bool,
+}
+
+impl DesktopArgs {
+    fn vsync_enabled(&self) -> bool {
+        !self.no_vsync && self.vsync
+    }
 }
 
 impl Drop for SaveOnDrop {
@@ -91,7 +103,7 @@ struct SdlPresenter {
     max_frames: u64,
     close_requested: bool,
     frame_capture: Option<FrameCaptureConfig>,
-    target_frame_duration: Duration,
+    target_frame_duration: Option<Duration>,
     next_frame_deadline: Option<Instant>,
 }
 
@@ -107,7 +119,11 @@ impl SdlPresenter {
             .build()
     }
 
-    fn new(max_frames: u64, frame_capture: Option<FrameCaptureConfig>) -> io::Result<Self> {
+    fn new(
+        max_frames: u64,
+        frame_capture: Option<FrameCaptureConfig>,
+        vsync: bool,
+    ) -> io::Result<Self> {
         if let Some(capture) = &frame_capture {
             fs::create_dir_all(&capture.output_dir)?;
         }
@@ -126,7 +142,7 @@ impl SdlPresenter {
             max_frames,
             close_requested: false,
             frame_capture,
-            target_frame_duration: Duration::from_secs_f64(1.0 / 60.0),
+            target_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
             next_frame_deadline: None,
         })
     }
@@ -203,7 +219,7 @@ impl FramePresenter for SdlPresenter {
 
         self.buffer.copy_from_slice(surface);
         let now = Instant::now();
-        if let Some(deadline) = self.next_frame_deadline {
+        if let (Some(deadline), Some(_)) = (self.next_frame_deadline, self.target_frame_duration) {
             if deadline > now {
                 thread::sleep(deadline - now);
             }
@@ -292,9 +308,10 @@ impl FramePresenter for SdlPresenter {
         }
 
         self.presented_frames += 1;
-        self.next_frame_deadline = Some(
-            self.next_frame_deadline.unwrap_or_else(Instant::now) + self.target_frame_duration,
-        );
+        if let Some(target_frame_duration) = self.target_frame_duration {
+            self.next_frame_deadline =
+                Some(self.next_frame_deadline.unwrap_or_else(Instant::now) + target_frame_duration);
+        }
         Ok(())
     }
 }
@@ -326,6 +343,7 @@ fn init_tracing() {
 fn main() -> ExitCode {
     init_tracing();
     let args = DesktopArgs::parse();
+    let vsync_enabled = args.vsync_enabled();
     let rom_path = args.rom_path;
     info!("desktop runner starting");
 
@@ -387,7 +405,7 @@ fn main() -> ExitCode {
         },
     });
 
-    let mut surface = match SdlPresenter::new(frame_budget, frame_capture) {
+    let mut surface = match SdlPresenter::new(frame_budget, frame_capture, vsync_enabled) {
         Ok(surface) => surface,
         Err(error) => {
             eprintln!("error: failed to initialize output surface: {error}");
@@ -430,7 +448,8 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameCaptureConfig, FrameCaptureMode};
+    use super::{DesktopArgs, FrameCaptureConfig, FrameCaptureMode};
+    use clap::Parser;
     use std::path::PathBuf;
 
     #[test]
@@ -453,5 +472,22 @@ mod tests {
         };
         assert!(!config.should_capture(1));
         assert!(!config.should_capture(99));
+    }
+
+    #[test]
+    fn cli_accepts_explicit_no_vsync_flag() {
+        let args = DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb", "--no-vsync"])
+            .expect("--no-vsync should be accepted");
+        assert!(args.no_vsync);
+        assert!(!args.vsync_enabled());
+    }
+
+    #[test]
+    fn cli_defaults_to_vsync_enabled() {
+        let args = DesktopArgs::try_parse_from(["latchboy-desktop", "game.gb"])
+            .expect("default args should parse");
+        assert!(args.vsync);
+        assert!(!args.no_vsync);
+        assert!(args.vsync_enabled());
     }
 }
