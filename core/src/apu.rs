@@ -18,6 +18,9 @@ pub struct Apu {
     ch2: Ch2,
     ch3: Ch3,
     ch4: Ch4,
+    nr50: u8,
+    nr51: u8,
+    nr52: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -156,6 +159,9 @@ impl Apu {
                 amplitude: 0,
                 enabled: false,
             },
+            nr50: 0x77,
+            nr51: 0xF3,
+            nr52: 0x80,
         }
     }
 
@@ -219,6 +225,10 @@ impl Apu {
     }
 
     fn next_mixed_sample(&mut self) -> i16 {
+        if self.nr52 & 0x80 == 0 {
+            return 0;
+        }
+
         let ch1 = self.next_ch1_sample();
         let ch2 = self.next_ch2_sample();
         let ch3 = self.next_ch3_sample();
@@ -227,9 +237,73 @@ impl Apu {
         } else {
             0
         };
-        ch1.saturating_add(ch2)
-            .saturating_add(ch3)
-            .saturating_add(ch4)
+
+        let left = self.mix_stereo_side(true, ch1, ch2, ch3, ch4);
+        let right = self.mix_stereo_side(false, ch1, ch2, ch3, ch4);
+
+        ((i32::from(left) + i32::from(right)) / 2) as i16
+    }
+
+    fn mix_stereo_side(&self, is_left: bool, ch1: i16, ch2: i16, ch3: i16, ch4: i16) -> i16 {
+        let routing_shift = if is_left { 4 } else { 0 };
+        let channel_mask = (self.nr51 >> routing_shift) & 0x0F;
+        let mut mixed = 0_i16;
+        if channel_mask & 0x01 != 0 {
+            mixed = mixed.saturating_add(ch1);
+        }
+        if channel_mask & 0x02 != 0 {
+            mixed = mixed.saturating_add(ch2);
+        }
+        if channel_mask & 0x04 != 0 {
+            mixed = mixed.saturating_add(ch3);
+        }
+        if channel_mask & 0x08 != 0 {
+            mixed = mixed.saturating_add(ch4);
+        }
+
+        let volume = if is_left {
+            (self.nr50 >> 4) & 0x07
+        } else {
+            self.nr50 & 0x07
+        };
+
+        let scaled = (i32::from(mixed) * i32::from(volume + 1)) / 8;
+        scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    }
+
+    pub fn read_register(&self, address: u16) -> Option<u8> {
+        match address {
+            0xFF24 => Some(self.nr50),
+            0xFF25 => Some(self.nr51),
+            0xFF26 => Some(self.nr52 | self.channel_status_flags()),
+            _ => None,
+        }
+    }
+
+    pub fn write_register(&mut self, address: u16, value: u8) -> bool {
+        match address {
+            0xFF24 => {
+                self.nr50 = value;
+                true
+            }
+            0xFF25 => {
+                self.nr51 = value;
+                true
+            }
+            0xFF26 => {
+                self.nr52 = value & 0x80;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn channel_status_flags(&self) -> u8 {
+        let ch1 = u8::from(self.ch1.amplitude != 0);
+        let ch2 = u8::from(self.ch2.amplitude != 0) << 1;
+        let ch3 = u8::from(self.ch3.amplitude != 0) << 2;
+        let ch4 = u8::from(self.ch4.enabled && self.ch4.amplitude != 0) << 3;
+        ch1 | ch2 | ch3 | ch4
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
@@ -510,6 +584,7 @@ mod tests {
         apu.set_ch4_amplitude(700);
         apu.set_ch4_frequency_hz(Apu::OUTPUT_SAMPLE_RATE_HZ);
         apu.set_ch4_enabled(true);
+        assert!(apu.write_register(0xFF25, 0x88));
 
         let _ = apu.tick(Apu::DMG_CLOCK_HZ / 5);
         let samples = apu.drain_samples();
@@ -531,5 +606,59 @@ mod tests {
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| sample.abs() == 1_250));
+    }
+
+    #[test]
+    fn nr52_master_enable_mutes_all_output_when_disabled() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF26, 0x00));
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn nr51_channel_routing_can_isolate_single_channel() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(900);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_amplitude(0);
+        apu.set_ch4_amplitude(0);
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x77));
+
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| sample.abs() == 900));
+    }
+
+    #[test]
+    fn nr50_volume_scales_output_amplitude() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(800);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_amplitude(0);
+        apu.set_ch4_amplitude(0);
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF24, 0x00));
+        let _ = apu.tick(4_194);
+        let quiet_peak = apu
+            .drain_samples()
+            .iter()
+            .map(|s| s.abs())
+            .max()
+            .unwrap_or(0);
+
+        assert!(apu.write_register(0xFF24, 0x77));
+        let _ = apu.tick(4_194);
+        let loud_peak = apu
+            .drain_samples()
+            .iter()
+            .map(|s| s.abs())
+            .max()
+            .unwrap_or(0);
+        assert!(loud_peak > quiet_peak);
     }
 }
