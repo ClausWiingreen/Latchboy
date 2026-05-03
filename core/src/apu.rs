@@ -12,9 +12,12 @@ pub struct Apu {
     ch2_phase_accumulator: u32,
     ch3_phase_accumulator: u32,
     ch3_wave_index: u8,
+    ch4_phase_accumulator: u32,
+    ch4_lfsr: u16,
     ch1: Ch1,
     ch2: Ch2,
     ch3: Ch3,
+    ch4: Ch4,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +79,13 @@ struct Ch3 {
     wave_ram: [u8; 32],
 }
 
+#[derive(Debug, Clone)]
+struct Ch4 {
+    frequency_hz: u32,
+    amplitude: i16,
+    enabled: bool,
+}
+
 impl Ch1 {
     const fn effective_sweep_period_steps(&self) -> u8 {
         if self.sweep_period_steps == 0 {
@@ -101,6 +111,7 @@ impl Apu {
     const CH1_DEFAULT_FREQUENCY_HZ: u32 = 440;
     const CH2_DEFAULT_FREQUENCY_HZ: u32 = 220;
     const CH3_DEFAULT_FREQUENCY_HZ: u32 = 330;
+    const CH4_DEFAULT_FREQUENCY_HZ: u32 = 1_024;
     const CH1_DEFAULT_AMPLITUDE: i16 = 1_250;
     const CH2_DEFAULT_AMPLITUDE: i16 = 1_250;
 
@@ -115,6 +126,8 @@ impl Apu {
             ch2_phase_accumulator: 0,
             ch3_phase_accumulator: 0,
             ch3_wave_index: 0,
+            ch4_phase_accumulator: 0,
+            ch4_lfsr: 0x7FFF,
             ch1: Ch1 {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
@@ -137,6 +150,11 @@ impl Apu {
                     0, 2, 4, 6, 8, 10, 12, 14, 15, 13, 11, 9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 10, 12,
                     14, 15, 13, 11, 9, 7, 5, 3, 1,
                 ],
+            },
+            ch4: Ch4 {
+                frequency_hz: Self::CH4_DEFAULT_FREQUENCY_HZ,
+                amplitude: 0,
+                enabled: false,
             },
         }
     }
@@ -204,7 +222,14 @@ impl Apu {
         let ch1 = self.next_ch1_sample();
         let ch2 = self.next_ch2_sample();
         let ch3 = self.next_ch3_sample();
-        ch1.saturating_add(ch2).saturating_add(ch3)
+        let ch4 = if self.ch4.enabled {
+            self.next_ch4_sample()
+        } else {
+            0
+        };
+        ch1.saturating_add(ch2)
+            .saturating_add(ch3)
+            .saturating_add(ch4)
     }
 
     fn next_ch1_sample(&mut self) -> i16 {
@@ -256,6 +281,25 @@ impl Apu {
         shifted.saturating_mul(self.ch3.amplitude / 8)
     }
 
+    fn next_ch4_sample(&mut self) -> i16 {
+        self.ch4_phase_accumulator = self
+            .ch4_phase_accumulator
+            .saturating_add(self.ch4.frequency_hz);
+        let step_width = Self::OUTPUT_SAMPLE_RATE_HZ;
+        while self.ch4_phase_accumulator >= step_width {
+            self.ch4_phase_accumulator -= step_width;
+            let feedback = (self.ch4_lfsr ^ (self.ch4_lfsr >> 1)) & 1;
+            self.ch4_lfsr = (self.ch4_lfsr >> 1) | (feedback << 14);
+        }
+        self.ch4_phase_accumulator %= Self::OUTPUT_SAMPLE_RATE_HZ;
+
+        if self.ch4_lfsr & 1 == 0 {
+            self.ch4.amplitude
+        } else {
+            -self.ch4.amplitude
+        }
+    }
+
     #[cfg(test)]
     fn set_ch1_sweep(&mut self, period_steps: u8, shift: u8, negate: bool) {
         self.ch1.sweep_period_steps = period_steps;
@@ -304,6 +348,21 @@ impl Apu {
         self.ch3.wave_ram = wave_ram;
         self.ch3_wave_index = 0;
         self.ch3_phase_accumulator = 0;
+    }
+
+    #[cfg(test)]
+    fn set_ch4_frequency_hz(&mut self, frequency_hz: u32) {
+        self.ch4.frequency_hz = frequency_hz;
+    }
+
+    #[cfg(test)]
+    fn set_ch4_amplitude(&mut self, amplitude: i16) {
+        self.ch4.amplitude = amplitude;
+    }
+
+    #[cfg(test)]
+    fn set_ch4_enabled(&mut self, enabled: bool) {
+        self.ch4.enabled = enabled;
     }
 
     #[must_use]
@@ -440,5 +499,37 @@ mod tests {
         let quarter_peak = quarter.iter().map(|s| s.abs()).max().unwrap_or(0);
 
         assert!(quarter_peak < full_peak);
+    }
+
+    #[test]
+    fn ch4_noise_channel_emits_bipolar_noise() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(0);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_amplitude(0);
+        apu.set_ch4_amplitude(700);
+        apu.set_ch4_frequency_hz(Apu::OUTPUT_SAMPLE_RATE_HZ);
+        apu.set_ch4_enabled(true);
+
+        let _ = apu.tick(Apu::DMG_CLOCK_HZ / 5);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().any(|s| *s > 0));
+        assert!(samples.iter().any(|s| *s < 0));
+        assert!(samples.iter().all(|s| s.abs() == 700));
+    }
+
+    #[test]
+    fn ch4_is_muted_by_default_and_does_not_affect_existing_mix() {
+        let mut apu = Apu::new();
+        apu.ch1.duty = DutyCycle::Duty50;
+        apu.set_ch1_amplitude(0);
+        apu.set_ch2_frequency_hz(220);
+        apu.set_ch2_duty(DutyCycle::Duty25);
+        apu.set_ch3_level_shift(0);
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| sample.abs() == 1_250));
     }
 }
