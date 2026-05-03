@@ -141,13 +141,22 @@ pub trait FramePresenter {
     fn drain_input_events(&mut self) -> Vec<(JoypadButton, bool)> {
         Vec::new()
     }
+    fn drain_runtime_events(&mut self) -> Vec<RuntimeEvent> {
+        Vec::new()
+    }
     fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeEvent {
+    Reset,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmulationRunStats {
     pub frames_presented: u64,
     pub iterations: u64,
+    pub resets_triggered: u64,
 }
 
 #[derive(Debug, Error)]
@@ -194,6 +203,7 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     let mut surface = vec![0u32; FRAMEBUFFER_LEN];
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
+    let mut resets_triggered = 0u64;
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -206,6 +216,12 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
             .map_err(EmulationRunError::Present)?;
         for (button, pressed) in presenter.drain_input_events() {
             emulator.set_button_pressed(button, pressed);
+        }
+        for event in presenter.drain_runtime_events() {
+            if matches!(event, RuntimeEvent::Reset) {
+                emulator.reset();
+                resets_triggered = resets_triggered.saturating_add(1);
+            }
         }
         if !presenter.is_open() {
             break;
@@ -221,6 +237,7 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
                     return Ok(EmulationRunStats {
                         frames_presented,
                         iterations,
+                        resets_triggered,
                     });
                 }
             }
@@ -229,6 +246,7 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
                     return Ok(EmulationRunStats {
                         frames_presented,
                         iterations,
+                        resets_triggered,
                     });
                 }
             }
@@ -238,10 +256,17 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
             for (button, pressed) in presenter.drain_input_events() {
                 emulator.set_button_pressed(button, pressed);
             }
+            for event in presenter.drain_runtime_events() {
+                if matches!(event, RuntimeEvent::Reset) {
+                    emulator.reset();
+                    resets_triggered = resets_triggered.saturating_add(1);
+                }
+            }
             if !presenter.is_open() {
                 return Ok(EmulationRunStats {
                     frames_presented,
                     iterations,
+                    resets_triggered,
                 });
             }
 
@@ -260,6 +285,7 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     Ok(EmulationRunStats {
         frames_presented,
         iterations,
+        resets_triggered,
     })
 }
 
