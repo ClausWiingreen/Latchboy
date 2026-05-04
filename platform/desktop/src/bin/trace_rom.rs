@@ -156,6 +156,7 @@ struct CliConfig {
     summarize_waits: bool,
     summarize_waits_overridden: bool,
     breakpoint_pc: Option<u16>,
+    inspect_mem: Vec<u16>,
 }
 
 enum CliParseResult {
@@ -504,6 +505,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
     let mut format = TraceFormat::Normal;
     let mut summarize_waits_override = None;
     let mut breakpoint_pc = None;
+    let mut inspect_mem = Vec::new();
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -549,6 +551,12 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
                     .ok_or_else(|| UsageError("missing value for --breakpoint-pc".to_string()))?;
                 breakpoint_pc = Some(parse_u16_hex(&value, "breakpoint-pc")?);
             }
+            "--inspect-mem" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| UsageError("missing value for --inspect-mem".to_string()))?;
+                inspect_mem.push(parse_u16_hex(&value, "inspect-mem")?);
+            }
             "-h" | "--help" => {
                 return Ok(CliParseResult::Help);
             }
@@ -580,12 +588,14 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         summarize_waits,
         summarize_waits_overridden,
         breakpoint_pc,
+        inspect_mem,
     }))
 }
 
 fn usage() -> String {
-    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--breakpoint-pc 0150] [--summarize-waits|--no-summarize-waits] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]\n\
+    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--breakpoint-pc 0150] [--inspect-mem C000] [--summarize-waits|--no-summarize-waits] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]\n\
 --summarize-waits aggregates canonical LY polling loops (FF44 + conditional backward jump) into one semantic event.\n\
+--inspect-mem prints final memory values for each provided 16-bit hex address.\n\
 Default: on for minimal/normal format, off for full format."
         .to_string()
 }
@@ -977,6 +987,22 @@ fn main() -> ExitCode {
         }
     }
 
+    let regs = emulator.cpu().registers();
+    println!(
+        "final cpu: pc={:04X} sp={:04X} af={:04X} bc={:04X} de={:04X} hl={:04X} ime={} halted={}",
+        emulator.cpu().pc(),
+        emulator.cpu().sp(),
+        regs.af(),
+        regs.bc(),
+        regs.de(),
+        regs.hl(),
+        emulator.cpu().ime(),
+        emulator.cpu().halted()
+    );
+    for address in &config.inspect_mem {
+        println!("mem[{address:04X}]={:02X}", emulator.bus().read8(*address));
+    }
+
     ExitCode::SUCCESS
 }
 
@@ -1151,6 +1177,7 @@ mod tests {
             summarize_waits: true,
             summarize_waits_overridden: false,
             breakpoint_pc: None,
+            inspect_mem: Vec::new(),
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let prefix = step(0, 0x0000, 0x0001, 0x00, 0x00);
@@ -1238,6 +1265,7 @@ mod tests {
             summarize_waits: true,
             summarize_waits_overridden: false,
             breakpoint_pc: None,
+            inspect_mem: Vec::new(),
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let loop_seq = [
