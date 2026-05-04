@@ -382,7 +382,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Debug tools**
   - [x] CPU register/memory inspector.
   - [x] Breakpoints and instruction trace logger.
-  - [ ] Tile/OAM debug viewers.
+  - [x] Tile/OAM debug viewers.
 
 **Acceptance criteria**
 - Playable user experience for core DMG titles.
