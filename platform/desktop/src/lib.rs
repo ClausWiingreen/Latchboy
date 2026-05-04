@@ -5,6 +5,8 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use latchboy_core::{Emulator, JoypadButton, FRAMEBUFFER_LEN};
 use png::{BitDepth, ColorType, Encoder};
@@ -16,6 +18,7 @@ const DMG_FRAME_CYCLES: u32 = 70_224;
 // so leave that much headroom to avoid skipping past multiple frame-ready pulses in one step.
 const MAX_CPU_INSTRUCTION_CYCLES: u32 = 24;
 const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTION_CYCLES;
+const PAUSED_POLL_SLEEP: Duration = Duration::from_millis(1);
 
 const JOYPAD_BUTTONS: [JoypadButton; 8] = [
     JoypadButton::A,
@@ -309,6 +312,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             break;
         }
         if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
+            thread::sleep(PAUSED_POLL_SLEEP);
             continue;
         }
         if present_if_ready(emulator, presenter, &mut surface)? {
@@ -394,6 +398,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 });
             }
             if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
+                thread::sleep(PAUSED_POLL_SLEEP);
                 continue;
             }
 
