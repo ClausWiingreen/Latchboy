@@ -379,7 +379,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Save/load state slots.
   - [x] Fast-forward and frame stepping.
   - [x] Pause/reset and ROM hot-reload.
-- [ ] **Debug tools**
+- [x] **Debug tools**
   - [x] CPU register/memory inspector.
   - [x] Breakpoints and instruction trace logger.
   - [x] Tile/OAM debug viewers.
