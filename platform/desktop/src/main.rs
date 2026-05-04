@@ -665,7 +665,8 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let _ = load_save_data_if_available(&mut cartridge, &runtime.save_path);
+            let load_status = load_save_data_if_available(&mut cartridge, &runtime.save_path);
+            runtime.persist_enabled = should_persist_after_load(load_status);
             runtime.emulator = Emulator::from_cartridge(cartridge);
             runtime_session_state = RuntimeSessionState::default();
             continue;
