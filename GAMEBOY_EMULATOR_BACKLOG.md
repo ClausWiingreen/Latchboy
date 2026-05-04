@@ -376,7 +376,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Runtime features**
   - [x] Cartridge save-file management (`.sav`) wired to battery-backed RAM APIs.
   - [x] Auto-load saves on ROM open and flush saves on shutdown/reset/periodic checkpoint.
-  - [ ] Save/load state slots.
+  - [x] Save/load state slots.
   - [ ] Fast-forward and frame stepping.
   - [ ] Pause/reset and ROM hot-reload.
 - [ ] **Debug tools**
