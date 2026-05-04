@@ -1,6 +1,6 @@
 pub mod savefile;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
@@ -16,6 +16,17 @@ const DMG_FRAME_CYCLES: u32 = 70_224;
 // so leave that much headroom to avoid skipping past multiple frame-ready pulses in one step.
 const MAX_CPU_INSTRUCTION_CYCLES: u32 = 24;
 const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTION_CYCLES;
+
+const JOYPAD_BUTTONS: [JoypadButton; 8] = [
+    JoypadButton::A,
+    JoypadButton::B,
+    JoypadButton::Select,
+    JoypadButton::Start,
+    JoypadButton::Right,
+    JoypadButton::Left,
+    JoypadButton::Up,
+    JoypadButton::Down,
+];
 
 /// Stable DMG palette in RGB888 (0x00RRGGBB), darkest shade last.
 pub const DMG_PALETTE_RGB: [u32; 4] = [0x00E0F8D0, 0x0088C070, 0x00346856, 0x00081820];
@@ -227,6 +238,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
     let mut resets_triggered = 0u64;
+    let mut pressed_buttons = HashSet::<JoypadButton>::new();
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -249,11 +261,19 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 RuntimeEvent::LoadState { slot } => {
                     if let Some(saved) = save_state_slots.get(&slot) {
                         *emulator = saved.clone();
+                        for button in JOYPAD_BUTTONS {
+                            emulator.set_button_pressed(button, pressed_buttons.contains(&button));
+                        }
                     }
                 }
             }
         }
         for (button, pressed) in presenter.drain_input_events() {
+            if pressed {
+                pressed_buttons.insert(button);
+            } else {
+                pressed_buttons.remove(&button);
+            }
             emulator.set_button_pressed(button, pressed);
         }
         if !presenter.is_open() {
@@ -298,11 +318,20 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     RuntimeEvent::LoadState { slot } => {
                         if let Some(saved) = save_state_slots.get(&slot) {
                             *emulator = saved.clone();
+                            for button in JOYPAD_BUTTONS {
+                                emulator
+                                    .set_button_pressed(button, pressed_buttons.contains(&button));
+                            }
                         }
                     }
                 }
             }
             for (button, pressed) in presenter.drain_input_events() {
+                if pressed {
+                    pressed_buttons.insert(button);
+                } else {
+                    pressed_buttons.remove(&button);
+                }
                 emulator.set_button_pressed(button, pressed);
             }
             if !presenter.is_open() {
@@ -360,6 +389,7 @@ mod tests {
     struct RuntimeEventOnlyPresenter {
         open: bool,
         events: Vec<RuntimeEvent>,
+        input_events: Vec<(latchboy_core::JoypadButton, bool)>,
     }
 
     impl FramePresenter for RuntimeEventOnlyPresenter {
@@ -378,6 +408,10 @@ mod tests {
             std::mem::take(&mut self.events)
         }
 
+        fn drain_input_events(&mut self) -> Vec<(latchboy_core::JoypadButton, bool)> {
+            std::mem::take(&mut self.input_events)
+        }
+
         fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
             Ok(())
         }
@@ -393,6 +427,7 @@ mod tests {
         let mut save_presenter = RuntimeEventOnlyPresenter {
             open: true,
             events: vec![RuntimeEvent::SaveState { slot: 1 }],
+            input_events: Vec::new(),
         };
         run_emulation_loop_with_stats_and_state(
             &mut emulator,
@@ -409,6 +444,7 @@ mod tests {
         let mut load_presenter = RuntimeEventOnlyPresenter {
             open: true,
             events: vec![RuntimeEvent::LoadState { slot: 1 }],
+            input_events: Vec::new(),
         };
         run_emulation_loop_with_stats_and_state(
             &mut emulator,
