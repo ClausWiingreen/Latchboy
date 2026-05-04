@@ -165,6 +165,7 @@ pub trait FramePresenter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeEvent {
     Reset,
+    ReloadRom,
     SaveState { slot: u8 },
     LoadState { slot: u8 },
     SetPaused(bool),
@@ -177,6 +178,7 @@ pub struct EmulationRunStats {
     pub frames_presented: u64,
     pub iterations: u64,
     pub resets_triggered: u64,
+    pub reloads_triggered: u64,
 }
 
 #[derive(Debug, Default)]
@@ -186,6 +188,7 @@ pub struct RuntimeSessionState {
     pub paused: bool,
     pub frame_steps_remaining: u64,
     pub fast_forward: bool,
+    pub reload_requested: bool,
 }
 
 #[derive(Debug, Error)]
@@ -253,6 +256,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
     let mut resets_triggered = 0u64;
+    let mut reloads_triggered = 0u64;
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -268,6 +272,10 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 RuntimeEvent::Reset => {
                     emulator.reset();
                     resets_triggered = resets_triggered.saturating_add(1);
+                }
+                RuntimeEvent::ReloadRom => {
+                    runtime_state.reload_requested = true;
+                    reloads_triggered = reloads_triggered.saturating_add(1);
                 }
                 RuntimeEvent::SaveState { slot } => {
                     runtime_state
@@ -300,6 +308,9 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
             }
         }
+        if runtime_state.reload_requested {
+            break;
+        }
         for (button, pressed) in presenter.drain_input_events() {
             if pressed {
                 runtime_state.pressed_buttons.insert(button);
@@ -330,6 +341,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                         frames_presented,
                         iterations,
                         resets_triggered,
+                        reloads_triggered,
                     });
                 }
             }
@@ -339,6 +351,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                         frames_presented,
                         iterations,
                         resets_triggered,
+                        reloads_triggered,
                     });
                 }
             }
@@ -350,6 +363,10 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     RuntimeEvent::Reset => {
                         emulator.reset();
                         resets_triggered = resets_triggered.saturating_add(1);
+                    }
+                    RuntimeEvent::ReloadRom => {
+                        runtime_state.reload_requested = true;
+                        reloads_triggered = reloads_triggered.saturating_add(1);
                     }
                     RuntimeEvent::SaveState { slot } => {
                         runtime_state
@@ -382,6 +399,14 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
                 }
             }
+            if runtime_state.reload_requested {
+                return Ok(EmulationRunStats {
+                    frames_presented,
+                    iterations,
+                    resets_triggered,
+                    reloads_triggered,
+                });
+            }
             for (button, pressed) in presenter.drain_input_events() {
                 if pressed {
                     runtime_state.pressed_buttons.insert(button);
@@ -395,6 +420,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     frames_presented,
                     iterations,
                     resets_triggered,
+                    reloads_triggered,
                 });
             }
             if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
@@ -421,6 +447,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
         frames_presented,
         iterations,
         resets_triggered,
+        reloads_triggered,
     })
 }
 
