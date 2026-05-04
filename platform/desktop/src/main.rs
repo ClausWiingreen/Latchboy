@@ -126,6 +126,7 @@ struct SdlPresenter {
     close_requested: bool,
     frame_capture: Option<FrameCaptureConfig>,
     target_frame_duration: Option<Duration>,
+    default_frame_duration: Option<Duration>,
     next_frame_deadline: Option<Instant>,
     keymap: Vec<(Keycode, JoypadButton)>,
     pending_input_events: Vec<(JoypadButton, bool)>,
@@ -169,6 +170,7 @@ impl SdlPresenter {
             close_requested: false,
             frame_capture,
             target_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
+            default_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
             next_frame_deadline: None,
             keymap,
             pending_input_events: Vec::new(),
@@ -241,6 +243,20 @@ impl FramePresenter for SdlPresenter {
                     repeat: false,
                     ..
                 } => {
+                    if key == Keycode::Tab {
+                        self.target_frame_duration = None;
+                    }
+                    if key == Keycode::P {
+                        self.pending_runtime_events
+                            .push(RuntimeEvent::SetPaused(true));
+                    }
+                    if key == Keycode::O {
+                        self.pending_runtime_events
+                            .push(RuntimeEvent::SetPaused(false));
+                    }
+                    if key == Keycode::N {
+                        self.pending_runtime_events.push(RuntimeEvent::StepFrame);
+                    }
                     if key == Keycode::F5 {
                         self.pending_runtime_events.push(RuntimeEvent::Reset);
                     }
@@ -264,6 +280,9 @@ impl FramePresenter for SdlPresenter {
                     repeat: false,
                     ..
                 } => {
+                    if key == Keycode::Tab {
+                        self.target_frame_duration = self.default_frame_duration;
+                    }
                     if let Some(button) = keymap
                         .iter()
                         .find_map(|(mapped_key, button)| (*mapped_key == key).then_some(*button))

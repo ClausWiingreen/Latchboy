@@ -164,6 +164,9 @@ pub enum RuntimeEvent {
     Reset,
     SaveState { slot: u8 },
     LoadState { slot: u8 },
+    SetPaused(bool),
+    StepFrame,
+    SetFastForward(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +180,9 @@ pub struct EmulationRunStats {
 pub struct RuntimeSessionState {
     pub save_state_slots: HashMap<u8, Emulator>,
     pub pressed_buttons: HashSet<JoypadButton>,
+    pub paused: bool,
+    pub frame_steps_remaining: u64,
+    pub fast_forward: bool,
 }
 
 #[derive(Debug, Error)]
@@ -276,6 +282,12 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                         }
                     }
                 }
+                RuntimeEvent::SetPaused(paused) => runtime_state.paused = paused,
+                RuntimeEvent::StepFrame => {
+                    runtime_state.frame_steps_remaining =
+                        runtime_state.frame_steps_remaining.saturating_add(1);
+                }
+                RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
             }
         }
         for (button, pressed) in presenter.drain_input_events() {
@@ -289,8 +301,14 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
         if !presenter.is_open() {
             break;
         }
+        if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
+            continue;
+        }
         if present_if_ready(emulator, presenter, &mut surface)? {
             frames_presented += 1;
+            if runtime_state.paused && runtime_state.frame_steps_remaining > 0 {
+                runtime_state.frame_steps_remaining -= 1;
+            }
             continue;
         }
         let mut cycles_remaining = cycle_step;
@@ -338,6 +356,12 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                             }
                         }
                     }
+                    RuntimeEvent::SetPaused(paused) => runtime_state.paused = paused,
+                    RuntimeEvent::StepFrame => {
+                        runtime_state.frame_steps_remaining =
+                            runtime_state.frame_steps_remaining.saturating_add(1);
+                    }
+                    RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
                 }
             }
             for (button, pressed) in presenter.drain_input_events() {
@@ -355,9 +379,15 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     resets_triggered,
                 });
             }
+            if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
+                continue;
+            }
 
             if present_if_ready(emulator, presenter, &mut surface)? {
                 frames_presented += 1;
+                if runtime_state.paused && runtime_state.frame_steps_remaining > 0 {
+                    runtime_state.frame_steps_remaining -= 1;
+                }
                 continue;
             }
 
@@ -472,5 +502,29 @@ mod tests {
         .expect("load event should be handled");
 
         assert_eq!(emulator, expected);
+    }
+
+    #[test]
+    fn pause_and_frame_step_events_update_runtime_state() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+        let mut presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SetPaused(true), RuntimeEvent::StepFrame],
+            input_events: Vec::new(),
+        };
+
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("pause and frame-step events should be handled");
+
+        assert!(runtime_state.paused);
+        assert_eq!(runtime_state.frame_steps_remaining, 1);
     }
 }
