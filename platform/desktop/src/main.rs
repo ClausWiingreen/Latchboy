@@ -613,19 +613,28 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut audio_sink = {
-        let audio = surface._sdl.audio().map_err(io::Error::other).unwrap();
-        let desired_spec = AudioSpecDesired {
-            freq: Some(Apu::OUTPUT_SAMPLE_RATE_HZ as i32),
-            channels: Some(1),
-            samples: Some(1024),
-        };
-        let queue = audio
-            .open_queue::<i16, _>(None, &desired_spec)
-            .map_err(io::Error::other)
-            .unwrap();
-        queue.resume();
-        SdlAudioSink { queue }
+    let mut audio_sink = match surface._sdl.audio().map_err(io::Error::other) {
+        Ok(audio) => {
+            let desired_spec = AudioSpecDesired {
+                freq: Some(Apu::OUTPUT_SAMPLE_RATE_HZ as i32),
+                channels: Some(1),
+                samples: Some(1024),
+            };
+            match audio.open_queue::<i16, _>(None, &desired_spec) {
+                Ok(queue) => {
+                    queue.resume();
+                    Some(SdlAudioSink { queue })
+                }
+                Err(error) => {
+                    eprintln!("warning: failed to initialize SDL audio queue: {error}");
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("warning: failed to initialize SDL audio subsystem: {error}");
+            None
+        }
     };
 
     let frame_loop_span = info_span!("frame_loop");
@@ -655,7 +664,7 @@ fn main() -> ExitCode {
             Some(chunk_limit),
             remaining_iteration_budget,
             &mut runtime_session_state,
-            Some(&mut audio_sink),
+            audio_sink.as_mut().map(|sink| sink as &mut dyn AudioSink),
         ) {
             Ok(stats) => stats,
             Err(error) => {
