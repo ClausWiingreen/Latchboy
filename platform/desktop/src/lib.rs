@@ -1,5 +1,6 @@
 pub mod savefile;
 
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
@@ -15,6 +16,17 @@ const DMG_FRAME_CYCLES: u32 = 70_224;
 // so leave that much headroom to avoid skipping past multiple frame-ready pulses in one step.
 const MAX_CPU_INSTRUCTION_CYCLES: u32 = 24;
 const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTION_CYCLES;
+
+const JOYPAD_BUTTONS: [JoypadButton; 8] = [
+    JoypadButton::A,
+    JoypadButton::B,
+    JoypadButton::Select,
+    JoypadButton::Start,
+    JoypadButton::Right,
+    JoypadButton::Left,
+    JoypadButton::Up,
+    JoypadButton::Down,
+];
 
 /// Stable DMG palette in RGB888 (0x00RRGGBB), darkest shade last.
 pub const DMG_PALETTE_RGB: [u32; 4] = [0x00E0F8D0, 0x0088C070, 0x00346856, 0x00081820];
@@ -150,6 +162,8 @@ pub trait FramePresenter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeEvent {
     Reset,
+    SaveState { slot: u8 },
+    LoadState { slot: u8 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +171,12 @@ pub struct EmulationRunStats {
     pub frames_presented: u64,
     pub iterations: u64,
     pub resets_triggered: u64,
+}
+
+#[derive(Debug, Default)]
+pub struct RuntimeSessionState {
+    pub save_state_slots: HashMap<u8, Emulator>,
+    pub pressed_buttons: HashSet<JoypadButton>,
 }
 
 #[derive(Debug, Error)]
@@ -178,6 +198,26 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     cycle_step: u32,
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
+) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
+    let mut runtime_state = RuntimeSessionState::default();
+    run_emulation_loop_with_stats_and_state(
+        emulator,
+        presenter,
+        cycle_step,
+        frame_limit,
+        iteration_limit,
+        &mut runtime_state,
+    )
+}
+
+/// Runs emulation loop with caller-owned runtime state slots that can persist across invocations.
+pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
+    emulator: &mut Emulator,
+    presenter: &mut P,
+    cycle_step: u32,
+    frame_limit: Option<u64>,
+    iteration_limit: Option<u64>,
+    runtime_state: &mut RuntimeSessionState,
 ) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
     if cycle_step == 0 {
         return Err(EmulationRunError::InvalidCycleStep);
@@ -215,12 +255,35 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
             .poll_events()
             .map_err(EmulationRunError::Present)?;
         for event in presenter.drain_runtime_events() {
-            if matches!(event, RuntimeEvent::Reset) {
-                emulator.reset();
-                resets_triggered = resets_triggered.saturating_add(1);
+            match event {
+                RuntimeEvent::Reset => {
+                    emulator.reset();
+                    resets_triggered = resets_triggered.saturating_add(1);
+                }
+                RuntimeEvent::SaveState { slot } => {
+                    runtime_state
+                        .save_state_slots
+                        .insert(slot, emulator.clone());
+                }
+                RuntimeEvent::LoadState { slot } => {
+                    if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
+                        *emulator = saved.clone();
+                        for button in JOYPAD_BUTTONS {
+                            emulator.set_button_pressed(
+                                button,
+                                runtime_state.pressed_buttons.contains(&button),
+                            );
+                        }
+                    }
+                }
             }
         }
         for (button, pressed) in presenter.drain_input_events() {
+            if pressed {
+                runtime_state.pressed_buttons.insert(button);
+            } else {
+                runtime_state.pressed_buttons.remove(&button);
+            }
             emulator.set_button_pressed(button, pressed);
         }
         if !presenter.is_open() {
@@ -254,12 +317,35 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
                 .poll_events()
                 .map_err(EmulationRunError::Present)?;
             for event in presenter.drain_runtime_events() {
-                if matches!(event, RuntimeEvent::Reset) {
-                    emulator.reset();
-                    resets_triggered = resets_triggered.saturating_add(1);
+                match event {
+                    RuntimeEvent::Reset => {
+                        emulator.reset();
+                        resets_triggered = resets_triggered.saturating_add(1);
+                    }
+                    RuntimeEvent::SaveState { slot } => {
+                        runtime_state
+                            .save_state_slots
+                            .insert(slot, emulator.clone());
+                    }
+                    RuntimeEvent::LoadState { slot } => {
+                        if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
+                            *emulator = saved.clone();
+                            for button in JOYPAD_BUTTONS {
+                                emulator.set_button_pressed(
+                                    button,
+                                    runtime_state.pressed_buttons.contains(&button),
+                                );
+                            }
+                        }
+                    }
                 }
             }
             for (button, pressed) in presenter.drain_input_events() {
+                if pressed {
+                    runtime_state.pressed_buttons.insert(button);
+                } else {
+                    runtime_state.pressed_buttons.remove(&button);
+                }
                 emulator.set_button_pressed(button, pressed);
             }
             if !presenter.is_open() {
@@ -305,4 +391,86 @@ pub fn run_emulation_loop<P: FramePresenter>(
         iteration_limit,
     )?
     .frames_presented)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeEvent, RuntimeSessionState,
+    };
+    use latchboy_core::Emulator;
+    use std::convert::Infallible;
+
+    struct RuntimeEventOnlyPresenter {
+        open: bool,
+        events: Vec<RuntimeEvent>,
+        input_events: Vec<(latchboy_core::JoypadButton, bool)>,
+    }
+
+    impl FramePresenter for RuntimeEventOnlyPresenter {
+        type Error = Infallible;
+
+        fn is_open(&self) -> bool {
+            self.open
+        }
+
+        fn poll_events(&mut self) -> Result<(), Self::Error> {
+            self.open = false;
+            Ok(())
+        }
+
+        fn drain_runtime_events(&mut self) -> Vec<RuntimeEvent> {
+            std::mem::take(&mut self.events)
+        }
+
+        fn drain_input_events(&mut self) -> Vec<(latchboy_core::JoypadButton, bool)> {
+            std::mem::take(&mut self.input_events)
+        }
+
+        fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn runtime_state_slots_persist_across_loop_invocations() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+
+        emulator.step_cycles(1_024);
+        let expected = emulator.clone();
+        let mut save_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SaveState { slot: 1 }],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut save_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("save event should be handled");
+
+        emulator.reset();
+
+        let mut load_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::LoadState { slot: 1 }],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut load_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("load event should be handled");
+
+        assert_eq!(emulator, expected);
+    }
 }
