@@ -428,6 +428,11 @@ fn runtime_load_slot_for_key(key: Keycode) -> Option<u8> {
         _ => None,
     }
 }
+
+fn is_reserved_runtime_control_key(key: Keycode) -> bool {
+    matches!(key, Keycode::P | Keycode::O | Keycode::N | Keycode::Tab)
+}
+
 fn save_checkpoint_interval_from_env() -> Option<NonZeroU64> {
     std::env::var("LATCHBOY_SAVE_CHECKPOINT_FRAMES")
         .ok()
@@ -490,6 +495,12 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
         if runtime_save_slot_for_key(key).is_some() || runtime_load_slot_for_key(key).is_some() {
             return Err(format!(
                 "key '{key_name}' is reserved for save/load state slots and cannot be mapped to {:?}",
+                button
+            ));
+        }
+        if is_reserved_runtime_control_key(key) {
+            return Err(format!(
+                "key '{key_name}' is reserved for runtime controls and cannot be mapped to {:?}",
                 button
             ));
         }
@@ -747,6 +758,22 @@ mod tests {
             let error = build_keymap(&args)
                 .expect_err("save/load slot keys should be rejected as a mapping");
             assert!(error.contains("reserved for save/load state slots"));
+        }
+    }
+
+    #[test]
+    fn runtime_control_keys_are_rejected_as_bindings() {
+        for reserved_key in ["p", "o", "n", "tab"] {
+            let args = DesktopArgs::try_parse_from([
+                "latchboy-desktop",
+                "game.gb",
+                "--key-a",
+                reserved_key,
+            ])
+            .expect("args should parse");
+            let error = build_keymap(&args)
+                .expect_err("runtime control keys should be rejected as mappings");
+            assert!(error.contains("reserved for runtime controls"));
         }
     }
 
