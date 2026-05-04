@@ -173,6 +173,12 @@ pub struct EmulationRunStats {
     pub resets_triggered: u64,
 }
 
+#[derive(Debug, Default)]
+pub struct RuntimeSessionState {
+    pub save_state_slots: HashMap<u8, Emulator>,
+    pub pressed_buttons: HashSet<JoypadButton>,
+}
+
 #[derive(Debug, Error)]
 pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
     #[error("cycle_step must be greater than zero")]
@@ -193,14 +199,14 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
 ) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
-    let mut save_state_slots = HashMap::<u8, Emulator>::new();
+    let mut runtime_state = RuntimeSessionState::default();
     run_emulation_loop_with_stats_and_state(
         emulator,
         presenter,
         cycle_step,
         frame_limit,
         iteration_limit,
-        &mut save_state_slots,
+        &mut runtime_state,
     )
 }
 
@@ -211,7 +217,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     cycle_step: u32,
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
-    save_state_slots: &mut HashMap<u8, Emulator>,
+    runtime_state: &mut RuntimeSessionState,
 ) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
     if cycle_step == 0 {
         return Err(EmulationRunError::InvalidCycleStep);
@@ -238,7 +244,6 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     let mut frames_presented = 0u64;
     let mut iterations = 0u64;
     let mut resets_triggered = 0u64;
-    let mut pressed_buttons = HashSet::<JoypadButton>::new();
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
@@ -256,13 +261,18 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     resets_triggered = resets_triggered.saturating_add(1);
                 }
                 RuntimeEvent::SaveState { slot } => {
-                    save_state_slots.insert(slot, emulator.clone());
+                    runtime_state
+                        .save_state_slots
+                        .insert(slot, emulator.clone());
                 }
                 RuntimeEvent::LoadState { slot } => {
-                    if let Some(saved) = save_state_slots.get(&slot) {
+                    if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
                         *emulator = saved.clone();
                         for button in JOYPAD_BUTTONS {
-                            emulator.set_button_pressed(button, pressed_buttons.contains(&button));
+                            emulator.set_button_pressed(
+                                button,
+                                runtime_state.pressed_buttons.contains(&button),
+                            );
                         }
                     }
                 }
@@ -270,9 +280,9 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
         }
         for (button, pressed) in presenter.drain_input_events() {
             if pressed {
-                pressed_buttons.insert(button);
+                runtime_state.pressed_buttons.insert(button);
             } else {
-                pressed_buttons.remove(&button);
+                runtime_state.pressed_buttons.remove(&button);
             }
             emulator.set_button_pressed(button, pressed);
         }
@@ -313,14 +323,18 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                         resets_triggered = resets_triggered.saturating_add(1);
                     }
                     RuntimeEvent::SaveState { slot } => {
-                        save_state_slots.insert(slot, emulator.clone());
+                        runtime_state
+                            .save_state_slots
+                            .insert(slot, emulator.clone());
                     }
                     RuntimeEvent::LoadState { slot } => {
-                        if let Some(saved) = save_state_slots.get(&slot) {
+                        if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
                             *emulator = saved.clone();
                             for button in JOYPAD_BUTTONS {
-                                emulator
-                                    .set_button_pressed(button, pressed_buttons.contains(&button));
+                                emulator.set_button_pressed(
+                                    button,
+                                    runtime_state.pressed_buttons.contains(&button),
+                                );
                             }
                         }
                     }
@@ -328,9 +342,9 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             }
             for (button, pressed) in presenter.drain_input_events() {
                 if pressed {
-                    pressed_buttons.insert(button);
+                    runtime_state.pressed_buttons.insert(button);
                 } else {
-                    pressed_buttons.remove(&button);
+                    runtime_state.pressed_buttons.remove(&button);
                 }
                 emulator.set_button_pressed(button, pressed);
             }
@@ -381,9 +395,10 @@ pub fn run_emulation_loop<P: FramePresenter>(
 
 #[cfg(test)]
 mod tests {
-    use super::{run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeEvent};
+    use super::{
+        run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeEvent, RuntimeSessionState,
+    };
     use latchboy_core::Emulator;
-    use std::collections::HashMap;
     use std::convert::Infallible;
 
     struct RuntimeEventOnlyPresenter {
@@ -420,7 +435,7 @@ mod tests {
     #[test]
     fn runtime_state_slots_persist_across_loop_invocations() {
         let mut emulator = Emulator::new();
-        let mut slots = HashMap::<u8, Emulator>::new();
+        let mut runtime_state = RuntimeSessionState::default();
 
         emulator.step_cycles(1_024);
         let expected = emulator.clone();
@@ -435,7 +450,7 @@ mod tests {
             1,
             None,
             Some(1),
-            &mut slots,
+            &mut runtime_state,
         )
         .expect("save event should be handled");
 
@@ -452,7 +467,7 @@ mod tests {
             1,
             None,
             Some(1),
-            &mut slots,
+            &mut runtime_state,
         )
         .expect("load event should be handled");
 
