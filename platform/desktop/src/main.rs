@@ -712,6 +712,22 @@ mod tests {
     }
 
     #[test]
+    fn save_and_load_slot_keys_are_rejected_as_bindings() {
+        for reserved_key in ["f1", "f2", "f3", "f9", "f10", "f11"] {
+            let args = DesktopArgs::try_parse_from([
+                "latchboy-desktop",
+                "game.gb",
+                "--key-a",
+                reserved_key,
+            ])
+            .expect("args should parse");
+            let error = build_keymap(&args)
+                .expect_err("save/load slot keys should be rejected as a mapping");
+            assert!(error.contains("reserved for save/load state slots"));
+        }
+    }
+
+    #[test]
     fn runtime_state_slot_keys_are_mapped() {
         assert_eq!(runtime_save_slot_for_key(Keycode::F1), Some(1));
         assert_eq!(runtime_save_slot_for_key(Keycode::F2), Some(2));
