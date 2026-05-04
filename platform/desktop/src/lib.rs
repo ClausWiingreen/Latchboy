@@ -148,6 +148,10 @@ pub fn write_rgb_surface_to_png(
     Ok(())
 }
 
+pub trait AudioSink {
+    fn push_samples(&mut self, samples: &[i16]);
+}
+
 pub trait FramePresenter {
     type Error: Error + Send + Sync + 'static;
 
@@ -219,6 +223,29 @@ pub fn run_emulation_loop_with_stats<P: FramePresenter>(
         frame_limit,
         iteration_limit,
         &mut runtime_state,
+        None,
+    )
+}
+
+/// Runs a basic emulation loop and presents frames whenever VBlank marks a complete frame.
+///
+/// Returns the number of frames presented.
+pub fn run_emulation_loop_with_stats_legacy<P: FramePresenter>(
+    emulator: &mut Emulator,
+    presenter: &mut P,
+    cycle_step: u32,
+    frame_limit: Option<u64>,
+    iteration_limit: Option<u64>,
+) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
+    let mut runtime_state = RuntimeSessionState::default();
+    run_emulation_loop_with_stats_and_state(
+        emulator,
+        presenter,
+        cycle_step,
+        frame_limit,
+        iteration_limit,
+        &mut runtime_state,
+        None,
     )
 }
 
@@ -230,6 +257,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
     runtime_state: &mut RuntimeSessionState,
+    mut audio_sink: Option<&mut dyn AudioSink>,
 ) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
     if cycle_step == 0 {
         return Err(EmulationRunError::InvalidCycleStep);
@@ -438,6 +466,12 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
 
             let chunk = cycles_remaining.min(MAX_CYCLES_BETWEEN_FRAME_POLLS);
             emulator.step_cycles(chunk);
+            if let Some(sink) = audio_sink.as_deref_mut() {
+                let samples = emulator.drain_audio_samples();
+                if !samples.is_empty() {
+                    sink.push_samples(&samples);
+                }
+            }
             cycles_remaining -= chunk;
             iterations += 1;
         }

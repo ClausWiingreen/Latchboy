@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use clap::{ArgAction, Parser};
 use latchboy_core::{
-    cartridge::Cartridge, Emulator, JoypadButton, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN,
+    apu::Apu, cartridge::Cartridge, Emulator, JoypadButton, FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN,
     FRAMEBUFFER_WIDTH,
 };
 use latchboy_desktop::savefile::{
@@ -18,9 +18,10 @@ use latchboy_desktop::savefile::{
     should_persist_after_load,
 };
 use latchboy_desktop::{
-    run_emulation_loop_with_stats_and_state, write_rgb_surface_to_png, FramePresenter,
+    run_emulation_loop_with_stats_and_state, write_rgb_surface_to_png, AudioSink, FramePresenter,
     RuntimeEvent, RuntimeSessionState,
 };
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormatEnum};
@@ -118,6 +119,7 @@ enum SurfaceError {
 
 /// SDL-backed frame presenter.
 struct SdlPresenter {
+    _sdl: sdl2::Sdl,
     window: Window,
     event_pump: sdl2::EventPump,
     buffer: Vec<u32>,
@@ -131,6 +133,19 @@ struct SdlPresenter {
     keymap: Vec<(Keycode, JoypadButton)>,
     pending_input_events: Vec<(JoypadButton, bool)>,
     pending_runtime_events: Vec<RuntimeEvent>,
+}
+
+struct SdlAudioSink {
+    queue: AudioQueue<i16>,
+}
+
+impl AudioSink for SdlAudioSink {
+    fn push_samples(&mut self, samples: &[i16]) {
+        if self.queue.size() > 16_384 {
+            self.queue.clear();
+        }
+        let _ = self.queue.queue_audio(samples);
+    }
 }
 
 impl SdlPresenter {
@@ -162,6 +177,7 @@ impl SdlPresenter {
         let event_pump = sdl.event_pump().map_err(io::Error::other)?;
 
         Ok(Self {
+            _sdl: sdl,
             window,
             event_pump,
             buffer: vec![0; FRAMEBUFFER_LEN],
@@ -597,6 +613,20 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let mut audio_sink = {
+        let audio = surface._sdl.audio().map_err(io::Error::other).unwrap();
+        let desired_spec = AudioSpecDesired {
+            freq: Some(Apu::OUTPUT_SAMPLE_RATE_HZ as i32),
+            channels: Some(1),
+            samples: Some(1024),
+        };
+        let queue = audio
+            .open_queue::<i16, _>(None, &desired_spec)
+            .map_err(io::Error::other)
+            .unwrap();
+        queue.resume();
+        SdlAudioSink { queue }
+    };
 
     let frame_loop_span = info_span!("frame_loop");
     let _frame_loop_guard = frame_loop_span.enter();
@@ -625,6 +655,7 @@ fn main() -> ExitCode {
             Some(chunk_limit),
             remaining_iteration_budget,
             &mut runtime_session_state,
+            Some(&mut audio_sink),
         ) {
             Ok(stats) => stats,
             Err(error) => {
