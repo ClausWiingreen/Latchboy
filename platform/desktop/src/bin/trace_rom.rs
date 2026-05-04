@@ -155,6 +155,7 @@ struct CliConfig {
     format: TraceFormat,
     summarize_waits: bool,
     summarize_waits_overridden: bool,
+    breakpoint_pc: Option<u16>,
 }
 
 enum CliParseResult {
@@ -168,6 +169,7 @@ enum ExitReason {
     MaxCyclesReached { limit: u64 },
     JrFeInfiniteLoop { pc: u16 },
     UnimplementedOpcode { opcode: u8, pc: u16 },
+    BreakpointPcHit { pc: u16 },
 }
 
 struct TraceCollector<'a> {
@@ -467,6 +469,18 @@ fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
     })
 }
 
+fn parse_u16_hex(value: &str, name: &str) -> Result<u16, UsageError> {
+    let trimmed = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    u16::from_str_radix(trimmed, 16).map_err(|_| {
+        UsageError(format!(
+            "invalid --{name} value '{value}': expected 16-bit hex (example: 0150 or 0x0150)"
+        ))
+    })
+}
+
 fn parse_cli() -> Result<CliParseResult, UsageError> {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
@@ -489,6 +503,7 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
     let mut watch_io = false;
     let mut format = TraceFormat::Normal;
     let mut summarize_waits_override = None;
+    let mut breakpoint_pc = None;
 
     while let Some(flag) = args.next() {
         match flag.as_str() {
@@ -528,6 +543,12 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
                     .ok_or_else(|| UsageError("missing value for --format".to_string()))?;
                 format = TraceFormat::parse(&value)?;
             }
+            "--breakpoint-pc" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| UsageError("missing value for --breakpoint-pc".to_string()))?;
+                breakpoint_pc = Some(parse_u16_hex(&value, "breakpoint-pc")?);
+            }
             "-h" | "--help" => {
                 return Ok(CliParseResult::Help);
             }
@@ -558,11 +579,12 @@ fn parse_cli() -> Result<CliParseResult, UsageError> {
         format,
         summarize_waits,
         summarize_waits_overridden,
+        breakpoint_pc,
     }))
 }
 
 fn usage() -> String {
-    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--summarize-waits|--no-summarize-waits] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]\n\
+    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--breakpoint-pc 0150] [--summarize-waits|--no-summarize-waits] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]\n\
 --summarize-waits aggregates canonical LY polling loops (FF44 + conditional backward jump) into one semantic event.\n\
 Default: on for minimal/normal format, off for full format."
         .to_string()
@@ -783,6 +805,14 @@ fn exit_reason_from_step(
             pc: observation.pc_before,
         });
     }
+    if config
+        .breakpoint_pc
+        .is_some_and(|pc| pc == observation.pc_before)
+    {
+        return Some(ExitReason::BreakpointPcHit {
+            pc: observation.pc_before,
+        });
+    }
 
     None
 }
@@ -927,6 +957,13 @@ fn main() -> ExitCode {
         Some(ExitReason::UnimplementedOpcode { opcode, pc }) => {
             println!(
                 "trace completed: hit unimplemented opcode {opcode:02X} at PC={pc:04X}; cycles={} steps={steps}",
+                final_cycles,
+                steps = final_steps
+            );
+        }
+        Some(ExitReason::BreakpointPcHit { pc }) => {
+            println!(
+                "trace completed: hit breakpoint at PC={pc:04X}; cycles={} steps={steps}",
                 final_cycles,
                 steps = final_steps
             );
@@ -1113,6 +1150,7 @@ mod tests {
             format: TraceFormat::Minimal,
             summarize_waits: true,
             summarize_waits_overridden: false,
+            breakpoint_pc: None,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let prefix = step(0, 0x0000, 0x0001, 0x00, 0x00);
@@ -1199,6 +1237,7 @@ mod tests {
             format: TraceFormat::Minimal,
             summarize_waits: true,
             summarize_waits_overridden: false,
+            breakpoint_pc: None,
         };
         let mut c = TraceCollector::new(&mut writer, &config);
         let loop_seq = [
