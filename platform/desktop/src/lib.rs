@@ -282,10 +282,17 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                         }
                     }
                 }
-                RuntimeEvent::SetPaused(paused) => runtime_state.paused = paused,
+                RuntimeEvent::SetPaused(paused) => {
+                    runtime_state.paused = paused;
+                    if !paused {
+                        runtime_state.frame_steps_remaining = 0;
+                    }
+                }
                 RuntimeEvent::StepFrame => {
-                    runtime_state.frame_steps_remaining =
-                        runtime_state.frame_steps_remaining.saturating_add(1);
+                    if runtime_state.paused {
+                        runtime_state.frame_steps_remaining =
+                            runtime_state.frame_steps_remaining.saturating_add(1);
+                    }
                 }
                 RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
             }
@@ -356,10 +363,17 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                             }
                         }
                     }
-                    RuntimeEvent::SetPaused(paused) => runtime_state.paused = paused,
+                    RuntimeEvent::SetPaused(paused) => {
+                        runtime_state.paused = paused;
+                        if !paused {
+                            runtime_state.frame_steps_remaining = 0;
+                        }
+                    }
                     RuntimeEvent::StepFrame => {
-                        runtime_state.frame_steps_remaining =
-                            runtime_state.frame_steps_remaining.saturating_add(1);
+                        if runtime_state.paused {
+                            runtime_state.frame_steps_remaining =
+                                runtime_state.frame_steps_remaining.saturating_add(1);
+                        }
                     }
                     RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
                 }
@@ -526,5 +540,60 @@ mod tests {
 
         assert!(runtime_state.paused);
         assert_eq!(runtime_state.frame_steps_remaining, 1);
+    }
+
+    #[test]
+    fn frame_step_requires_paused_mode_and_is_cleared_on_resume() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+
+        let mut running_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::StepFrame],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut running_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("step-frame while running should be ignored");
+        assert_eq!(runtime_state.frame_steps_remaining, 0);
+
+        let mut paused_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SetPaused(true), RuntimeEvent::StepFrame],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut paused_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("step-frame while paused should be queued");
+        assert_eq!(runtime_state.frame_steps_remaining, 1);
+
+        let mut resume_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SetPaused(false)],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut resume_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("resume should clear queued frame steps");
+        assert!(!runtime_state.paused);
+        assert_eq!(runtime_state.frame_steps_remaining, 0);
     }
 }

@@ -282,6 +282,9 @@ impl FramePresenter for SdlPresenter {
                 } => {
                     if key == Keycode::Tab {
                         self.target_frame_duration = self.default_frame_duration;
+                        self.next_frame_deadline = self
+                            .default_frame_duration
+                            .map(|duration| Instant::now() + duration);
                     }
                     if let Some(button) = keymap
                         .iter()
