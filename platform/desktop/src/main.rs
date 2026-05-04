@@ -126,6 +126,7 @@ struct SdlPresenter {
     close_requested: bool,
     frame_capture: Option<FrameCaptureConfig>,
     target_frame_duration: Option<Duration>,
+    default_frame_duration: Option<Duration>,
     next_frame_deadline: Option<Instant>,
     keymap: Vec<(Keycode, JoypadButton)>,
     pending_input_events: Vec<(JoypadButton, bool)>,
@@ -169,6 +170,7 @@ impl SdlPresenter {
             close_requested: false,
             frame_capture,
             target_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
+            default_frame_duration: vsync.then(|| Duration::from_secs_f64(1.0 / 60.0)),
             next_frame_deadline: None,
             keymap,
             pending_input_events: Vec::new(),
@@ -241,6 +243,20 @@ impl FramePresenter for SdlPresenter {
                     repeat: false,
                     ..
                 } => {
+                    if key == Keycode::Tab {
+                        self.target_frame_duration = None;
+                    }
+                    if key == Keycode::P {
+                        self.pending_runtime_events
+                            .push(RuntimeEvent::SetPaused(true));
+                    }
+                    if key == Keycode::O {
+                        self.pending_runtime_events
+                            .push(RuntimeEvent::SetPaused(false));
+                    }
+                    if key == Keycode::N {
+                        self.pending_runtime_events.push(RuntimeEvent::StepFrame);
+                    }
                     if key == Keycode::F5 {
                         self.pending_runtime_events.push(RuntimeEvent::Reset);
                     }
@@ -264,6 +280,12 @@ impl FramePresenter for SdlPresenter {
                     repeat: false,
                     ..
                 } => {
+                    if key == Keycode::Tab {
+                        self.target_frame_duration = self.default_frame_duration;
+                        self.next_frame_deadline = self
+                            .default_frame_duration
+                            .map(|duration| Instant::now() + duration);
+                    }
                     if let Some(button) = keymap
                         .iter()
                         .find_map(|(mapped_key, button)| (*mapped_key == key).then_some(*button))
@@ -406,6 +428,11 @@ fn runtime_load_slot_for_key(key: Keycode) -> Option<u8> {
         _ => None,
     }
 }
+
+fn is_reserved_runtime_control_key(key: Keycode) -> bool {
+    matches!(key, Keycode::P | Keycode::O | Keycode::N | Keycode::Tab)
+}
+
 fn save_checkpoint_interval_from_env() -> Option<NonZeroU64> {
     std::env::var("LATCHBOY_SAVE_CHECKPOINT_FRAMES")
         .ok()
@@ -468,6 +495,12 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
         if runtime_save_slot_for_key(key).is_some() || runtime_load_slot_for_key(key).is_some() {
             return Err(format!(
                 "key '{key_name}' is reserved for save/load state slots and cannot be mapped to {:?}",
+                button
+            ));
+        }
+        if is_reserved_runtime_control_key(key) {
+            return Err(format!(
+                "key '{key_name}' is reserved for runtime controls and cannot be mapped to {:?}",
                 button
             ));
         }
@@ -725,6 +758,22 @@ mod tests {
             let error = build_keymap(&args)
                 .expect_err("save/load slot keys should be rejected as a mapping");
             assert!(error.contains("reserved for save/load state slots"));
+        }
+    }
+
+    #[test]
+    fn runtime_control_keys_are_rejected_as_bindings() {
+        for reserved_key in ["p", "o", "n", "tab"] {
+            let args = DesktopArgs::try_parse_from([
+                "latchboy-desktop",
+                "game.gb",
+                "--key-a",
+                reserved_key,
+            ])
+            .expect("args should parse");
+            let error = build_keymap(&args)
+                .expect_err("runtime control keys should be rejected as mappings");
+            assert!(error.contains("reserved for runtime controls"));
         }
     }
 

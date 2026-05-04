@@ -5,6 +5,8 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 use latchboy_core::{Emulator, JoypadButton, FRAMEBUFFER_LEN};
 use png::{BitDepth, ColorType, Encoder};
@@ -16,6 +18,7 @@ const DMG_FRAME_CYCLES: u32 = 70_224;
 // so leave that much headroom to avoid skipping past multiple frame-ready pulses in one step.
 const MAX_CPU_INSTRUCTION_CYCLES: u32 = 24;
 const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTION_CYCLES;
+const PAUSED_POLL_SLEEP: Duration = Duration::from_millis(1);
 
 const JOYPAD_BUTTONS: [JoypadButton; 8] = [
     JoypadButton::A,
@@ -164,6 +167,9 @@ pub enum RuntimeEvent {
     Reset,
     SaveState { slot: u8 },
     LoadState { slot: u8 },
+    SetPaused(bool),
+    StepFrame,
+    SetFastForward(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +183,9 @@ pub struct EmulationRunStats {
 pub struct RuntimeSessionState {
     pub save_state_slots: HashMap<u8, Emulator>,
     pub pressed_buttons: HashSet<JoypadButton>,
+    pub paused: bool,
+    pub frame_steps_remaining: u64,
+    pub fast_forward: bool,
 }
 
 #[derive(Debug, Error)]
@@ -276,6 +285,19 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                         }
                     }
                 }
+                RuntimeEvent::SetPaused(paused) => {
+                    runtime_state.paused = paused;
+                    if !paused {
+                        runtime_state.frame_steps_remaining = 0;
+                    }
+                }
+                RuntimeEvent::StepFrame => {
+                    if runtime_state.paused {
+                        runtime_state.frame_steps_remaining =
+                            runtime_state.frame_steps_remaining.saturating_add(1);
+                    }
+                }
+                RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
             }
         }
         for (button, pressed) in presenter.drain_input_events() {
@@ -289,8 +311,15 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
         if !presenter.is_open() {
             break;
         }
+        if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
+            thread::sleep(PAUSED_POLL_SLEEP);
+            continue;
+        }
         if present_if_ready(emulator, presenter, &mut surface)? {
             frames_presented += 1;
+            if runtime_state.paused && runtime_state.frame_steps_remaining > 0 {
+                runtime_state.frame_steps_remaining -= 1;
+            }
             continue;
         }
         let mut cycles_remaining = cycle_step;
@@ -338,6 +367,19 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                             }
                         }
                     }
+                    RuntimeEvent::SetPaused(paused) => {
+                        runtime_state.paused = paused;
+                        if !paused {
+                            runtime_state.frame_steps_remaining = 0;
+                        }
+                    }
+                    RuntimeEvent::StepFrame => {
+                        if runtime_state.paused {
+                            runtime_state.frame_steps_remaining =
+                                runtime_state.frame_steps_remaining.saturating_add(1);
+                        }
+                    }
+                    RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
                 }
             }
             for (button, pressed) in presenter.drain_input_events() {
@@ -355,9 +397,16 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     resets_triggered,
                 });
             }
+            if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
+                thread::sleep(PAUSED_POLL_SLEEP);
+                continue;
+            }
 
             if present_if_ready(emulator, presenter, &mut surface)? {
                 frames_presented += 1;
+                if runtime_state.paused && runtime_state.frame_steps_remaining > 0 {
+                    runtime_state.frame_steps_remaining -= 1;
+                }
                 continue;
             }
 
@@ -472,5 +521,84 @@ mod tests {
         .expect("load event should be handled");
 
         assert_eq!(emulator, expected);
+    }
+
+    #[test]
+    fn pause_and_frame_step_events_update_runtime_state() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+        let mut presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SetPaused(true), RuntimeEvent::StepFrame],
+            input_events: Vec::new(),
+        };
+
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("pause and frame-step events should be handled");
+
+        assert!(runtime_state.paused);
+        assert_eq!(runtime_state.frame_steps_remaining, 1);
+    }
+
+    #[test]
+    fn frame_step_requires_paused_mode_and_is_cleared_on_resume() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+
+        let mut running_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::StepFrame],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut running_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("step-frame while running should be ignored");
+        assert_eq!(runtime_state.frame_steps_remaining, 0);
+
+        let mut paused_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SetPaused(true), RuntimeEvent::StepFrame],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut paused_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("step-frame while paused should be queued");
+        assert_eq!(runtime_state.frame_steps_remaining, 1);
+
+        let mut resume_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SetPaused(false)],
+            input_events: Vec::new(),
+        };
+        run_emulation_loop_with_stats_and_state(
+            &mut emulator,
+            &mut resume_presenter,
+            1,
+            None,
+            Some(1),
+            &mut runtime_state,
+        )
+        .expect("resume should clear queued frame steps");
+        assert!(!runtime_state.paused);
+        assert_eq!(runtime_state.frame_steps_remaining, 0);
     }
 }
