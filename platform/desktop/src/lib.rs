@@ -561,6 +561,7 @@ mod tests {
             None,
             Some(1),
             &mut runtime_state,
+            None,
         )
         .expect("save event should be handled");
 
@@ -578,6 +579,7 @@ mod tests {
             None,
             Some(1),
             &mut runtime_state,
+            None,
         )
         .expect("load event should be handled");
 
@@ -601,6 +603,7 @@ mod tests {
             None,
             Some(1),
             &mut runtime_state,
+            None,
         )
         .expect("pause and frame-step events should be handled");
 
@@ -625,6 +628,7 @@ mod tests {
             None,
             Some(1),
             &mut runtime_state,
+            None,
         )
         .expect("step-frame while running should be ignored");
         assert_eq!(runtime_state.frame_steps_remaining, 0);
@@ -641,6 +645,7 @@ mod tests {
             None,
             Some(1),
             &mut runtime_state,
+            None,
         )
         .expect("step-frame while paused should be queued");
         assert_eq!(runtime_state.frame_steps_remaining, 1);
@@ -657,6 +662,7 @@ mod tests {
             None,
             Some(1),
             &mut runtime_state,
+            None,
         )
         .expect("resume should clear queued frame steps");
         assert!(!runtime_state.paused);
