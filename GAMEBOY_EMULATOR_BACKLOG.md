@@ -393,7 +393,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 ## Milestone 9 — Accuracy & Compatibility Hardening
 
 - [ ] **Test ROM automation**
-  - [ ] Integrate Blargg and Mooneye test runs in CI.
+  - [x] Integrate Blargg and Mooneye test runs in CI.
   - [ ] Snapshot-based rendering regression tests.
 - [ ] **Edge-case behavior fixes**
   - [ ] HALT bug nuances.
