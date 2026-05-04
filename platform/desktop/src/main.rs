@@ -260,6 +260,9 @@ impl FramePresenter for SdlPresenter {
                     if key == Keycode::F5 {
                         self.pending_runtime_events.push(RuntimeEvent::Reset);
                     }
+                    if key == Keycode::F6 {
+                        self.pending_runtime_events.push(RuntimeEvent::ReloadRom);
+                    }
                     if let Some(slot) = runtime_save_slot_for_key(key) {
                         self.pending_runtime_events
                             .push(RuntimeEvent::SaveState { slot });
@@ -486,9 +489,9 @@ fn build_keymap(args: &DesktopArgs) -> Result<Vec<(Keycode, JoypadButton)>, Stri
                 button
             ));
         }
-        if key == Keycode::F5 {
+        if matches!(key, Keycode::F5 | Keycode::F6) {
             return Err(format!(
-                "key '{key_name}' is reserved for runtime reset and cannot be mapped to {:?}",
+                "key '{key_name}' is reserved for runtime reset/hot-reload and cannot be mapped to {:?}",
                 button
             ));
         }
@@ -637,6 +640,35 @@ fn main() -> ExitCode {
 
         if persist_enabled && chunk_result.resets_triggered != 0 {
             persist_save_data(runtime.emulator.cartridge(), &runtime.save_path);
+        }
+        if chunk_result.reloads_triggered != 0 {
+            if persist_enabled {
+                persist_save_data(runtime.emulator.cartridge(), &runtime.save_path);
+            }
+            let rom_data = match fs::read(&rom_path) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    eprintln!(
+                        "error: failed to hot-reload ROM '{}': {error}",
+                        rom_path.display()
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut cartridge = match Cartridge::from_rom(rom_data) {
+                Ok(cartridge) => cartridge,
+                Err(error) => {
+                    eprintln!(
+                        "error: failed to parse cartridge during hot-reload for ROM '{}': {error:?}",
+                        rom_path.display()
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+            let _ = load_save_data_if_available(&mut cartridge, &runtime.save_path);
+            runtime.emulator = Emulator::from_cartridge(cartridge);
+            runtime_session_state = RuntimeSessionState::default();
+            continue;
         }
 
         if chunk_result.frames_presented == 0 {
