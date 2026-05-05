@@ -149,7 +149,16 @@ pub fn write_rgb_surface_to_png(
 }
 
 pub trait AudioSink {
-    fn push_samples(&mut self, samples: &[i16]);
+    fn push_samples(&mut self, samples: &[i16]) -> Result<(), AudioSinkError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AudioSinkError {
+    #[error("audio sink rejected {sample_count} samples: {message}")]
+    PushFailed {
+        sample_count: usize,
+        message: String,
+    },
 }
 
 pub trait FramePresenter {
@@ -203,6 +212,8 @@ pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
     FrameBlit(FrameBlitError),
     #[error("frame presentation failed: {0}")]
     Present(E),
+    #[error("audio output failed: {0}")]
+    Audio(AudioSinkError),
 }
 
 /// Runs a basic emulation loop and presents frames whenever VBlank marks a complete frame.
@@ -469,7 +480,8 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             if let Some(sink) = audio_sink.as_deref_mut() {
                 let samples = emulator.drain_audio_samples();
                 if !samples.is_empty() {
-                    sink.push_samples(&samples);
+                    sink.push_samples(&samples)
+                        .map_err(EmulationRunError::Audio)?;
                 }
             }
             cycles_remaining -= chunk;

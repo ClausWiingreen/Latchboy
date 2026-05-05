@@ -140,11 +140,16 @@ struct SdlAudioSink {
 }
 
 impl AudioSink for SdlAudioSink {
-    fn push_samples(&mut self, samples: &[i16]) {
+    fn push_samples(&mut self, samples: &[i16]) -> Result<(), latchboy_desktop::AudioSinkError> {
         if self.queue.size() > 16_384 {
             self.queue.clear();
         }
-        let _ = self.queue.queue_audio(samples);
+        self.queue.queue_audio(samples).map_err(|message| {
+            latchboy_desktop::AudioSinkError::PushFailed {
+                sample_count: samples.len(),
+                message,
+            }
+        })
     }
 }
 
