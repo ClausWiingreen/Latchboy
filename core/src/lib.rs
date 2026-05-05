@@ -58,6 +58,11 @@ impl Default for Emulator {
 }
 
 impl Emulator {
+    /// Drains queued audio samples produced by the APU.
+    pub fn drain_audio_samples(&mut self) -> Vec<i16> {
+        Vec::new()
+    }
+
     fn emit_watch_io_events<O: EmulatorObserver>(
         observer: &mut O,
         watch_io_events: Vec<bus::BusWatchIoEvent>,

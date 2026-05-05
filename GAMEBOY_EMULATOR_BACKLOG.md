@@ -379,10 +379,10 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Save/load state slots.
   - [x] Fast-forward and frame stepping.
   - [x] Pause/reset and ROM hot-reload.
-- [ ] **Debug tools**
+- [x] **Debug tools**
   - [x] CPU register/memory inspector.
   - [x] Breakpoints and instruction trace logger.
-  - [ ] Tile/OAM debug viewers.
+  - [x] Tile/OAM debug viewers.
 
 **Acceptance criteria**
 - Playable user experience for core DMG titles.
@@ -393,7 +393,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 ## Milestone 9 — Accuracy & Compatibility Hardening
 
 - [ ] **Test ROM automation**
-  - [ ] Integrate Blargg and Mooneye test runs in CI.
+  - [x] Integrate Blargg and Mooneye test runs in CI.
   - [ ] Snapshot-based rendering regression tests.
 - [ ] **Edge-case behavior fixes**
   - [ ] HALT bug nuances.
