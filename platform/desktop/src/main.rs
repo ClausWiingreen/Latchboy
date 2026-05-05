@@ -144,12 +144,12 @@ impl AudioSink for SdlAudioSink {
         if self.queue.size() > 16_384 {
             self.queue.clear();
         }
-        self.queue
-            .queue_audio(samples)
-            .map_err(|message| latchboy_desktop::AudioSinkError::PushFailed {
+        self.queue.queue_audio(samples).map_err(|message| {
+            latchboy_desktop::AudioSinkError::PushFailed {
                 sample_count: samples.len(),
                 message,
-            })
+            }
+        })
     }
 }
 
