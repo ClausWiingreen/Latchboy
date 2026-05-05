@@ -197,6 +197,8 @@ impl Bus {
                         self.boot_rom_disable_value
                     } else if address == JOYP_REGISTER {
                         self.joypad.read_p1()
+                    } else if let Some(value) = self.apu.read_register(address) {
+                        value
                     } else if let Some(value) = self.serial.read(address) {
                         value
                     } else if matches!(
@@ -278,6 +280,7 @@ impl Bus {
                     if requested_interrupt {
                         self.request_joypad_interrupt();
                     }
+                } else if self.apu.write_register(address, value) {
                 } else if self.serial.write(address, value) {
                 } else if self.ppu.write_register(address, value) {
                     if self.ppu.take_stat_irq_pending() {
@@ -321,6 +324,8 @@ impl Bus {
                     self.boot_rom_disable_value
                 } else if address == JOYP_REGISTER {
                     self.joypad.read_p1()
+                } else if let Some(value) = self.apu.read_register(address) {
+                    value
                 } else if let Some(value) = self.serial.read(address) {
                     value
                 } else if matches!(
@@ -570,6 +575,33 @@ mod tests {
         assert_eq!(bus.read8(crate::serial::SB_REGISTER), 0xFF);
         assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
         assert_eq!(bus.take_serial_transfer_log(), vec![b'P']);
+    }
+
+    #[test]
+    fn apu_mmio_reads_and_writes_are_forwarded_through_bus() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.write8(0xFF24, 0x12);
+        bus.write8(0xFF25, 0x34);
+        assert_eq!(bus.read8(0xFF24), 0x12);
+        assert_eq!(bus.read8(0xFF25), 0x34);
+    }
+
+    #[test]
+    fn apu_power_off_via_mmio_silences_generated_samples() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.tick(20_000);
+        let audible = bus.pull_audio_samples(64);
+        assert!(audible.iter().any(|sample| *sample != 0));
+
+        bus.write8(0xFF26, 0x00);
+        let _ = bus.pull_audio_samples(crate::apu::Apu::OUTPUT_QUEUE_MAX_SAMPLES);
+        bus.tick(20_000);
+        let muted = bus.pull_audio_samples(64);
+        assert!(muted.iter().all(|sample| *sample == 0));
     }
 
     #[test]
