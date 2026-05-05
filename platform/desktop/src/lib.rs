@@ -478,7 +478,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             let chunk = cycles_remaining.min(MAX_CYCLES_BETWEEN_FRAME_POLLS);
             emulator.step_cycles(chunk);
             if let Some(sink) = audio_sink.as_deref_mut() {
-                let samples = emulator.drain_audio_samples();
+                let samples = emulator.pull_audio_samples(emulator.queued_audio_samples());
                 if !samples.is_empty() {
                     sink.push_samples(&samples)
                         .map_err(EmulationRunError::Audio)?;

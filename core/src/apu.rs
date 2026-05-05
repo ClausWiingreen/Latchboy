@@ -2,7 +2,7 @@
 ///
 /// This milestone provides deterministic timing plus a configurable Channel 1 square
 /// wave path with basic sweep handling (`NR10` + `NR13/NR14`-style frequency updates).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Apu {
     frame_step: u8,
     t_cycle_counter: u32,
@@ -23,7 +23,7 @@ pub struct Apu {
     nr52: u8,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Ch1 {
     frequency_hz: u32,
     duty: DutyCycle,
@@ -35,7 +35,7 @@ struct Ch1 {
     sweep_tick_counter: u8,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DutyCycle {
     Duty12_5,
     Duty25,
@@ -68,7 +68,7 @@ impl DutyCycle {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Ch2 {
     frequency_hz: u32,
     duty: DutyCycle,
@@ -76,7 +76,7 @@ struct Ch2 {
     enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Ch3 {
     frequency_hz: u32,
     output_level_shift: u8,
@@ -85,7 +85,7 @@ struct Ch3 {
     wave_ram: [u8; 32],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Ch4 {
     frequency_hz: u32,
     amplitude: i16,

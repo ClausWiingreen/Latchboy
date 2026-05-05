@@ -58,9 +58,20 @@ impl Default for Emulator {
 }
 
 impl Emulator {
-    /// Drains queued audio samples produced by the APU.
-    pub fn drain_audio_samples(&mut self) -> Vec<i16> {
-        Vec::new()
+    /// Pulls exactly `requested` mixed PCM samples from the emulator audio queue.
+    ///
+    /// This forwards to the bus/APU output queue semantics:
+    /// - If the queue is deeper than the target latency, the oldest samples are dropped first.
+    /// - If fewer than `requested` samples are available, the returned tail is padded with zeros.
+    ///
+    /// These semantics match [`crate::apu::Apu::pull_output_samples`].
+    pub fn pull_audio_samples(&mut self, requested: usize) -> Vec<i16> {
+        self.bus.pull_audio_samples(requested)
+    }
+
+    /// Returns the number of currently queued mixed PCM samples.
+    pub fn queued_audio_samples(&self) -> usize {
+        self.bus.queued_audio_samples()
     }
 
     fn emit_watch_io_events<O: EmulatorObserver>(
@@ -489,6 +500,27 @@ mod tests {
 
         assert!(emulator.take_frame_ready());
         assert!(!emulator.take_frame_ready());
+    }
+
+    #[test]
+    fn emulator_audio_api_zero_pads_when_queue_is_short() {
+        let mut emulator = Emulator::new();
+        let pulled = emulator.pull_audio_samples(32);
+        assert_eq!(pulled.len(), 32);
+        assert!(pulled.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn emulator_audio_api_reports_queue_depth_and_drains_requested_count() {
+        let mut emulator = Emulator::new();
+        emulator.step_cycles(10_000);
+        let queued_before = emulator.queued_audio_samples();
+        assert!(queued_before > 0);
+
+        let requested = queued_before.saturating_add(8);
+        let pulled = emulator.pull_audio_samples(requested);
+        assert_eq!(pulled.len(), requested);
+        assert!(emulator.queued_audio_samples() <= 8);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 
+use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::input::{Joypad, JoypadButton};
 use crate::observability::PpuSnapshot;
@@ -87,6 +88,7 @@ pub struct Bus {
     joypad: Joypad,
     serial: SerialPort,
     timer: Timer,
+    apu: Apu,
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
     oam_dma_cycles_remaining: u16,
@@ -106,6 +108,7 @@ impl Hash for Bus {
         self.joypad.hash(state);
         self.serial.hash(state);
         self.timer.hash(state);
+        self.apu.hash(state);
         self.hram.hash(state);
         self.interrupt_enable.hash(state);
         self.oam_dma_cycles_remaining.hash(state);
@@ -147,6 +150,7 @@ impl Bus {
             joypad: Joypad::default(),
             serial: SerialPort::default(),
             timer: Timer::default(),
+            apu: Apu::default(),
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
             oam_dma_cycles_remaining: 0,
@@ -226,6 +230,7 @@ impl Bus {
         self.joypad = Joypad::default();
         self.serial = SerialPort::default();
         self.timer = Timer::default();
+        self.apu = Apu::default();
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
         self.oam_dma_cycles_remaining = 0;
@@ -377,6 +382,7 @@ impl Bus {
             self.ppu.step(&mut self.io_registers[interrupt_flag_index]);
             self.timer
                 .step(&mut self.io_registers[interrupt_flag_index]);
+            let _ = self.apu.tick(1);
         }
     }
 
@@ -449,6 +455,14 @@ impl Bus {
 
     pub fn take_serial_transfer_log(&mut self) -> Vec<u8> {
         self.serial.take_transfer_log()
+    }
+
+    pub fn pull_audio_samples(&mut self, requested_samples: usize) -> Vec<i16> {
+        self.apu.pull_output_samples(requested_samples)
+    }
+
+    pub fn queued_audio_samples(&self) -> usize {
+        self.apu.queued_samples()
     }
 
     fn record_watch_io_write(&self, address: u16, value: u8) {
