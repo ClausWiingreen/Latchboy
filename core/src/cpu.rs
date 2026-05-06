@@ -408,7 +408,13 @@ impl Cpu {
             0x40..=0x7F => {
                 if opcode == 0x76 {
                     if !self.ime && pending_interrupts != 0 {
-                        self.halt_bug_active = true;
+                        if enable_ime_after_instruction {
+                            // EI immediately before HALT wins over the usual duplicate-byte
+                            // fetch: the interrupt returns to HALT itself.
+                            self.pc = self.pc.wrapping_sub(1);
+                        } else {
+                            self.halt_bug_active = true;
+                        }
                     } else {
                         self.halted = true;
                     }
@@ -1660,6 +1666,42 @@ mod tests {
 
         assert_eq!(cpu.step(&mut bus), 8);
         assert_eq!(cpu.registers.a, 0x3E);
+        assert_eq!(cpu.pc(), 0x0002);
+    }
+
+    #[test]
+    fn ei_halt_bug_interrupt_returns_to_halt_instruction() {
+        let mut cpu = Cpu::new();
+        let mut program = vec![0x00; 0x41];
+        program[0x0000] = 0xFB; // EI
+        program[0x0001] = 0x76; // HALT
+        program[0x0002] = 0x00; // NOP (must not execute before interrupt)
+        program[0x0040] = 0xD9; // RETI
+        let mut bus = make_bus_with_program(&program);
+
+        bus.write8(0xFFFF, 0x01);
+        bus.write8(0xFF0F, 0x01);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(!cpu.ime());
+        assert_eq!(cpu.pc(), 0x0001);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(cpu.ime());
+        assert!(!cpu.halted());
+        assert_eq!(cpu.pc(), 0x0001);
+
+        assert_eq!(cpu.step(&mut bus), 20);
+        assert_eq!(cpu.pc(), 0x0040);
+        assert_eq!(bus.read8(0xFFFC), 0x01);
+        assert_eq!(bus.read8(0xFFFD), 0x00);
+
+        assert_eq!(cpu.step(&mut bus), 16);
+        assert_eq!(cpu.pc(), 0x0001);
+        assert!(cpu.ime());
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert!(cpu.halted());
         assert_eq!(cpu.pc(), 0x0002);
     }
 
