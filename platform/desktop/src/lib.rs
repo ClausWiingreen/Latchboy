@@ -1,7 +1,6 @@
 pub mod savefile;
 
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -149,31 +148,40 @@ pub fn write_rgb_surface_to_png(
     Ok(())
 }
 
-pub trait AudioSink {
-    fn push_samples(&mut self, samples: &[i16]) -> Result<(), AudioSinkError>;
-}
+pub type DesktopResult<T> = Result<T, DesktopRuntimeError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum AudioSinkError {
-    #[error("audio sink rejected {sample_count} samples: {message}")]
-    PushFailed {
-        sample_count: usize,
-        message: String,
-    },
+pub enum DesktopRuntimeError {
+    #[error("cycle_step must be greater than zero")]
+    InvalidCycleStep,
+    #[error("{0}")]
+    FrameBlit(#[from] FrameBlitError),
+    #[error("frame presentation failed: {0}")]
+    FramePresentation(String),
+    #[error("audio output failed: {0}")]
+    AudioOutput(String),
+}
+
+impl DesktopRuntimeError {
+    pub fn frame_presentation(error: impl std::fmt::Display) -> Self {
+        Self::FramePresentation(error.to_string())
+    }
+
+    pub fn audio_output(error: impl std::fmt::Display) -> Self {
+        Self::AudioOutput(error.to_string())
+    }
 }
 
 pub trait FramePresenter {
-    type Error: Error + Send + Sync + 'static;
-
     fn is_open(&self) -> bool;
-    fn poll_events(&mut self) -> Result<(), Self::Error>;
+    fn poll_events(&mut self) -> DesktopResult<()>;
     fn drain_input_events(&mut self) -> Vec<(JoypadButton, bool)> {
         Vec::new()
     }
     fn drain_runtime_events(&mut self) -> Vec<RuntimeEvent> {
         Vec::new()
     }
-    fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error>;
+    fn present_frame(&mut self, surface: &[u32]) -> DesktopResult<()>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,7 +246,7 @@ impl RuntimeController {
         presenter: &mut P,
         emulator: &mut Emulator,
         runtime_state: &mut RuntimeSessionState,
-    ) -> Result<RuntimeControlOutcome, P::Error> {
+    ) -> DesktopResult<RuntimeControlOutcome> {
         presenter.poll_events()?;
 
         let mut outcome = RuntimeControlOutcome::default();
@@ -299,90 +307,31 @@ impl RuntimeController {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum EmulationRunError<E: Error + Send + Sync + 'static> {
-    #[error("cycle_step must be greater than zero")]
-    InvalidCycleStep,
-    #[error("{0}")]
-    FrameBlit(FrameBlitError),
-    #[error("frame presentation failed: {0}")]
-    Present(E),
-    #[error("audio output failed: {0}")]
-    Audio(AudioSinkError),
-}
-
-/// Runs a basic emulation loop and presents frames whenever VBlank marks a complete frame.
-///
-/// Returns the number of frames presented.
-pub fn run_emulation_loop_with_stats<P: FramePresenter>(
-    emulator: &mut Emulator,
-    presenter: &mut P,
-    cycle_step: u32,
-    frame_limit: Option<u64>,
-    iteration_limit: Option<u64>,
-) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
-    let mut runtime_state = RuntimeSessionState::default();
-    run_emulation_loop_with_stats_and_state(
-        emulator,
-        presenter,
-        cycle_step,
-        frame_limit,
-        iteration_limit,
-        &mut runtime_state,
-        None,
-    )
-}
-
-/// Runs a basic emulation loop and presents frames whenever VBlank marks a complete frame.
-///
-/// Returns the number of frames presented.
-pub fn run_emulation_loop_with_stats_legacy<P: FramePresenter>(
-    emulator: &mut Emulator,
-    presenter: &mut P,
-    cycle_step: u32,
-    frame_limit: Option<u64>,
-    iteration_limit: Option<u64>,
-) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
-    let mut runtime_state = RuntimeSessionState::default();
-    run_emulation_loop_with_stats_and_state(
-        emulator,
-        presenter,
-        cycle_step,
-        frame_limit,
-        iteration_limit,
-        &mut runtime_state,
-        None,
-    )
-}
-
 /// Runs emulation loop with caller-owned runtime state slots that can persist across invocations.
-pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
+pub fn run_emulation_loop<P: FramePresenter>(
     emulator: &mut Emulator,
     presenter: &mut P,
     cycle_step: u32,
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
     runtime_state: &mut RuntimeSessionState,
-    mut audio_sink: Option<&mut dyn AudioSink>,
-) -> Result<EmulationRunStats, EmulationRunError<P::Error>> {
+    mut audio_sink: Option<&mut dyn FnMut(&[i16]) -> DesktopResult<()>>,
+) -> DesktopResult<EmulationRunStats> {
     if cycle_step == 0 {
-        return Err(EmulationRunError::InvalidCycleStep);
+        return Err(DesktopRuntimeError::InvalidCycleStep);
     }
 
     fn present_if_ready<P: FramePresenter>(
         emulator: &mut Emulator,
         presenter: &mut P,
         surface: &mut [u32],
-    ) -> Result<bool, EmulationRunError<P::Error>> {
+    ) -> DesktopResult<bool> {
         if !emulator.take_frame_ready() {
             return Ok(false);
         }
 
-        blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), surface)
-            .map_err(EmulationRunError::FrameBlit)?;
-        presenter
-            .present_frame(surface)
-            .map_err(EmulationRunError::Present)?;
+        blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), surface)?;
+        presenter.present_frame(surface)?;
         Ok(true)
     }
 
@@ -395,8 +344,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 break;
             }
         }
-        let outcome = RuntimeController::poll_and_apply(presenter, emulator, runtime_state)
-            .map_err(EmulationRunError::Present)?;
+        let outcome = RuntimeController::poll_and_apply(presenter, emulator, runtime_state)?;
         let should_stop = outcome.should_stop();
         stats.record_runtime_outcome(outcome);
         if should_stop {
@@ -425,8 +373,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                     return Ok(stats);
                 }
             }
-            let outcome = RuntimeController::poll_and_apply(presenter, emulator, runtime_state)
-                .map_err(EmulationRunError::Present)?;
+            let outcome = RuntimeController::poll_and_apply(presenter, emulator, runtime_state)?;
             let should_stop = outcome.should_stop();
             stats.record_runtime_outcome(outcome);
             if should_stop {
@@ -452,8 +399,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 if queued_samples != 0 {
                     let request = queued_samples.min(AUDIO_PULL_SAMPLES);
                     let samples = emulator.pull_audio_samples(request);
-                    sink.push_samples(&samples)
-                        .map_err(EmulationRunError::Audio)?;
+                    sink(&samples)?;
                 }
             }
             cycles_remaining -= chunk;
@@ -464,32 +410,13 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     Ok(stats)
 }
 
-/// Backward-compatible convenience wrapper that returns only frame count.
-pub fn run_emulation_loop<P: FramePresenter>(
-    emulator: &mut Emulator,
-    presenter: &mut P,
-    cycle_step: u32,
-    frame_limit: Option<u64>,
-    iteration_limit: Option<u64>,
-) -> Result<u64, EmulationRunError<P::Error>> {
-    Ok(run_emulation_loop_with_stats(
-        emulator,
-        presenter,
-        cycle_step,
-        frame_limit,
-        iteration_limit,
-    )?
-    .frames_presented)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeController, RuntimeEvent,
+        run_emulation_loop, DesktopResult, FramePresenter, RuntimeController, RuntimeEvent,
         RuntimeSessionState,
     };
     use latchboy_core::{Emulator, JoypadButton};
-    use std::convert::Infallible;
 
     struct RuntimeEventOnlyPresenter {
         open: bool,
@@ -498,13 +425,11 @@ mod tests {
     }
 
     impl FramePresenter for RuntimeEventOnlyPresenter {
-        type Error = Infallible;
-
         fn is_open(&self) -> bool {
             self.open
         }
 
-        fn poll_events(&mut self) -> Result<(), Self::Error> {
+        fn poll_events(&mut self) -> DesktopResult<()> {
             self.open = false;
             Ok(())
         }
@@ -517,7 +442,7 @@ mod tests {
             std::mem::take(&mut self.input_events)
         }
 
-        fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+        fn present_frame(&mut self, _surface: &[u32]) -> DesktopResult<()> {
             Ok(())
         }
     }
@@ -611,7 +536,7 @@ mod tests {
             events: vec![RuntimeEvent::SaveState { slot: 1 }],
             input_events: Vec::new(),
         };
-        run_emulation_loop_with_stats_and_state(
+        run_emulation_loop(
             &mut emulator,
             &mut save_presenter,
             1,
@@ -629,7 +554,7 @@ mod tests {
             events: vec![RuntimeEvent::LoadState { slot: 1 }],
             input_events: Vec::new(),
         };
-        run_emulation_loop_with_stats_and_state(
+        run_emulation_loop(
             &mut emulator,
             &mut load_presenter,
             1,
@@ -653,7 +578,7 @@ mod tests {
             input_events: Vec::new(),
         };
 
-        run_emulation_loop_with_stats_and_state(
+        run_emulation_loop(
             &mut emulator,
             &mut presenter,
             1,
@@ -678,7 +603,7 @@ mod tests {
             events: vec![RuntimeEvent::StepFrame],
             input_events: Vec::new(),
         };
-        run_emulation_loop_with_stats_and_state(
+        run_emulation_loop(
             &mut emulator,
             &mut running_presenter,
             1,
@@ -695,7 +620,7 @@ mod tests {
             events: vec![RuntimeEvent::SetPaused(true), RuntimeEvent::StepFrame],
             input_events: Vec::new(),
         };
-        run_emulation_loop_with_stats_and_state(
+        run_emulation_loop(
             &mut emulator,
             &mut paused_presenter,
             1,
@@ -712,7 +637,7 @@ mod tests {
             events: vec![RuntimeEvent::SetPaused(false)],
             input_events: Vec::new(),
         };
-        run_emulation_loop_with_stats_and_state(
+        run_emulation_loop(
             &mut emulator,
             &mut resume_presenter,
             1,

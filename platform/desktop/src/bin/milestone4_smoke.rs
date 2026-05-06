@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
 use latchboy_core::{cartridge::Cartridge, Emulator};
-use latchboy_desktop::{run_emulation_loop, FramePresenter};
+use latchboy_desktop::{run_emulation_loop, DesktopResult, FramePresenter, RuntimeSessionState};
 use serde::Serialize;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -240,18 +240,16 @@ impl SmokePresenter {
 }
 
 impl FramePresenter for SmokePresenter {
-    type Error = std::io::Error;
-
     fn is_open(&self) -> bool {
         self.frames_presented < self.frame_limit
             && self.elapsed_ms() <= u128::from(self.wall_time_limit_ms)
     }
 
-    fn poll_events(&mut self) -> Result<(), Self::Error> {
+    fn poll_events(&mut self) -> DesktopResult<()> {
         Ok(())
     }
 
-    fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
+    fn present_frame(&mut self, surface: &[u32]) -> DesktopResult<()> {
         let frame_index = self.frames_presented;
         let capture_hash_sample = frame_index >= self.hash_start_frame
             && frame_index < self.hash_end_exclusive
@@ -782,11 +780,14 @@ fn run(config: &CliConfig) -> Result<SmokePresenter, Box<dyn Error>> {
 
     let _frame_loop_span = info_span!("frame_loop").entered();
     info!("frame loop starting");
+    let mut runtime_state = RuntimeSessionState::default();
     run_emulation_loop(
         &mut emulator,
         &mut presenter,
         config.cycle_step,
         Some(config.frame_limit),
+        None,
+        &mut runtime_state,
         None,
     )
     .map_err(|error| format!("emulation loop aborted: {error}"))?;
