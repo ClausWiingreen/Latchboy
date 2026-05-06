@@ -11,10 +11,19 @@ This repository uses [Criterion](https://bheisler.github.io/criterion.rs/book/in
 
 Tip: for quick local iteration, run a single target:
 
+- `cargo bench -p latchboy-core --bench cpu_hotspots`
 - `cargo bench -p latchboy-core --bench emulator_step_cycles`
 - `cargo bench -p latchboy-core --bench instruction_stepping`
 - `cargo bench -p latchboy-core --bench interrupt_heavy`
 - `cargo bench -p latchboy-desktop --bench framebuffer_blit`
+
+## CPU hotspot coverage
+
+Use `cpu_hotspots` as the focused CPU-dispatch profiling entry point. It isolates three instruction families that are easy to regress while tuning the emulator loop:
+
+- `cpu_hotspot_register_alu_dispatch`: tight register ALU opcode dispatch.
+- `cpu_hotspot_cb_prefixed_bit_ops`: CB-prefixed register and `(HL)` bit operations.
+- `cpu_hotspot_stack_and_control_flow`: CALL/RET plus PUSH/POP-heavy control flow.
 
 ## PR review baseline metrics
 

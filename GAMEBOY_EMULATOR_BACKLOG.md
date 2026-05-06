@@ -400,9 +400,13 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] STAT interrupt quirks (DMG STAT write glitch + source-line handoff coverage).
   - [x] Sprite priority corner cases.
 - [ ] **Performance profiling**
-  - [ ] CPU hotspots.
+  - [x] CPU hotspots.
   - [ ] PPU scanline throughput.
   - [ ] Audio callback stability.
+
+**Performance profiling notes (2026-05-06)**
+- CPU hotspot profiling now has a dedicated Criterion target, `cpu_hotspots`, covering register ALU dispatch, CB-prefixed bit operations, and stack/control-flow-heavy loops.
+- Benchmarking docs identify `cpu_hotspots` as the focused CPU-dispatch profiling entry point and list the per-hotspot benchmark names used for baseline comparisons.
 
 **Acceptance criteria**
 - Consistent pass rate across selected official/community suites.
