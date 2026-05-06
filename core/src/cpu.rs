@@ -1,6 +1,10 @@
 use crate::bus::Bus;
 use crate::interrupts;
 
+pub mod metadata;
+
+use metadata::{Condition, Instruction, OpcodeMetadata, Operand16, Operand8};
+
 const FLAG_Z: u8 = 0b1000_0000;
 const FLAG_N: u8 = 0b0100_0000;
 const FLAG_H: u8 = 0b0010_0000;
@@ -230,391 +234,15 @@ impl Cpu {
         self.ime_enable_pending = false;
 
         let opcode = self.fetch8(bus);
-        let cycles = match opcode {
-            0x00 => 4, // NOP
-            0x07 => {
-                self.rlca();
-                4
-            }
-            0x08 => {
-                let address = self.fetch16(bus);
-                let [lo, hi] = self.sp.to_le_bytes();
-                bus.write8(address, lo);
-                bus.write8(address.wrapping_add(1), hi);
-                20
-            }
-            0x02 | 0x12 => {
-                let address = if opcode == 0x02 {
-                    self.registers.bc()
-                } else {
-                    self.registers.de()
-                };
-                bus.write8(address, self.registers.a);
-                8
-            }
-            0x03 | 0x13 | 0x23 | 0x33 => {
-                let register_pair_index = (opcode >> 4) & 0x03;
-                let value = self.read_r16_by_index(register_pair_index).wrapping_add(1);
-                self.write_r16_by_index(register_pair_index, value);
-                8
-            }
-            0x01 | 0x11 | 0x21 | 0x31 => {
-                let value = self.fetch16(bus);
-                self.write_r16_by_index((opcode >> 4) & 0x03, value);
-                12
-            }
-            0x0A | 0x1A => {
-                let address = if opcode == 0x0A {
-                    self.registers.bc()
-                } else {
-                    self.registers.de()
-                };
-                self.registers.a = bus.read8(address);
-                8
-            }
-            0x0B | 0x1B | 0x2B | 0x3B => {
-                let register_pair_index = (opcode >> 4) & 0x03;
-                let value = self.read_r16_by_index(register_pair_index).wrapping_sub(1);
-                self.write_r16_by_index(register_pair_index, value);
-                8
-            }
-            0x09 | 0x19 | 0x29 | 0x39 => {
-                let value = self.read_r16_by_index((opcode >> 4) & 0x03);
-                self.add_to_hl(value);
-                8
-            }
-            0x22 => {
-                let address = self.registers.hl();
-                bus.write8(address, self.registers.a);
-                self.registers.set_hl(address.wrapping_add(1));
-                8
-            }
-            0x2A => {
-                let address = self.registers.hl();
-                self.registers.a = bus.read8(address);
-                self.registers.set_hl(address.wrapping_add(1));
-                8
-            }
-            0x32 => {
-                let address = self.registers.hl();
-                bus.write8(address, self.registers.a);
-                self.registers.set_hl(address.wrapping_sub(1));
-                8
-            }
-            0x3A => {
-                let address = self.registers.hl();
-                self.registers.a = bus.read8(address);
-                self.registers.set_hl(address.wrapping_sub(1));
-                8
-            }
-            0x0F => {
-                self.rrca();
-                4
-            }
-            0x10 => {
-                let _ = self.fetch8(bus);
-                self.halted = true;
-                self.halted_by_unimplemented_opcode = false;
-                4
-            }
-            0x18 => {
-                let offset = self.fetch8(bus) as i8;
-                self.pc = self.pc.wrapping_add_signed(i16::from(offset));
-                12
-            }
-            0x20 | 0x28 | 0x30 | 0x38 => {
-                let offset = self.fetch8(bus) as i8;
-                if self.condition_met((opcode >> 3) & 0x03) {
-                    self.pc = self.pc.wrapping_add_signed(i16::from(offset));
-                    12
-                } else {
-                    8
-                }
-            }
-            0x17 => {
-                self.rla();
-                4
-            }
-            0x1F => {
-                self.rra();
-                4
-            }
-            0x27 => {
-                self.daa();
-                4
-            }
-            0x2F => {
-                self.registers.a = !self.registers.a;
-                self.registers.set_flag(Flag::Subtract, true);
-                self.registers.set_flag(Flag::HalfCarry, true);
-                4
-            }
-            0x37 => {
-                self.registers.set_flag(Flag::Subtract, false);
-                self.registers.set_flag(Flag::HalfCarry, false);
-                self.registers.set_flag(Flag::Carry, true);
-                4
-            }
-            0x3F => {
-                let carry = (self.registers.f & FLAG_C) == 0;
-                self.registers.set_flag(Flag::Subtract, false);
-                self.registers.set_flag(Flag::HalfCarry, false);
-                self.registers.set_flag(Flag::Carry, carry);
-                4
-            }
-            0x06 | 0x0E | 0x16 | 0x1E | 0x26 | 0x2E | 0x36 | 0x3E => {
-                let value = self.fetch8(bus);
-                self.write_r8(opcode >> 3, value, bus);
-                if (opcode >> 3) & 0x07 == 0x06 {
-                    12
-                } else {
-                    8
-                }
-            }
-            0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C => {
-                let register_index = opcode >> 3;
-                let previous = self.read_r8(register_index & 0x07, bus);
-                let result = previous.wrapping_add(1);
-                self.write_r8(register_index & 0x07, result, bus);
-
-                self.registers.set_flag(Flag::Zero, result == 0);
-                self.registers.set_flag(Flag::Subtract, false);
-                self.registers
-                    .set_flag(Flag::HalfCarry, (previous & 0x0F) == 0x0F);
-
-                if register_index & 0x07 == 0x06 {
-                    12
-                } else {
-                    4
-                }
-            }
-            0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x35 | 0x3D => {
-                let register_index = opcode >> 3;
-                let previous = self.read_r8(register_index & 0x07, bus);
-                let result = previous.wrapping_sub(1);
-                self.write_r8(register_index & 0x07, result, bus);
-
-                self.registers.set_flag(Flag::Zero, result == 0);
-                self.registers.set_flag(Flag::Subtract, true);
-                self.registers
-                    .set_flag(Flag::HalfCarry, (previous & 0x0F) == 0x00);
-
-                if register_index & 0x07 == 0x06 {
-                    12
-                } else {
-                    4
-                }
-            }
-            0x40..=0x7F => {
-                if opcode == 0x76 {
-                    if !self.ime && pending_interrupts != 0 {
-                        if enable_ime_after_instruction {
-                            // EI immediately before HALT wins over the usual duplicate-byte
-                            // fetch: the interrupt returns to HALT itself.
-                            self.pc = self.pc.wrapping_sub(1);
-                        } else {
-                            self.halt_bug_active = true;
-                        }
-                    } else {
-                        self.halted = true;
-                    }
-                    4
-                } else {
-                    let source = self.read_r8(opcode & 0x07, bus);
-                    self.write_r8((opcode >> 3) & 0x07, source, bus);
-
-                    if ((opcode >> 3) & 0x07) == 0x06 || (opcode & 0x07) == 0x06 {
-                        8
-                    } else {
-                        4
-                    }
-                }
-            }
-            0x80..=0x87 => self.execute_alu_r8(opcode, bus),
-            0x88..=0x8F => self.execute_alu_r8(opcode, bus),
-            0x90..=0x97 => self.execute_alu_r8(opcode, bus),
-            0x98..=0x9F => self.execute_alu_r8(opcode, bus),
-            0xA0..=0xA7 => self.execute_alu_r8(opcode, bus),
-            0xA8..=0xAF => self.execute_alu_r8(opcode, bus),
-            0xB0..=0xB7 => self.execute_alu_r8(opcode, bus),
-            0xB8..=0xBF => self.execute_alu_r8(opcode, bus),
-            0xC6 => {
-                let value = self.fetch8(bus);
-                self.add_to_a(value);
-                8
-            }
-            0xC0 | 0xC8 | 0xD0 | 0xD8 => {
-                if self.condition_met((opcode >> 3) & 0x03) {
-                    self.pc = self.pop_stack16(bus);
-                    20
-                } else {
-                    8
-                }
-            }
-            0xC1 | 0xD1 | 0xE1 | 0xF1 => {
-                let value = self.pop_stack16(bus);
-                match (opcode >> 4) & 0x03 {
-                    0x00 => self.registers.set_bc(value),
-                    0x01 => self.registers.set_de(value),
-                    0x02 => self.registers.set_hl(value),
-                    0x03 => self.registers.set_af(value),
-                    _ => unreachable!("register pair index is masked to 2 bits"),
-                }
-                12
-            }
-            0xC2 | 0xCA | 0xD2 | 0xDA => {
-                let address = self.fetch16(bus);
-                if self.condition_met((opcode >> 3) & 0x03) {
-                    self.pc = address;
-                    16
-                } else {
-                    12
-                }
-            }
-            0xCE => {
-                let value = self.fetch8(bus);
-                self.adc_to_a(value);
-                8
-            }
-            0xC3 => {
-                let address = self.fetch16(bus);
-                self.pc = address;
-                16
-            }
-            0xC4 | 0xCC | 0xD4 | 0xDC => {
-                let address = self.fetch16(bus);
-                if self.condition_met((opcode >> 3) & 0x03) {
-                    self.push_stack16(bus, self.pc);
-                    self.pc = address;
-                    24
-                } else {
-                    12
-                }
-            }
-            0xC5 | 0xD5 | 0xE5 | 0xF5 => {
-                let value = match (opcode >> 4) & 0x03 {
-                    0x00 => self.registers.bc(),
-                    0x01 => self.registers.de(),
-                    0x02 => self.registers.hl(),
-                    0x03 => self.registers.af(),
-                    _ => unreachable!("register pair index is masked to 2 bits"),
-                };
-                self.push_stack16(bus, value);
-                16
-            }
-            0xC7 | 0xCF | 0xD7 | 0xDF | 0xE7 | 0xEF | 0xF7 | 0xFF => {
-                let vector = u16::from(opcode & 0x38);
-                self.push_stack16(bus, self.pc);
-                self.pc = vector;
-                16
-            }
-            0xCB => {
-                let cb_opcode = self.fetch8(bus);
-                self.execute_cb(cb_opcode, bus)
-            }
-            0xC9 => {
-                self.pc = self.pop_stack16(bus);
-                16
-            }
-            0xCD => {
-                let address = self.fetch16(bus);
-                self.push_stack16(bus, self.pc);
-                self.pc = address;
-                24
-            }
-            0xD6 => {
-                let value = self.fetch8(bus);
-                self.sub_from_a(value);
-                8
-            }
-            0xD9 => {
-                self.pc = self.pop_stack16(bus);
-                self.ime = true;
-                self.ime_enable_pending = false;
-                16
-            }
-            0xDE => {
-                let value = self.fetch8(bus);
-                self.sbc_from_a(value);
-                8
-            }
-            0xE6 => {
-                let value = self.fetch8(bus);
-                self.and_with_a(value);
-                8
-            }
-            0xE8 => {
-                let offset = self.fetch8(bus) as i8;
-                self.sp = self.add_signed_to_sp(offset);
-                16
-            }
-            0xE9 => {
-                self.pc = self.registers.hl();
-                4
-            }
-            0xE0 => {
-                let offset = self.fetch8(bus);
-                bus.write8(0xFF00u16 + u16::from(offset), self.registers.a);
-                12
-            }
-            0xE2 => {
-                bus.write8(0xFF00u16 + u16::from(self.registers.c), self.registers.a);
-                8
-            }
-            0xEA => {
-                let address = self.fetch16(bus);
-                bus.write8(address, self.registers.a);
-                16
-            }
-            0xEE => {
-                let value = self.fetch8(bus);
-                self.xor_with_a(value);
-                8
-            }
-            0xF6 => {
-                let value = self.fetch8(bus);
-                self.or_with_a(value);
-                8
-            }
-            0xF8 => {
-                let offset = self.fetch8(bus) as i8;
-                let result = self.add_signed_to_sp(offset);
-                self.registers.set_hl(result);
-                12
-            }
-            0xF9 => {
-                self.sp = self.registers.hl();
-                8
-            }
-            0xF0 => {
-                let offset = self.fetch8(bus);
-                self.registers.a = bus.read8(0xFF00u16 + u16::from(offset));
-                12
-            }
-            0xF2 => {
-                self.registers.a = bus.read8(0xFF00u16 + u16::from(self.registers.c));
-                8
-            }
-            0xF3 => {
-                self.ime = false;
-                self.ime_enable_pending = false;
-                4
-            }
-            0xFA => {
-                let address = self.fetch16(bus);
-                self.registers.a = bus.read8(address);
-                16
-            }
-            0xFB => {
-                self.ime_enable_pending = true;
-                4
-            }
-            0xFE => {
-                let value = self.fetch8(bus);
-                self.compare_a(value);
-                8
-            }
-            _ => self.handle_unimplemented_opcode(opcode),
+        let cycles = if let Some(metadata) = metadata::OPCODES[opcode as usize] {
+            self.execute_metadata(
+                metadata,
+                bus,
+                pending_interrupts,
+                enable_ime_after_instruction,
+            )
+        } else {
+            self.handle_unimplemented_opcode(opcode)
         };
 
         if enable_ime_after_instruction && opcode != 0xF3 {
@@ -622,6 +250,527 @@ impl Cpu {
         }
 
         cycles
+    }
+
+    fn execute_metadata(
+        &mut self,
+        metadata: OpcodeMetadata,
+        bus: &mut Bus,
+        pending_interrupts: u8,
+        enable_ime_after_instruction: bool,
+    ) -> u32 {
+        match metadata.instruction {
+            Instruction::Nop => metadata.cycles.for_branch(false),
+            Instruction::Rlca => {
+                self.rlca();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Rrca => {
+                self.rrca();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Rla => {
+                self.rla();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Rra => {
+                self.rra();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Daa => {
+                self.daa();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Cpl => {
+                self.registers.a = !self.registers.a;
+                self.registers.set_flag(Flag::Subtract, true);
+                self.registers.set_flag(Flag::HalfCarry, true);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Scf => {
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, false);
+                self.registers.set_flag(Flag::Carry, true);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Ccf => {
+                let carry = (self.registers.f & FLAG_C) == 0;
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, false);
+                self.registers.set_flag(Flag::Carry, carry);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdSpToImm16Addr => {
+                let address =
+                    self.fetch_operand16(metadata.operand16.expect("LD SP,(a16) operand"), bus);
+                let [lo, hi] = self.sp.to_le_bytes();
+                bus.write8(address, lo);
+                bus.write8(address.wrapping_add(1), hi);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdMemFromA => {
+                let address = self.read_operand16(metadata.operand16.expect("LD (r16),A operand"));
+                bus.write8(address, self.registers.a);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdAFromMem => {
+                let address = self.read_operand16(metadata.operand16.expect("LD A,(r16) operand"));
+                self.registers.a = bus.read8(address);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Inc16 => {
+                let operand = metadata.operand16.expect("INC r16 operand");
+                let value = self.read_operand16(operand).wrapping_add(1);
+                self.write_operand16(operand, value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Dec16 => {
+                let operand = metadata.operand16.expect("DEC r16 operand");
+                let value = self.read_operand16(operand).wrapping_sub(1);
+                self.write_operand16(operand, value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Ld16Imm => {
+                let operand = metadata.operand16.expect("LD r16,d16 operand");
+                let value = self.fetch16(bus);
+                self.write_operand16(operand, value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::AddHl => {
+                let value = self.read_operand16(metadata.operand16.expect("ADD HL,r16 operand"));
+                self.add_to_hl(value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdHliFromA => {
+                let address = self.registers.hl();
+                bus.write8(address, self.registers.a);
+                self.registers.set_hl(address.wrapping_add(1));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdAFromHli => {
+                let address = self.registers.hl();
+                self.registers.a = bus.read8(address);
+                self.registers.set_hl(address.wrapping_add(1));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdHldFromA => {
+                let address = self.registers.hl();
+                bus.write8(address, self.registers.a);
+                self.registers.set_hl(address.wrapping_sub(1));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdAFromHld => {
+                let address = self.registers.hl();
+                self.registers.a = bus.read8(address);
+                self.registers.set_hl(address.wrapping_sub(1));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Stop => {
+                let _ = self.fetch_operand8(metadata.operand8.expect("STOP padding operand"), bus);
+                self.halted = true;
+                self.halted_by_unimplemented_opcode = false;
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Jr => {
+                let offset = self.fetch_operand8(metadata.operand8.expect("JR operand"), bus) as i8;
+                self.pc = self.pc.wrapping_add_signed(i16::from(offset));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::JrCond => {
+                let offset =
+                    self.fetch_operand8(metadata.operand8.expect("JR cc operand"), bus) as i8;
+                let taken = self.condition_met_typed(metadata.condition.expect("JR condition"));
+                if taken {
+                    self.pc = self.pc.wrapping_add_signed(i16::from(offset));
+                }
+                metadata.cycles.for_branch(taken)
+            }
+            Instruction::Ld8Imm => {
+                let target = metadata.operand8.expect("LD r8,d8 target");
+                let value = self.fetch8(bus);
+                self.write_operand8(target, value, bus);
+                metadata.cycles.for_operand8(target)
+            }
+            Instruction::Inc8 => self.execute_inc8(metadata, bus),
+            Instruction::Dec8 => self.execute_dec8(metadata, bus),
+            Instruction::Halt => {
+                self.execute_halt(pending_interrupts, enable_ime_after_instruction)
+            }
+            Instruction::Ld8 => {
+                let source = match metadata.operand16.expect("LD r8,r8 source") {
+                    Operand16::R8Source(index) => index,
+                    _ => unreachable!("LD r8,r8 uses R8Source metadata"),
+                };
+                let target = metadata.operand8.expect("LD r8,r8 target");
+                let value = self.read_r8(source, bus);
+                self.write_operand8(target, value, bus);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Alu8 => self.execute_alu_metadata(metadata, bus),
+            Instruction::AluImm8 => {
+                let value = self.fetch_operand8(metadata.operand8.expect("ALU d8 operand"), bus);
+                self.execute_alu_value(metadata.opcode, value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::RetCond => {
+                let taken = self.condition_met_typed(metadata.condition.expect("RET condition"));
+                if taken {
+                    self.pc = self.pop_stack16(bus);
+                }
+                metadata.cycles.for_branch(taken)
+            }
+            Instruction::Pop => {
+                let value = self.pop_stack16(bus);
+                self.write_stack_operand16(metadata.operand16.expect("POP r16 operand"), value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::JpCond => {
+                let address =
+                    self.fetch_operand16(metadata.operand16.expect("JP cc,a16 operand"), bus);
+                let taken = self.condition_met_typed(metadata.condition.expect("JP condition"));
+                if taken {
+                    self.pc = address;
+                }
+                metadata.cycles.for_branch(taken)
+            }
+            Instruction::Jp => {
+                self.pc = self.fetch_operand16(metadata.operand16.expect("JP a16 operand"), bus);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::CallCond => {
+                let address =
+                    self.fetch_operand16(metadata.operand16.expect("CALL cc,a16 operand"), bus);
+                let taken = self.condition_met_typed(metadata.condition.expect("CALL condition"));
+                if taken {
+                    self.push_stack16(bus, self.pc);
+                    self.pc = address;
+                }
+                metadata.cycles.for_branch(taken)
+            }
+            Instruction::Push => {
+                let value =
+                    self.read_stack_operand16(metadata.operand16.expect("PUSH r16 operand"));
+                self.push_stack16(bus, value);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Rst => {
+                let vector = match metadata.operand8.expect("RST vector operand") {
+                    Operand8::Vector(vector) => u16::from(vector),
+                    _ => unreachable!("RST uses vector metadata"),
+                };
+                self.push_stack16(bus, self.pc);
+                self.pc = vector;
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::PrefixCb => {
+                let cb_opcode = self.fetch_operand8(Operand8::CbOpcode, bus);
+                self.execute_cb_metadata(metadata::CB_OPCODES[cb_opcode as usize], bus)
+            }
+            Instruction::Ret => {
+                self.pc = self.pop_stack16(bus);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Call => {
+                let address =
+                    self.fetch_operand16(metadata.operand16.expect("CALL a16 operand"), bus);
+                self.push_stack16(bus, self.pc);
+                self.pc = address;
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Reti => {
+                self.pc = self.pop_stack16(bus);
+                self.ime = true;
+                self.ime_enable_pending = false;
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::AddSpE8 => {
+                let offset =
+                    self.fetch_operand8(metadata.operand8.expect("ADD SP,e8 operand"), bus) as i8;
+                self.sp = self.add_signed_to_sp(offset);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::JpHl => {
+                self.pc = self.registers.hl();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdhImmFromA => {
+                let offset =
+                    self.fetch_operand8(metadata.operand8.expect("LDH (a8),A operand"), bus);
+                bus.write8(0xFF00u16 + u16::from(offset), self.registers.a);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdhCFromA => {
+                bus.write8(0xFF00u16 + u16::from(self.registers.c), self.registers.a);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdImm16FromA => {
+                let address =
+                    self.fetch_operand16(metadata.operand16.expect("LD (a16),A operand"), bus);
+                bus.write8(address, self.registers.a);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdHlSpPlusE8 => {
+                let offset =
+                    self.fetch_operand8(metadata.operand8.expect("LD HL,SP+e8 operand"), bus) as i8;
+                let result = self.add_signed_to_sp(offset);
+                self.registers.set_hl(result);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdSpHl => {
+                self.sp = self.registers.hl();
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdhAFromImm => {
+                let offset =
+                    self.fetch_operand8(metadata.operand8.expect("LDH A,(a8) operand"), bus);
+                self.registers.a = bus.read8(0xFF00u16 + u16::from(offset));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdhAFromC => {
+                self.registers.a = bus.read8(0xFF00u16 + u16::from(self.registers.c));
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Di => {
+                self.ime = false;
+                self.ime_enable_pending = false;
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::LdAFromImm16 => {
+                let address =
+                    self.fetch_operand16(metadata.operand16.expect("LD A,(a16) operand"), bus);
+                self.registers.a = bus.read8(address);
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::Ei => {
+                self.ime_enable_pending = true;
+                metadata.cycles.for_branch(false)
+            }
+            Instruction::CbRotate
+            | Instruction::CbBit
+            | Instruction::CbRes
+            | Instruction::CbSet => self.execute_cb_metadata(metadata, bus),
+        }
+    }
+
+    fn execute_halt(&mut self, pending_interrupts: u8, enable_ime_after_instruction: bool) -> u32 {
+        if !self.ime && pending_interrupts != 0 {
+            if enable_ime_after_instruction {
+                self.pc = self.pc.wrapping_sub(1);
+            } else {
+                self.halt_bug_active = true;
+            }
+        } else {
+            self.halted = true;
+        }
+        4
+    }
+
+    fn fetch_operand8(&mut self, operand: Operand8, bus: &Bus) -> u8 {
+        match operand {
+            Operand8::Imm8 | Operand8::SignedImm8 | Operand8::Relative | Operand8::CbOpcode => {
+                self.fetch8(bus)
+            }
+            Operand8::R8(index) | Operand8::R8Value(index) => self.read_r8(index, bus),
+            Operand8::Vector(vector) => vector,
+        }
+    }
+
+    fn fetch_operand16(&mut self, operand: Operand16, bus: &Bus) -> u16 {
+        match operand {
+            Operand16::Imm16 => self.fetch16(bus),
+            Operand16::Imm16Value(value) => value,
+            Operand16::R16(index) => self.read_r16_by_index(index),
+            Operand16::StackR16(index) => self.read_stack_r16_by_index(index),
+            Operand16::R8Source(_) | Operand16::Bit(_) => {
+                unreachable!("not a fetchable 16-bit operand")
+            }
+        }
+    }
+
+    fn read_operand16(&self, operand: Operand16) -> u16 {
+        match operand {
+            Operand16::R16(index) => self.read_r16_by_index(index),
+            Operand16::StackR16(index) => self.read_stack_r16_by_index(index),
+            Operand16::Imm16Value(value) => value,
+            Operand16::Imm16 | Operand16::R8Source(_) | Operand16::Bit(_) => {
+                unreachable!("operand is not readable without fetching")
+            }
+        }
+    }
+
+    fn write_operand16(&mut self, operand: Operand16, value: u16) {
+        match operand {
+            Operand16::R16(index) => self.write_r16_by_index(index, value),
+            Operand16::StackR16(index) => self.write_stack_r16_by_index(index, value),
+            Operand16::Imm16
+            | Operand16::Imm16Value(_)
+            | Operand16::R8Source(_)
+            | Operand16::Bit(_) => unreachable!("operand is not writable"),
+        }
+    }
+
+    fn write_operand8(&mut self, operand: Operand8, value: u8, bus: &mut Bus) {
+        match operand {
+            Operand8::R8(index) | Operand8::R8Value(index) => self.write_r8(index, value, bus),
+            Operand8::Imm8
+            | Operand8::SignedImm8
+            | Operand8::Relative
+            | Operand8::CbOpcode
+            | Operand8::Vector(_) => unreachable!("operand is not writable"),
+        }
+    }
+
+    fn condition_met_typed(&self, condition: Condition) -> bool {
+        self.condition_met(condition.index())
+    }
+
+    fn read_stack_operand16(&self, operand: Operand16) -> u16 {
+        match operand {
+            Operand16::StackR16(index) => self.read_stack_r16_by_index(index),
+            _ => unreachable!("stack operand expected"),
+        }
+    }
+
+    fn write_stack_operand16(&mut self, operand: Operand16, value: u16) {
+        match operand {
+            Operand16::StackR16(index) => self.write_stack_r16_by_index(index, value),
+            _ => unreachable!("stack operand expected"),
+        }
+    }
+
+    fn read_stack_r16_by_index(&self, register_pair_index: u8) -> u16 {
+        match register_pair_index & 0x03 {
+            0x00 => self.registers.bc(),
+            0x01 => self.registers.de(),
+            0x02 => self.registers.hl(),
+            0x03 => self.registers.af(),
+            _ => unreachable!("register pair index is masked to 2 bits"),
+        }
+    }
+
+    fn write_stack_r16_by_index(&mut self, register_pair_index: u8, value: u16) {
+        match register_pair_index & 0x03 {
+            0x00 => self.registers.set_bc(value),
+            0x01 => self.registers.set_de(value),
+            0x02 => self.registers.set_hl(value),
+            0x03 => self.registers.set_af(value),
+            _ => unreachable!("register pair index is masked to 2 bits"),
+        }
+    }
+
+    fn execute_inc8(&mut self, metadata: OpcodeMetadata, bus: &mut Bus) -> u32 {
+        let operand = metadata.operand8.expect("INC r8 operand");
+        let register_index = match operand {
+            Operand8::R8(index) => index,
+            _ => unreachable!("INC uses R8"),
+        };
+        let previous = self.read_r8(register_index, bus);
+        let result = previous.wrapping_add(1);
+        self.write_r8(register_index, result, bus);
+        self.registers.set_flag(Flag::Zero, result == 0);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers
+            .set_flag(Flag::HalfCarry, (previous & 0x0F) == 0x0F);
+        metadata.cycles.for_operand8(operand)
+    }
+
+    fn execute_dec8(&mut self, metadata: OpcodeMetadata, bus: &mut Bus) -> u32 {
+        let operand = metadata.operand8.expect("DEC r8 operand");
+        let register_index = match operand {
+            Operand8::R8(index) => index,
+            _ => unreachable!("DEC uses R8"),
+        };
+        let previous = self.read_r8(register_index, bus);
+        let result = previous.wrapping_sub(1);
+        self.write_r8(register_index, result, bus);
+        self.registers.set_flag(Flag::Zero, result == 0);
+        self.registers.set_flag(Flag::Subtract, true);
+        self.registers
+            .set_flag(Flag::HalfCarry, (previous & 0x0F) == 0x00);
+        metadata.cycles.for_operand8(operand)
+    }
+
+    fn execute_alu_metadata(&mut self, metadata: OpcodeMetadata, bus: &Bus) -> u32 {
+        let operand = metadata.operand8.expect("ALU r8 operand");
+        let value = self.fetch_operand8(operand, bus);
+        self.execute_alu_value(metadata.opcode, value);
+        metadata.cycles.for_operand8(operand)
+    }
+
+    fn execute_alu_value(&mut self, opcode: u8, value: u8) {
+        match (opcode >> 3) & 0x07 {
+            0x00 => self.add_to_a(value),
+            0x01 => self.adc_to_a(value),
+            0x02 => self.sub_from_a(value),
+            0x03 => self.sbc_from_a(value),
+            0x04 => self.and_with_a(value),
+            0x05 => self.xor_with_a(value),
+            0x06 => self.or_with_a(value),
+            0x07 => self.compare_a(value),
+            _ => unreachable!("alu operation index is masked to 3 bits"),
+        }
+    }
+
+    fn execute_cb_metadata(&mut self, metadata: OpcodeMetadata, bus: &mut Bus) -> u32 {
+        let register_index = match metadata.operand8.expect("CB r8 operand") {
+            Operand8::R8(index) => index,
+            _ => unreachable!("CB uses R8 operand"),
+        };
+        let bit_index = match metadata.operand16.expect("CB bit operand") {
+            Operand16::Bit(bit) => bit,
+            _ => unreachable!("CB uses bit metadata"),
+        };
+
+        match metadata.instruction {
+            Instruction::CbRotate => self.execute_cb_rotate(register_index, bit_index, bus),
+            Instruction::CbBit => {
+                let value = self.read_r8(register_index, bus);
+                self.registers
+                    .set_flag(Flag::Zero, (value & (1 << bit_index)) == 0);
+                self.registers.set_flag(Flag::Subtract, false);
+                self.registers.set_flag(Flag::HalfCarry, true);
+            }
+            Instruction::CbRes => {
+                let value = self.read_r8(register_index, bus) & !(1 << bit_index);
+                self.write_r8(register_index, value, bus);
+            }
+            Instruction::CbSet => {
+                let value = self.read_r8(register_index, bus) | (1 << bit_index);
+                self.write_r8(register_index, value, bus);
+            }
+            _ => unreachable!("not a CB instruction"),
+        }
+        metadata.cycles.for_branch(false)
+    }
+
+    fn execute_cb_rotate(&mut self, register_index: u8, operation_index: u8, bus: &mut Bus) {
+        let value = self.read_r8(register_index, bus);
+        let (result, carry) = match operation_index {
+            0x00 => (value.rotate_left(1), (value & 0x80) != 0),
+            0x01 => (value.rotate_right(1), (value & 0x01) != 0),
+            0x02 => {
+                let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+                ((value << 1) | carry_in, (value & 0x80) != 0)
+            }
+            0x03 => {
+                let carry_in = if (self.registers.f & FLAG_C) != 0 {
+                    0x80
+                } else {
+                    0x00
+                };
+                ((value >> 1) | carry_in, (value & 0x01) != 0)
+            }
+            0x04 => (value << 1, (value & 0x80) != 0),
+            0x05 => (((value >> 1) | (value & 0x80)), (value & 0x01) != 0),
+            0x06 => (value.rotate_left(4), false),
+            0x07 => (value >> 1, (value & 0x01) != 0),
+            _ => unreachable!("bit index is masked to 3 bits"),
+        };
+        self.write_r8(register_index, result, bus);
+        self.registers.set_flag(Flag::Zero, result == 0);
+        self.registers.set_flag(Flag::Subtract, false);
+        self.registers.set_flag(Flag::HalfCarry, false);
+        self.registers.set_flag(Flag::Carry, carry);
     }
 
     fn pending_interrupts(&self, bus: &Bus) -> u8 {
@@ -731,91 +880,6 @@ impl Cpu {
         self.registers
             .set_flag(Flag::Carry, (sp & 0x00FF) + (offset_u16 & 0x00FF) > 0x00FF);
         result
-    }
-
-    fn execute_alu_r8(&mut self, opcode: u8, bus: &Bus) -> u32 {
-        let register_index = opcode & 0x07;
-        let value = self.read_r8(register_index, bus);
-
-        match (opcode >> 3) & 0x07 {
-            0x00 => self.add_to_a(value),
-            0x01 => self.adc_to_a(value),
-            0x02 => self.sub_from_a(value),
-            0x03 => self.sbc_from_a(value),
-            0x04 => self.and_with_a(value),
-            0x05 => self.xor_with_a(value),
-            0x06 => self.or_with_a(value),
-            0x07 => self.compare_a(value),
-            _ => unreachable!("alu operation index is masked to 3 bits"),
-        }
-
-        Self::r8_access_cycles(register_index)
-    }
-
-    const fn r8_access_cycles(register_index: u8) -> u32 {
-        if register_index == 0x06 {
-            8
-        } else {
-            4
-        }
-    }
-
-    fn execute_cb(&mut self, opcode: u8, bus: &mut Bus) -> u32 {
-        let register_index = opcode & 0x07;
-        let bit_index = (opcode >> 3) & 0x07;
-        match opcode >> 6 {
-            0x00 => {
-                let value = self.read_r8(register_index, bus);
-                let (result, carry) = match bit_index {
-                    0x00 => (value.rotate_left(1), (value & 0x80) != 0), // RLC
-                    0x01 => (value.rotate_right(1), (value & 0x01) != 0), // RRC
-                    0x02 => {
-                        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
-                        ((value << 1) | carry_in, (value & 0x80) != 0) // RL
-                    }
-                    0x03 => {
-                        let carry_in = if (self.registers.f & FLAG_C) != 0 {
-                            0x80
-                        } else {
-                            0x00
-                        };
-                        ((value >> 1) | carry_in, (value & 0x01) != 0) // RR
-                    }
-                    0x04 => (value << 1, (value & 0x80) != 0), // SLA
-                    0x05 => (((value >> 1) | (value & 0x80)), (value & 0x01) != 0), // SRA
-                    0x06 => (value.rotate_left(4), false),     // SWAP
-                    0x07 => (value >> 1, (value & 0x01) != 0), // SRL
-                    _ => unreachable!("bit index is masked to 3 bits"),
-                };
-
-                self.write_r8(register_index, result, bus);
-                self.registers.set_flag(Flag::Zero, result == 0);
-                self.registers.set_flag(Flag::Subtract, false);
-                self.registers.set_flag(Flag::HalfCarry, false);
-                self.registers.set_flag(Flag::Carry, carry);
-
-                Self::r8_access_cycles(register_index) * 2
-            }
-            0x01 => {
-                let value = self.read_r8(register_index, bus);
-                self.registers
-                    .set_flag(Flag::Zero, (value & (1 << bit_index)) == 0);
-                self.registers.set_flag(Flag::Subtract, false);
-                self.registers.set_flag(Flag::HalfCarry, true);
-                Self::r8_access_cycles(register_index) + 4
-            }
-            0x02 => {
-                let value = self.read_r8(register_index, bus) & !(1 << bit_index);
-                self.write_r8(register_index, value, bus);
-                Self::r8_access_cycles(register_index) * 2
-            }
-            0x03 => {
-                let value = self.read_r8(register_index, bus) | (1 << bit_index);
-                self.write_r8(register_index, value, bus);
-                Self::r8_access_cycles(register_index) * 2
-            }
-            _ => unreachable!("cb opcode group is masked to 2 bits"),
-        }
     }
 
     fn read_r8(&self, register_index: u8, bus: &Bus) -> u8 {
@@ -1050,6 +1114,32 @@ mod tests {
     fn run_program(cpu: &mut Cpu, bus: &mut Bus, steps: usize) {
         for _ in 0..steps {
             cpu.step(bus);
+        }
+    }
+
+    fn metadata_cycles_for_program(cpu: &Cpu, program: &[u8]) -> u32 {
+        let opcode = program[0];
+        let metadata =
+            metadata::OPCODES[opcode as usize].expect("opcode should be in metadata table");
+        if metadata.instruction == Instruction::PrefixCb {
+            let cb_opcode = program[1];
+            return metadata::CB_OPCODES[cb_opcode as usize]
+                .cycles
+                .fixed()
+                .expect("CB opcode cycles are fixed");
+        }
+
+        match metadata.cycles {
+            metadata::CycleCost::Fixed(cycles) => cycles,
+            metadata::CycleCost::Branch { .. } => {
+                let taken = cpu.condition_met_typed(metadata.condition.expect("branch condition"));
+                metadata.cycles.for_branch(taken)
+            }
+            metadata::CycleCost::MemoryOperand { .. } => metadata.cycles.for_operand8(
+                metadata
+                    .operand8
+                    .expect("memory operand timing needs an 8-bit operand"),
+            ),
         }
     }
 
@@ -1886,7 +1976,6 @@ mod tests {
             cb_opcode: u8,
             setup: fn(&mut Cpu, &mut Bus),
             assert_after: fn(&Cpu, &Bus),
-            expected_cycles: u32,
             expected_flags: u8,
         }
 
@@ -1896,7 +1985,6 @@ mod tests {
                 cb_opcode: 0x00, // RLC B
                 setup: |cpu, _| cpu.registers.b = 0x81,
                 assert_after: |cpu, _| assert_eq!(cpu.registers.b, 0x03),
-                expected_cycles: 8,
                 expected_flags: FLAG_C,
             },
             Case {
@@ -1904,7 +1992,6 @@ mod tests {
                 cb_opcode: 0x7C, // BIT 7,H
                 setup: |cpu, _| cpu.registers.h = 0x7F,
                 assert_after: |_, _| {},
-                expected_cycles: 8,
                 expected_flags: FLAG_Z | FLAG_H,
             },
             Case {
@@ -1912,7 +1999,6 @@ mod tests {
                 cb_opcode: 0xA2, // RES 4,D
                 setup: |cpu, _| cpu.registers.d = 0xFF,
                 assert_after: |cpu, _| assert_eq!(cpu.registers.d, 0xEF),
-                expected_cycles: 8,
                 expected_flags: 0,
             },
             Case {
@@ -1924,7 +2010,6 @@ mod tests {
                     cpu.registers.f = FLAG_C;
                 },
                 assert_after: |_, bus| assert_eq!(bus.read8(0xC300), 0x21),
-                expected_cycles: 16,
                 expected_flags: FLAG_C,
             },
         ];
@@ -1934,9 +2019,10 @@ mod tests {
             let mut bus = make_bus_with_program(&[0xCB, case.cb_opcode]);
             (case.setup)(&mut cpu, &mut bus);
 
+            let expected_cycles = metadata_cycles_for_program(&cpu, &[0xCB, case.cb_opcode]);
             let cycles = cpu.step(&mut bus);
 
-            assert_eq!(cycles, case.expected_cycles, "case: {}", case.name);
+            assert_eq!(cycles, expected_cycles, "case: {}", case.name);
             (case.assert_after)(&cpu, &bus);
             assert_eq!(
                 cpu.registers.f & FLAGS_MASK,
@@ -1953,7 +2039,6 @@ mod tests {
             name: &'static str,
             program: &'static [u8],
             setup: fn(&mut Cpu, &mut Bus),
-            expected_cycles: u32,
             expected_pc: u16,
         }
 
@@ -1962,42 +2047,36 @@ mod tests {
                 name: "nop",
                 program: &[0x00],
                 setup: |_, _| {},
-                expected_cycles: 4,
                 expected_pc: 0x0001,
             },
             Case {
                 name: "jr_taken",
                 program: &[0x18, 0x02],
                 setup: |_, _| {},
-                expected_cycles: 12,
                 expected_pc: 0x0004,
             },
             Case {
                 name: "jr_nz_not_taken",
                 program: &[0x20, 0x02],
                 setup: |cpu, _| cpu.registers.f = FLAG_Z,
-                expected_cycles: 8,
                 expected_pc: 0x0002,
             },
             Case {
                 name: "jr_nz_taken",
                 program: &[0x20, 0x02],
                 setup: |cpu, _| cpu.registers.f = 0,
-                expected_cycles: 12,
                 expected_pc: 0x0004,
             },
             Case {
                 name: "ld_hl_d8_memory_path",
                 program: &[0x36, 0x5A],
                 setup: |cpu, _| cpu.registers.set_hl(0xC000),
-                expected_cycles: 12,
                 expected_pc: 0x0002,
             },
             Case {
                 name: "ld_b_c_register_path",
                 program: &[0x41],
                 setup: |cpu, _| cpu.registers.c = 0x99,
-                expected_cycles: 4,
                 expected_pc: 0x0001,
             },
             Case {
@@ -2007,14 +2086,12 @@ mod tests {
                     cpu.registers.b = 0x33;
                     cpu.registers.set_hl(0xC123);
                 },
-                expected_cycles: 8,
                 expected_pc: 0x0001,
             },
             Case {
                 name: "ret_nz_not_taken",
                 program: &[0xC0],
                 setup: |cpu, _| cpu.registers.f = FLAG_Z,
-                expected_cycles: 8,
                 expected_pc: 0x0001,
             },
             Case {
@@ -2026,7 +2103,6 @@ mod tests {
                     bus.write8(0xFFFC, 0x34);
                     bus.write8(0xFFFD, 0x12);
                 },
-                expected_cycles: 20,
                 expected_pc: 0x1234,
             },
             Case {
@@ -2036,7 +2112,6 @@ mod tests {
                     cpu.registers.set_hl(0xC222);
                     bus.write8(0xC222, 0x01);
                 },
-                expected_cycles: 12,
                 expected_pc: 0x0002,
             },
         ];
@@ -2046,9 +2121,10 @@ mod tests {
             let mut bus = make_bus_with_program(case.program);
             (case.setup)(&mut cpu, &mut bus);
 
+            let expected_cycles = metadata_cycles_for_program(&cpu, case.program);
             let cycles = cpu.step(&mut bus);
 
-            assert_eq!(cycles, case.expected_cycles, "case: {}", case.name);
+            assert_eq!(cycles, expected_cycles, "case: {}", case.name);
             assert_eq!(cpu.pc(), case.expected_pc, "case: {}", case.name);
         }
     }
@@ -2059,7 +2135,6 @@ mod tests {
             name: &'static str,
             program: &'static [u8],
             setup: fn(&mut Cpu, &mut Bus),
-            expected_cycles: u32,
         }
 
         let cases = [
@@ -2070,7 +2145,6 @@ mod tests {
                     cpu.registers.a = 0x01;
                     cpu.registers.b = 0x02;
                 },
-                expected_cycles: 4,
             },
             Case {
                 name: "add_a_hl_memory_path",
@@ -2080,13 +2154,11 @@ mod tests {
                     cpu.registers.set_hl(0xC300);
                     bus.write8(0xC300, 0x02);
                 },
-                expected_cycles: 8,
             },
             Case {
                 name: "cb_rlc_b_register_path",
                 program: &[0xCB, 0x00], // RLC B
                 setup: |cpu, _| cpu.registers.b = 0x81,
-                expected_cycles: 8,
             },
             Case {
                 name: "cb_rlc_hl_memory_path",
@@ -2095,7 +2167,6 @@ mod tests {
                     cpu.registers.set_hl(0xC301);
                     bus.write8(0xC301, 0x81);
                 },
-                expected_cycles: 16,
             },
         ];
 
@@ -2104,9 +2175,10 @@ mod tests {
             let mut bus = make_bus_with_program(case.program);
             (case.setup)(&mut cpu, &mut bus);
 
+            let expected_cycles = metadata_cycles_for_program(&cpu, case.program);
             let cycles = cpu.step(&mut bus);
 
-            assert_eq!(cycles, case.expected_cycles, "case: {}", case.name);
+            assert_eq!(cycles, expected_cycles, "case: {}", case.name);
         }
     }
 }
