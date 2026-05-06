@@ -1,5 +1,3 @@
-use std::convert::Infallible;
-use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,7 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use latchboy_core::Emulator;
 use latchboy_desktop::{
     blit_dmg_framebuffer_to_rgb_surface, run_emulation_loop, write_rgb_surface_to_png,
-    FramePresenter, SurfaceImageWriteError, DMG_PALETTE_RGB,
+    DesktopResult, DesktopRuntimeError, FramePresenter, RuntimeSessionState,
+    SurfaceImageWriteError, DMG_PALETTE_RGB,
 };
 
 struct HeadlessPresenter {
@@ -30,8 +29,6 @@ impl fmt::Display for PollFailed {
     }
 }
 
-impl Error for PollFailed {}
-
 struct PollErrorAfterSinglePresent {
     open: bool,
     presented_once: bool,
@@ -47,20 +44,18 @@ impl PollErrorAfterSinglePresent {
 }
 
 impl FramePresenter for PollErrorAfterSinglePresent {
-    type Error = PollFailed;
-
     fn is_open(&self) -> bool {
         self.open
     }
 
-    fn poll_events(&mut self) -> Result<(), Self::Error> {
+    fn poll_events(&mut self) -> DesktopResult<()> {
         if self.presented_once {
-            return Err(PollFailed);
+            return Err(DesktopRuntimeError::frame_presentation(PollFailed));
         }
         Ok(())
     }
 
-    fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+    fn present_frame(&mut self, _surface: &[u32]) -> DesktopResult<()> {
         self.presented_once = true;
         Ok(())
     }
@@ -76,18 +71,16 @@ impl CloseOnPollPresenter {
 }
 
 impl FramePresenter for CloseOnPollPresenter {
-    type Error = Infallible;
-
     fn is_open(&self) -> bool {
         self.open
     }
 
-    fn poll_events(&mut self) -> Result<(), Self::Error> {
+    fn poll_events(&mut self) -> DesktopResult<()> {
         self.open = false;
         Ok(())
     }
 
-    fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
+    fn present_frame(&mut self, _surface: &[u32]) -> DesktopResult<()> {
         self.presents += 1;
         Ok(())
     }
@@ -104,18 +97,16 @@ impl HeadlessPresenter {
 }
 
 impl FramePresenter for HeadlessPresenter {
-    type Error = Infallible;
-
     fn is_open(&self) -> bool {
         self.remaining_frames > 0
     }
 
-    fn poll_events(&mut self) -> Result<(), Self::Error> {
+    fn poll_events(&mut self) -> DesktopResult<()> {
         self.event_polls += 1;
         Ok(())
     }
 
-    fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
+    fn present_frame(&mut self, surface: &[u32]) -> DesktopResult<()> {
         self.last_frame.clear();
         self.last_frame.extend_from_slice(surface);
         self.remaining_frames -= 1;
@@ -123,12 +114,32 @@ impl FramePresenter for HeadlessPresenter {
     }
 }
 
+fn run_loop_for_test(
+    emulator: &mut Emulator,
+    presenter: &mut impl FramePresenter,
+    cycle_step: u32,
+    frame_limit: Option<u64>,
+    iteration_limit: Option<u64>,
+) -> DesktopResult<u64> {
+    let mut runtime_state = RuntimeSessionState::default();
+    run_emulation_loop(
+        emulator,
+        presenter,
+        cycle_step,
+        frame_limit,
+        iteration_limit,
+        &mut runtime_state,
+        None,
+    )
+    .map(|stats| stats.frames_presented)
+}
+
 #[test]
 fn frame_presentation_loop_runs_headless_without_panicking() {
     let mut emulator = Emulator::new();
     let mut presenter = HeadlessPresenter::new(1);
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(1), Some(10_000))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 1_024, Some(1), Some(10_000))
         .expect("headless frame presentation should succeed");
 
     assert_eq!(frames, 1);
@@ -147,7 +158,7 @@ fn emulation_loop_can_terminate_without_frame_ready_when_iteration_budget_is_exh
     let mut emulator = Emulator::new();
     let mut presenter = HeadlessPresenter::new(1);
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 4, Some(1), Some(8))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 4, Some(1), Some(8))
         .expect("iteration budget should allow clean exit without panicking");
 
     assert_eq!(frames, 0);
@@ -177,7 +188,7 @@ fn emulation_loop_rejects_zero_cycle_step() {
     let mut emulator = Emulator::new();
     let mut presenter = HeadlessPresenter::new(1);
 
-    let error = run_emulation_loop(&mut emulator, &mut presenter, 0, Some(1), Some(8))
+    let error = run_loop_for_test(&mut emulator, &mut presenter, 0, Some(1), Some(8))
         .expect_err("zero cycle step should be rejected");
     assert_eq!(error.to_string(), "cycle_step must be greater than zero");
 }
@@ -187,7 +198,7 @@ fn emulation_loop_chunks_large_cycle_steps_to_avoid_dropping_frame_ready_pulses(
     let mut emulator = Emulator::new();
     let mut presenter = HeadlessPresenter::new(3);
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 210_000, Some(3), Some(1_000))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 210_000, Some(3), Some(1_000))
         .expect("large cycle-step run should complete");
 
     assert_eq!(frames, 3);
@@ -199,7 +210,7 @@ fn emulation_loop_polls_events_while_presenting_frames() {
     let mut emulator = Emulator::new();
     let mut presenter = HeadlessPresenter::new(2);
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(2), Some(20_000))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 1_024, Some(2), Some(20_000))
         .expect("run with event polling enabled should complete");
 
     assert_eq!(frames, 2);
@@ -221,7 +232,7 @@ fn emulation_loop_drains_pending_frame_ready_before_stepping() {
     let pre_loop_cycles = emulator.total_cycles();
 
     let mut presenter = HeadlessPresenter::new(1);
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 210_000, Some(1), Some(100))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 210_000, Some(1), Some(100))
         .expect("pending frame-ready should be presented before stepping");
 
     assert_eq!(frames, 1);
@@ -238,7 +249,7 @@ fn emulation_loop_stops_immediately_when_poll_requests_close() {
     let pre_loop_cycles = emulator.total_cycles();
     let mut presenter = CloseOnPollPresenter::new();
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 210_000, Some(3), Some(1_000))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 210_000, Some(3), Some(1_000))
         .expect("close-on-poll should terminate cleanly");
 
     assert_eq!(frames, 0);
@@ -255,7 +266,7 @@ fn emulation_loop_honors_frame_limit_before_polling_again() {
     let mut emulator = Emulator::new();
     let mut presenter = PollErrorAfterSinglePresent::new();
 
-    let frames = run_emulation_loop(&mut emulator, &mut presenter, 1_024, Some(1), Some(20_000))
+    let frames = run_loop_for_test(&mut emulator, &mut presenter, 1_024, Some(1), Some(20_000))
         .expect("frame-limit completion should return before next poll_events call");
 
     assert_eq!(frames, 1);

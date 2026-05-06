@@ -18,8 +18,8 @@ use latchboy_desktop::savefile::{
     should_persist_after_load,
 };
 use latchboy_desktop::{
-    run_emulation_loop_with_stats_and_state, write_rgb_surface_to_png, AudioSink, FramePresenter,
-    RuntimeEvent, RuntimeSessionState,
+    run_emulation_loop, write_rgb_surface_to_png, DesktopResult, DesktopRuntimeError,
+    FramePresenter, RuntimeEvent, RuntimeSessionState,
 };
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::event::Event;
@@ -135,20 +135,20 @@ struct SdlPresenter {
     pending_runtime_events: Vec<RuntimeEvent>,
 }
 
-struct SdlAudioSink {
+struct SdlAudioOutput {
     queue: AudioQueue<i16>,
 }
 
-impl AudioSink for SdlAudioSink {
-    fn push_samples(&mut self, samples: &[i16]) -> Result<(), latchboy_desktop::AudioSinkError> {
+impl SdlAudioOutput {
+    fn push_samples(&mut self, samples: &[i16]) -> DesktopResult<()> {
         if self.queue.size() > 16_384 {
             self.queue.clear();
         }
         self.queue.queue_audio(samples).map_err(|message| {
-            latchboy_desktop::AudioSinkError::PushFailed {
-                sample_count: samples.len(),
-                message,
-            }
+            DesktopRuntimeError::audio_output(format!(
+                "audio sink rejected {} samples: {message}",
+                samples.len()
+            ))
         })
     }
 }
@@ -241,13 +241,11 @@ impl FrameCaptureConfig {
 }
 
 impl FramePresenter for SdlPresenter {
-    type Error = SurfaceError;
-
     fn is_open(&self) -> bool {
         !self.close_requested && self.presented_frames < self.max_frames
     }
 
-    fn poll_events(&mut self) -> Result<(), Self::Error> {
+    fn poll_events(&mut self) -> DesktopResult<()> {
         let keymap = self.keymap.clone();
         for event in self.event_pump.poll_iter() {
             match event {
@@ -331,9 +329,11 @@ impl FramePresenter for SdlPresenter {
         std::mem::take(&mut self.pending_runtime_events)
     }
 
-    fn present_frame(&mut self, surface: &[u32]) -> Result<(), Self::Error> {
+    fn present_frame(&mut self, surface: &[u32]) -> DesktopResult<()> {
         if surface.len() != FRAMEBUFFER_LEN {
-            return Err(SurfaceError::InvalidSurfaceLength);
+            return Err(DesktopRuntimeError::frame_presentation(
+                SurfaceError::InvalidSurfaceLength,
+            ));
         }
 
         self.buffer.copy_from_slice(surface);
@@ -344,10 +344,9 @@ impl FramePresenter for SdlPresenter {
             }
         }
 
-        let mut window_surface = self
-            .window
-            .surface(&self.event_pump)
-            .map_err(|error| SurfaceError::TextureUpdate(error.to_string()))?;
+        let mut window_surface = self.window.surface(&self.event_pump).map_err(|error| {
+            DesktopRuntimeError::frame_presentation(SurfaceError::TextureUpdate(error.to_string()))
+        })?;
         let surface_width = window_surface.width() as usize;
         let surface_height = window_surface.height() as usize;
         let pitch = window_surface.pitch() as usize;
@@ -399,9 +398,9 @@ impl FramePresenter for SdlPresenter {
                 }
             }
         });
-        window_surface
-            .update_window()
-            .map_err(|error| SurfaceError::CanvasCopy(error.to_string()))?;
+        window_surface.update_window().map_err(|error| {
+            DesktopRuntimeError::frame_presentation(SurfaceError::CanvasCopy(error.to_string()))
+        })?;
 
         let frame_index = self.presented_frames + 1;
         if let Some(capture) = &self.frame_capture {
@@ -422,7 +421,11 @@ impl FramePresenter for SdlPresenter {
                     FRAMEBUFFER_WIDTH as u32,
                     FRAMEBUFFER_HEIGHT as u32,
                 )
-                .map_err(|error| SurfaceError::FrameImageWrite(error.to_string()))?;
+                .map_err(|error| {
+                    DesktopRuntimeError::frame_presentation(SurfaceError::FrameImageWrite(
+                        error.to_string(),
+                    ))
+                })?;
             }
         }
 
@@ -628,7 +631,7 @@ fn main() -> ExitCode {
             match audio.open_queue::<i16, _>(None, &desired_spec) {
                 Ok(queue) => {
                     queue.resume();
-                    Some(SdlAudioSink { queue })
+                    Some(SdlAudioOutput { queue })
                 }
                 Err(error) => {
                     eprintln!("warning: failed to initialize SDL audio queue: {error}");
@@ -662,15 +665,29 @@ fn main() -> ExitCode {
             .map(|interval| remaining_frames.min(interval.get()))
             .unwrap_or(remaining_frames);
 
-        let chunk_result = match run_emulation_loop_with_stats_and_state(
-            &mut runtime.emulator,
-            &mut surface,
-            args.cycle_step,
-            Some(chunk_limit),
-            remaining_iteration_budget,
-            &mut runtime_session_state,
-            audio_sink.as_mut().map(|sink| sink as &mut dyn AudioSink),
-        ) {
+        let chunk_result = if let Some(sink) = audio_sink.as_mut() {
+            let mut push_audio = |samples: &[i16]| sink.push_samples(samples);
+            run_emulation_loop(
+                &mut runtime.emulator,
+                &mut surface,
+                args.cycle_step,
+                Some(chunk_limit),
+                remaining_iteration_budget,
+                &mut runtime_session_state,
+                Some(&mut push_audio),
+            )
+        } else {
+            run_emulation_loop(
+                &mut runtime.emulator,
+                &mut surface,
+                args.cycle_step,
+                Some(chunk_limit),
+                remaining_iteration_budget,
+                &mut runtime_session_state,
+                None,
+            )
+        };
+        let chunk_result = match chunk_result {
             Ok(stats) => stats,
             Err(error) => {
                 eprintln!("error: emulation loop aborted: {error}");
