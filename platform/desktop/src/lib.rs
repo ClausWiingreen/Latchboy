@@ -149,6 +149,7 @@ pub fn write_rgb_surface_to_png(
 }
 
 pub type DesktopResult<T> = Result<T, DesktopRuntimeError>;
+pub type AudioCallback<'a> = &'a mut dyn FnMut(&[i16]) -> DesktopResult<()>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum DesktopRuntimeError {
@@ -315,7 +316,7 @@ pub fn run_emulation_loop<P: FramePresenter>(
     frame_limit: Option<u64>,
     iteration_limit: Option<u64>,
     runtime_state: &mut RuntimeSessionState,
-    mut audio_sink: Option<&mut dyn FnMut(&[i16]) -> DesktopResult<()>>,
+    mut audio_sink: Option<AudioCallback<'_>>,
 ) -> DesktopResult<EmulationRunStats> {
     if cycle_step == 0 {
         return Err(DesktopRuntimeError::InvalidCycleStep);
