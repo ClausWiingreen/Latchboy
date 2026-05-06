@@ -1,20 +1,36 @@
 use crate::bus::Bus;
 use crate::interrupts;
+use bitflags::bitflags;
 
 pub mod metadata;
 
 use metadata::{Condition, Instruction, OpcodeMetadata, Operand16, Operand8};
 
-const FLAG_Z: u8 = 0b1000_0000;
-const FLAG_N: u8 = 0b0100_0000;
-const FLAG_H: u8 = 0b0010_0000;
-const FLAG_C: u8 = 0b0001_0000;
-const FLAGS_MASK: u8 = FLAG_Z | FLAG_N | FLAG_H | FLAG_C;
+bitflags! {
+    /// Typed CPU `F` flag register; only the upper nibble is hardware-backed.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+    pub struct CpuFlags: u8 {
+        const ZERO = 0b1000_0000;
+        const SUBTRACT = 0b0100_0000;
+        const HALF_CARRY = 0b0010_0000;
+        const CARRY = 0b0001_0000;
+    }
+}
+
+impl CpuFlags {
+    pub const fn read_bits(self) -> u8 {
+        self.bits()
+    }
+
+    pub fn write_bits(&mut self, value: u8) {
+        *self = Self::from_bits_truncate(value);
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Registers {
     pub a: u8,
-    pub f: u8,
+    pub f: CpuFlags,
     pub b: u8,
     pub c: u8,
     pub d: u8,
@@ -32,19 +48,19 @@ enum Flag {
 }
 
 impl Flag {
-    const fn bit(self) -> u8 {
+    const fn bit(self) -> CpuFlags {
         match self {
-            Self::Zero => FLAG_Z,
-            Self::Subtract => FLAG_N,
-            Self::HalfCarry => FLAG_H,
-            Self::Carry => FLAG_C,
+            Self::Zero => CpuFlags::ZERO,
+            Self::Subtract => CpuFlags::SUBTRACT,
+            Self::HalfCarry => CpuFlags::HALF_CARRY,
+            Self::Carry => CpuFlags::CARRY,
         }
     }
 }
 
 impl Registers {
     pub const fn af(&self) -> u16 {
-        u16::from_be_bytes([self.a, self.f])
+        u16::from_be_bytes([self.a, self.f.read_bits()])
     }
 
     pub const fn bc(&self) -> u16 {
@@ -62,7 +78,7 @@ impl Registers {
     pub fn set_af(&mut self, value: u16) {
         let [a, f] = value.to_be_bytes();
         self.a = a;
-        self.f = f & FLAGS_MASK;
+        self.f.write_bits(f);
     }
 
     pub fn set_bc(&mut self, value: u16) {
@@ -85,11 +101,10 @@ impl Registers {
 
     fn set_flag(&mut self, flag: Flag, enabled: bool) {
         if enabled {
-            self.f |= flag.bit();
+            self.f.insert(flag.bit());
         } else {
-            self.f &= !flag.bit();
+            self.f.remove(flag.bit());
         }
-        self.f &= FLAGS_MASK;
     }
 }
 
@@ -119,7 +134,7 @@ impl Cpu {
         Self {
             registers: Registers {
                 a: 0,
-                f: 0,
+                f: CpuFlags::empty(),
                 b: 0,
                 c: 0,
                 d: 0,
@@ -144,7 +159,7 @@ impl Cpu {
         Self {
             registers: Registers {
                 a: 0x01,
-                f: 0xB0,
+                f: CpuFlags::from_bits_retain(0xB0),
                 b: 0x00,
                 c: 0x13,
                 d: 0x00,
@@ -294,7 +309,7 @@ impl Cpu {
                 metadata.cycles.for_branch(false)
             }
             Instruction::Ccf => {
-                let carry = (self.registers.f & FLAG_C) == 0;
+                let carry = !self.registers.f.contains(CpuFlags::CARRY);
                 self.registers.set_flag(Flag::Subtract, false);
                 self.registers.set_flag(Flag::HalfCarry, false);
                 self.registers.set_flag(Flag::Carry, carry);
@@ -749,11 +764,11 @@ impl Cpu {
             0x00 => (value.rotate_left(1), (value & 0x80) != 0),
             0x01 => (value.rotate_right(1), (value & 0x01) != 0),
             0x02 => {
-                let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+                let carry_in = u8::from(self.registers.f.contains(CpuFlags::CARRY));
                 ((value << 1) | carry_in, (value & 0x80) != 0)
             }
             0x03 => {
-                let carry_in = if (self.registers.f & FLAG_C) != 0 {
+                let carry_in = if self.registers.f.contains(CpuFlags::CARRY) {
                     0x80
                 } else {
                     0x00
@@ -858,10 +873,10 @@ impl Cpu {
 
     fn condition_met(&self, condition_index: u8) -> bool {
         match condition_index & 0x03 {
-            0x00 => (self.registers.f & FLAG_Z) == 0,
-            0x01 => (self.registers.f & FLAG_Z) != 0,
-            0x02 => (self.registers.f & FLAG_C) == 0,
-            0x03 => (self.registers.f & FLAG_C) != 0,
+            0x00 => !self.registers.f.contains(CpuFlags::ZERO),
+            0x01 => self.registers.f.contains(CpuFlags::ZERO),
+            0x02 => !self.registers.f.contains(CpuFlags::CARRY),
+            0x03 => self.registers.f.contains(CpuFlags::CARRY),
             _ => unreachable!("condition index is masked to 2 bits"),
         }
     }
@@ -936,7 +951,7 @@ impl Cpu {
     }
 
     fn adc_to_a(&mut self, value: u8) {
-        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+        let carry_in = u8::from(self.registers.f.contains(CpuFlags::CARRY));
         let previous = self.registers.a;
         let result = previous.wrapping_add(value).wrapping_add(carry_in);
         self.registers.a = result;
@@ -954,7 +969,7 @@ impl Cpu {
     }
 
     fn sbc_from_a(&mut self, value: u8) {
-        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+        let carry_in = u8::from(self.registers.f.contains(CpuFlags::CARRY));
         let previous = self.registers.a;
         let result = previous.wrapping_sub(value).wrapping_sub(carry_in);
         self.registers.a = result;
@@ -1037,7 +1052,7 @@ impl Cpu {
     }
 
     fn rla(&mut self) {
-        let carry_in = u8::from((self.registers.f & FLAG_C) != 0);
+        let carry_in = u8::from(self.registers.f.contains(CpuFlags::CARRY));
         let carry_out = (self.registers.a & 0x80) != 0;
         self.registers.a = (self.registers.a << 1) | carry_in;
         self.registers.set_flag(Flag::Zero, false);
@@ -1047,7 +1062,7 @@ impl Cpu {
     }
 
     fn rra(&mut self) {
-        let carry_in = if (self.registers.f & FLAG_C) != 0 {
+        let carry_in = if self.registers.f.contains(CpuFlags::CARRY) {
             0x80
         } else {
             0x00
@@ -1064,24 +1079,24 @@ impl Cpu {
         let mut adjust = 0u8;
         let mut set_carry = false;
 
-        if (self.registers.f & FLAG_N) == 0 {
-            if (self.registers.f & FLAG_H) != 0 || (self.registers.a & 0x0F) > 0x09 {
+        if !self.registers.f.contains(CpuFlags::SUBTRACT) {
+            if self.registers.f.contains(CpuFlags::HALF_CARRY) || (self.registers.a & 0x0F) > 0x09 {
                 adjust |= 0x06;
             }
-            if (self.registers.f & FLAG_C) != 0 || self.registers.a > 0x99 {
+            if self.registers.f.contains(CpuFlags::CARRY) || self.registers.a > 0x99 {
                 adjust |= 0x60;
                 set_carry = true;
             }
             self.registers.a = self.registers.a.wrapping_add(adjust);
         } else {
-            if (self.registers.f & FLAG_H) != 0 {
+            if self.registers.f.contains(CpuFlags::HALF_CARRY) {
                 adjust |= 0x06;
             }
-            if (self.registers.f & FLAG_C) != 0 {
+            if self.registers.f.contains(CpuFlags::CARRY) {
                 adjust |= 0x60;
             }
             self.registers.a = self.registers.a.wrapping_sub(adjust);
-            set_carry = (self.registers.f & FLAG_C) != 0;
+            set_carry = self.registers.f.contains(CpuFlags::CARRY);
         }
 
         self.registers.set_flag(Flag::Zero, self.registers.a == 0);
@@ -1147,31 +1162,31 @@ mod tests {
     fn inc_a_sets_z_and_h_and_clears_n() {
         let mut cpu = Cpu::new();
         cpu.registers.a = 0xFF;
-        cpu.registers.f = FLAG_C | FLAG_N;
+        cpu.registers.f = CpuFlags::CARRY | CpuFlags::SUBTRACT;
         let mut bus = make_bus_with_program(&[0x3C]); // INC A
 
         cpu.step(&mut bus);
 
         assert_eq!(cpu.registers.a, 0x00);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
     }
 
     #[test]
     fn inc_a_clears_z_when_result_non_zero() {
         let mut cpu = Cpu::new();
         cpu.registers.a = 0x0E;
-        cpu.registers.f = FLAG_Z | FLAG_C;
+        cpu.registers.f = CpuFlags::ZERO | CpuFlags::CARRY;
         let mut bus = make_bus_with_program(&[0x3C]); // INC A
 
         cpu.step(&mut bus);
 
         assert_eq!(cpu.registers.a, 0x0F);
-        assert_eq!(cpu.registers.f & FLAG_Z, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, 0);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
     }
 
     #[test]
@@ -1193,15 +1208,15 @@ mod tests {
     fn inc_a_flag_behavior_matches_lr35902_rules() {
         let mut cpu = Cpu::new();
         cpu.registers.a = 0xFF;
-        cpu.registers.f = FLAG_C;
+        cpu.registers.f = CpuFlags::CARRY;
         let mut bus = make_bus_with_program(&[0x3C]); // INC A
 
         cpu.step(&mut bus);
 
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
     }
 
     #[test]
@@ -1241,17 +1256,17 @@ mod tests {
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x10);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x00);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
-        assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::SUBTRACT);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x00);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x10);
@@ -1261,8 +1276,8 @@ mod tests {
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x11);
-        assert_eq!(cpu.registers.f & FLAG_C, 0);
-        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
     }
 
     #[test]
@@ -1291,7 +1306,7 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.registers.a = 0x0F;
         cpu.registers.b = 0x00;
-        cpu.registers.f = FLAG_C;
+        cpu.registers.f = CpuFlags::CARRY;
         let mut bus = make_bus_with_program(&[
             0x88, // ADC A, B => 10 (carry-in consumed), H set
             0xCE, 0xEF, // ADC A, EF => FF
@@ -1305,33 +1320,33 @@ mod tests {
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x10);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_C, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::empty());
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0xFF);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x0F);
-        assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::SUBTRACT);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x01);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x01);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x00);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x80);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x80);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
     }
 
     #[test]
@@ -1339,7 +1354,7 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.registers.b = 0x0F;
         cpu.registers.c = 0x00;
-        cpu.registers.f = FLAG_C;
+        cpu.registers.f = CpuFlags::CARRY;
         let mut bus = make_bus_with_program(&[
             0x04, // INC B -> 10, H set, C preserved
             0x0D, // DEC C -> FF, H set, N set
@@ -1347,15 +1362,15 @@ mod tests {
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.b, 0x10);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.c, 0xFF);
-        assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::SUBTRACT);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
     }
 
     #[test]
@@ -1418,7 +1433,7 @@ mod tests {
         cpu.registers.set_de(0x0001);
         cpu.registers.set_hl(0x8FFF);
         cpu.sp = 0xFFFF;
-        cpu.registers.f = FLAG_Z;
+        cpu.registers.f = CpuFlags::ZERO;
         let mut bus = make_bus_with_program(&[
             0x03, // INC BC
             0x13, // INC DE
@@ -1439,17 +1454,17 @@ mod tests {
         assert_eq!(cpu.registers.de(), 0x0001);
         assert_eq!(cpu.sp, 0xFFFF);
         assert_eq!(cpu.registers.hl(), 0x9FFE);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
     }
 
     #[test]
     fn accumulator_rotate_opcodes_use_expected_carry_paths() {
         let mut cpu = Cpu::new();
         cpu.registers.a = 0x85;
-        cpu.registers.f = FLAG_Z;
+        cpu.registers.f = CpuFlags::ZERO;
         let mut bus = make_bus_with_program(&[
             0x07, // RLCA: 85 -> 0B, C=1
             0x0F, // RRCA: 0B -> 85, C=1
@@ -1459,20 +1474,20 @@ mod tests {
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x0B);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
-        assert_eq!(cpu.registers.f & FLAG_Z, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x85);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x0B);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x85);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
     }
 
     #[test]
@@ -1489,31 +1504,31 @@ mod tests {
         cpu.step(&mut bus);
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0x00);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
-        assert_eq!(cpu.registers.f & FLAG_H, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::empty());
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.a, 0xFF);
-        assert_eq!(cpu.registers.f & FLAG_N, FLAG_N);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::SUBTRACT);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
 
         cpu.step(&mut bus);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::empty());
 
         cpu.step(&mut bus);
-        assert_eq!(cpu.registers.f & FLAG_C, 0);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::empty());
     }
 
     #[test]
     fn jump_call_ret_and_stack_opcodes_follow_control_flow() {
         let mut cpu = Cpu::new();
         cpu.registers.set_bc(0xBEEF);
-        cpu.registers.f = FLAG_Z;
+        cpu.registers.f = CpuFlags::ZERO;
         let mut bus = make_bus_with_program(&[
             0x20, 0x02, // JR NZ,+2 (not taken because Z set)
             0x00, // NOP
@@ -1552,7 +1567,7 @@ mod tests {
     fn sp_offset_loads_set_flags_and_destinations() {
         let mut cpu = Cpu::new();
         cpu.sp = 0xFFF8;
-        cpu.registers.f = FLAG_Z | FLAG_N;
+        cpu.registers.f = CpuFlags::ZERO | CpuFlags::SUBTRACT;
         let mut bus = make_bus_with_program(&[
             0xE8, 0x08, // ADD SP,+8 => 0000, H and C set
             0xF8, 0xF8, // LD HL,SP-8 => FFF8
@@ -1562,15 +1577,15 @@ mod tests {
 
         cpu.step(&mut bus);
         assert_eq!(cpu.sp, 0x0000);
-        assert_eq!(cpu.registers.f & FLAG_Z, 0);
-        assert_eq!(cpu.registers.f & FLAG_N, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::SUBTRACT, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
 
         cpu.step(&mut bus);
         assert_eq!(cpu.registers.hl(), 0xFFF8);
-        assert_eq!(cpu.registers.f & FLAG_H, 0);
-        assert_eq!(cpu.registers.f & FLAG_C, 0);
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::empty());
 
         cpu.step(&mut bus);
         assert_eq!(cpu.sp, 0xFFF8);
@@ -1588,7 +1603,7 @@ mod tests {
         cpu.registers.c = 0b0000_0001;
         cpu.registers.d = 0b1111_0000;
         cpu.registers.set_hl(0xC200);
-        cpu.registers.f = FLAG_C;
+        cpu.registers.f = CpuFlags::CARRY;
         let mut bus = make_bus_with_program(&[
             0xCB, 0x07, // RLC A  => 0000_0011, C=1
             0xCB, 0x10, // RL B   => uses carry-in, becomes 0000_0001
@@ -1602,20 +1617,20 @@ mod tests {
 
         assert_eq!(cpu.step(&mut bus), 8);
         assert_eq!(cpu.registers.a, 0b0000_0011);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
 
         assert_eq!(cpu.step(&mut bus), 8);
         assert_eq!(cpu.registers.b, 0b0000_0001);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
 
         assert_eq!(cpu.step(&mut bus), 8);
         assert_eq!(cpu.registers.c, 0);
-        assert_eq!(cpu.registers.f & FLAG_Z, FLAG_Z);
-        assert_eq!(cpu.registers.f & FLAG_C, FLAG_C);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::ZERO);
+        assert_eq!(cpu.registers.f & CpuFlags::CARRY, CpuFlags::CARRY);
 
         assert_eq!(cpu.step(&mut bus), 8);
-        assert_eq!(cpu.registers.f & FLAG_Z, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
 
         assert_eq!(cpu.step(&mut bus), 8);
         assert_eq!(cpu.registers.d, 0b1110_0000);
@@ -1624,8 +1639,8 @@ mod tests {
         assert_eq!(bus.read8(0xC200), 0b0010_0001);
 
         assert_eq!(cpu.step(&mut bus), 12);
-        assert_eq!(cpu.registers.f & FLAG_Z, 0);
-        assert_eq!(cpu.registers.f & FLAG_H, FLAG_H);
+        assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
+        assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
     }
 
     #[test]
@@ -1853,9 +1868,9 @@ mod tests {
             program: &'static [u8],
             initial_a: u8,
             initial_b: u8,
-            initial_flags: u8,
+            initial_flags: CpuFlags,
             expected_a: u8,
-            expected_flags: u8,
+            expected_flags: CpuFlags,
         }
 
         let cases = [
@@ -1864,36 +1879,36 @@ mod tests {
                 program: &[0x80], // ADD A,B
                 initial_a: 0x0F,
                 initial_b: 0x01,
-                initial_flags: 0,
+                initial_flags: CpuFlags::empty(),
                 expected_a: 0x10,
-                expected_flags: FLAG_H,
+                expected_flags: CpuFlags::HALF_CARRY,
             },
             Case {
                 name: "adc_uses_carry_in",
                 program: &[0x88], // ADC A,B
                 initial_a: 0x7F,
                 initial_b: 0x00,
-                initial_flags: FLAG_C,
+                initial_flags: CpuFlags::CARRY,
                 expected_a: 0x80,
-                expected_flags: FLAG_H,
+                expected_flags: CpuFlags::HALF_CARRY,
             },
             Case {
                 name: "sub_sets_subtract_and_zero",
                 program: &[0x90], // SUB B
                 initial_a: 0x22,
                 initial_b: 0x22,
-                initial_flags: 0,
+                initial_flags: CpuFlags::empty(),
                 expected_a: 0x00,
-                expected_flags: FLAG_Z | FLAG_N,
+                expected_flags: CpuFlags::ZERO | CpuFlags::SUBTRACT,
             },
             Case {
                 name: "cp_updates_flags_but_not_accumulator",
                 program: &[0xB8], // CP B
                 initial_a: 0x20,
                 initial_b: 0x30,
-                initial_flags: 0,
+                initial_flags: CpuFlags::empty(),
                 expected_a: 0x20,
-                expected_flags: FLAG_N | FLAG_C,
+                expected_flags: CpuFlags::SUBTRACT | CpuFlags::CARRY,
             },
         ];
 
@@ -1907,12 +1922,7 @@ mod tests {
             run_program(&mut cpu, &mut bus, 1);
 
             assert_eq!(cpu.registers.a, case.expected_a, "case: {}", case.name);
-            assert_eq!(
-                cpu.registers.f & FLAGS_MASK,
-                case.expected_flags,
-                "case: {}",
-                case.name
-            );
+            assert_eq!(cpu.registers.f, case.expected_flags, "case: {}", case.name);
         }
     }
 
@@ -1976,7 +1986,7 @@ mod tests {
             cb_opcode: u8,
             setup: fn(&mut Cpu, &mut Bus),
             assert_after: fn(&Cpu, &Bus),
-            expected_flags: u8,
+            expected_flags: CpuFlags,
         }
 
         let cases = [
@@ -1985,21 +1995,21 @@ mod tests {
                 cb_opcode: 0x00, // RLC B
                 setup: |cpu, _| cpu.registers.b = 0x81,
                 assert_after: |cpu, _| assert_eq!(cpu.registers.b, 0x03),
-                expected_flags: FLAG_C,
+                expected_flags: CpuFlags::CARRY,
             },
             Case {
                 name: "bit_7_h_sets_zero_when_bit_clear",
                 cb_opcode: 0x7C, // BIT 7,H
                 setup: |cpu, _| cpu.registers.h = 0x7F,
                 assert_after: |_, _| {},
-                expected_flags: FLAG_Z | FLAG_H,
+                expected_flags: CpuFlags::ZERO | CpuFlags::HALF_CARRY,
             },
             Case {
                 name: "res_4_d_clears_target_bit",
                 cb_opcode: 0xA2, // RES 4,D
                 setup: |cpu, _| cpu.registers.d = 0xFF,
                 assert_after: |cpu, _| assert_eq!(cpu.registers.d, 0xEF),
-                expected_flags: 0,
+                expected_flags: CpuFlags::empty(),
             },
             Case {
                 name: "set_5_hl_writes_memory_path",
@@ -2007,10 +2017,10 @@ mod tests {
                 setup: |cpu, bus| {
                     cpu.registers.set_hl(0xC300);
                     bus.write8(0xC300, 0x01);
-                    cpu.registers.f = FLAG_C;
+                    cpu.registers.f = CpuFlags::CARRY;
                 },
                 assert_after: |_, bus| assert_eq!(bus.read8(0xC300), 0x21),
-                expected_flags: FLAG_C,
+                expected_flags: CpuFlags::CARRY,
             },
         ];
 
@@ -2024,12 +2034,7 @@ mod tests {
 
             assert_eq!(cycles, expected_cycles, "case: {}", case.name);
             (case.assert_after)(&cpu, &bus);
-            assert_eq!(
-                cpu.registers.f & FLAGS_MASK,
-                case.expected_flags,
-                "case: {}",
-                case.name
-            );
+            assert_eq!(cpu.registers.f, case.expected_flags, "case: {}", case.name);
         }
     }
 
@@ -2058,13 +2063,13 @@ mod tests {
             Case {
                 name: "jr_nz_not_taken",
                 program: &[0x20, 0x02],
-                setup: |cpu, _| cpu.registers.f = FLAG_Z,
+                setup: |cpu, _| cpu.registers.f = CpuFlags::ZERO,
                 expected_pc: 0x0002,
             },
             Case {
                 name: "jr_nz_taken",
                 program: &[0x20, 0x02],
-                setup: |cpu, _| cpu.registers.f = 0,
+                setup: |cpu, _| cpu.registers.f = CpuFlags::empty(),
                 expected_pc: 0x0004,
             },
             Case {
@@ -2091,7 +2096,7 @@ mod tests {
             Case {
                 name: "ret_nz_not_taken",
                 program: &[0xC0],
-                setup: |cpu, _| cpu.registers.f = FLAG_Z,
+                setup: |cpu, _| cpu.registers.f = CpuFlags::ZERO,
                 expected_pc: 0x0001,
             },
             Case {
@@ -2099,7 +2104,7 @@ mod tests {
                 program: &[0xC0],
                 setup: |cpu, bus| {
                     cpu.sp = 0xFFFC;
-                    cpu.registers.f = 0;
+                    cpu.registers.f = CpuFlags::empty();
                     bus.write8(0xFFFC, 0x34);
                     bus.write8(0xFFFD, 0x12);
                 },

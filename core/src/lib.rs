@@ -438,7 +438,7 @@ mod tests {
 
         let registers = emulator.cpu().registers();
         assert_eq!(registers.a, 0x01);
-        assert_eq!(registers.f, 0xB0);
+        assert_eq!(registers.f.read_bits(), 0xB0);
         assert_eq!(registers.b, 0x00);
         assert_eq!(registers.c, 0x13);
         assert_eq!(registers.d, 0x00);

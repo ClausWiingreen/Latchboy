@@ -1,7 +1,155 @@
+use bitflags::bitflags;
+
 /// Approximate DMG APU frame sequencer plus initial audio sample buffering.
 ///
 /// This milestone provides deterministic timing plus a configurable Channel 1 square
 /// wave path with basic sweep handling (`NR10` + `NR13/NR14`-style frequency updates).
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Nr10(u8);
+
+impl From<u8> for Nr10 {
+    fn from(value: u8) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Nr10> for u8 {
+    fn from(value: Nr10) -> Self {
+        value.read_bits()
+    }
+}
+
+impl Nr10 {
+    pub const fn read_bits(self) -> u8 {
+        self.0
+    }
+
+    pub const fn sweep_period_steps(self) -> u8 {
+        (self.0 >> 4) & 0x07
+    }
+
+    pub const fn sweep_negate(self) -> bool {
+        (self.0 & 0x08) != 0
+    }
+
+    pub const fn sweep_shift(self) -> u8 {
+        self.0 & 0x07
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Nr50(u8);
+
+impl From<u8> for Nr50 {
+    fn from(value: u8) -> Self {
+        Self(value)
+    }
+}
+
+impl From<Nr50> for u8 {
+    fn from(value: Nr50) -> Self {
+        value.read_bits()
+    }
+}
+
+impl Nr50 {
+    pub const fn read_bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn write_bits(&mut self, value: u8) {
+        self.0 = value;
+    }
+
+    pub const fn left_volume(self) -> u8 {
+        (self.0 >> 4) & 0x07
+    }
+
+    pub const fn right_volume(self) -> u8 {
+        self.0 & 0x07
+    }
+
+    pub const fn output_volume(self, is_left: bool) -> u8 {
+        if is_left {
+            self.left_volume()
+        } else {
+            self.right_volume()
+        }
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct Nr51: u8 {
+        const CH1_RIGHT = 0x01;
+        const CH2_RIGHT = 0x02;
+        const CH3_RIGHT = 0x04;
+        const CH4_RIGHT = 0x08;
+        const CH1_LEFT = 0x10;
+        const CH2_LEFT = 0x20;
+        const CH3_LEFT = 0x40;
+        const CH4_LEFT = 0x80;
+    }
+}
+
+impl Nr51 {
+    pub const fn read_bits(self) -> u8 {
+        self.bits()
+    }
+
+    pub fn write_bits(&mut self, value: u8) {
+        *self = Self::from_bits_retain(value);
+    }
+
+    pub const fn routes_channel_to_left(self, channel_index: u8) -> bool {
+        (self.bits() & (0x10 << (channel_index & 0x03))) != 0
+    }
+
+    pub const fn routes_channel_to_right(self, channel_index: u8) -> bool {
+        (self.bits() & (0x01 << (channel_index & 0x03))) != 0
+    }
+
+    pub const fn routes_channel(self, is_left: bool, channel_index: u8) -> bool {
+        if is_left {
+            self.routes_channel_to_left(channel_index)
+        } else {
+            self.routes_channel_to_right(channel_index)
+        }
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct Nr52: u8 {
+        const CH1_ON = 0x01;
+        const CH2_ON = 0x02;
+        const CH3_ON = 0x04;
+        const CH4_ON = 0x08;
+        const POWER = 0x80;
+    }
+}
+
+impl Nr52 {
+    const READ_RESERVED: u8 = 0x70;
+
+    pub const fn read_bits(self) -> u8 {
+        self.bits()
+    }
+
+    pub fn write_power_bits(&mut self, value: u8) {
+        *self = Self::from_bits_retain(value & Self::POWER.bits());
+    }
+
+    pub const fn power_enabled(self) -> bool {
+        self.contains(Self::POWER)
+    }
+
+    pub const fn read_with_channel_status(self, status: Self) -> u8 {
+        (self.bits() & Self::POWER.bits()) | status.bits() | Self::READ_RESERVED
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Apu {
     frame_step: u8,
@@ -18,9 +166,9 @@ pub struct Apu {
     ch2: Ch2,
     ch3: Ch3,
     ch4: Ch4,
-    nr50: u8,
-    nr51: u8,
-    nr52: u8,
+    nr50: Nr50,
+    nr51: Nr51,
+    nr52: Nr52,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -167,9 +315,9 @@ impl Apu {
                 amplitude: 0,
                 enabled: false,
             },
-            nr50: 0x77,
-            nr51: 0xF3,
-            nr52: 0xF1,
+            nr50: Nr50(0x77),
+            nr51: Nr51::from_bits_retain(0xF3),
+            nr52: Nr52::from_bits_retain(0xF1),
         }
     }
 
@@ -238,7 +386,7 @@ impl Apu {
     }
 
     fn next_mixed_sample(&mut self) -> i16 {
-        if self.nr52 & 0x80 == 0 {
+        if !self.apu_power_enabled() {
             return 0;
         }
 
@@ -258,27 +406,21 @@ impl Apu {
     }
 
     fn mix_stereo_side(&self, is_left: bool, ch1: i16, ch2: i16, ch3: i16, ch4: i16) -> i16 {
-        let routing_shift = if is_left { 4 } else { 0 };
-        let channel_mask = (self.nr51 >> routing_shift) & 0x0F;
         let mut mixed = 0_i16;
-        if channel_mask & 0x01 != 0 {
+        if self.nr51.routes_channel(is_left, 0) {
             mixed = mixed.saturating_add(ch1);
         }
-        if channel_mask & 0x02 != 0 {
+        if self.nr51.routes_channel(is_left, 1) {
             mixed = mixed.saturating_add(ch2);
         }
-        if channel_mask & 0x04 != 0 {
+        if self.nr51.routes_channel(is_left, 2) {
             mixed = mixed.saturating_add(ch3);
         }
-        if channel_mask & 0x08 != 0 {
+        if self.nr51.routes_channel(is_left, 3) {
             mixed = mixed.saturating_add(ch4);
         }
 
-        let volume = if is_left {
-            (self.nr50 >> 4) & 0x07
-        } else {
-            self.nr50 & 0x07
-        };
+        let volume = self.nr50.output_volume(is_left);
 
         let scaled = (i32::from(mixed) * i32::from(volume + 1)) / 8;
         scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
@@ -286,12 +428,13 @@ impl Apu {
 
     pub fn read_register(&self, address: u16) -> Option<u8> {
         match address {
-            0xFF24 => Some(self.nr50),
-            0xFF25 => Some(self.nr51),
+            0xFF24 => Some(self.nr50.read_bits()),
+            0xFF25 => Some(self.nr51.read_bits()),
             0xFF26 => Some(if self.apu_power_enabled() {
-                (self.nr52 & 0x80) | self.channel_status_flags() | 0x70
+                self.nr52
+                    .read_with_channel_status(self.channel_status_flags())
             } else {
-                (self.nr52 & 0x80) | 0x70
+                self.nr52.read_with_channel_status(Nr52::empty())
             }),
             _ => None,
         }
@@ -301,19 +444,19 @@ impl Apu {
         match address {
             0xFF24 => {
                 if self.apu_power_enabled() {
-                    self.nr50 = value;
+                    self.nr50.write_bits(value);
                 }
                 true
             }
             0xFF25 => {
                 if self.apu_power_enabled() {
-                    self.nr51 = value;
+                    self.nr51.write_bits(value);
                 }
                 true
             }
             0xFF26 => {
                 let was_powered = self.apu_power_enabled();
-                self.nr52 = value & 0x80;
+                self.nr52.write_power_bits(value);
                 if !was_powered && self.apu_power_enabled() {
                     self.frame_step = 0;
                     self.t_cycle_counter = 0;
@@ -328,20 +471,21 @@ impl Apu {
     }
 
     const fn apu_power_enabled(&self) -> bool {
-        self.nr52 & 0x80 != 0
+        self.nr52.power_enabled()
     }
 
-    fn channel_status_flags(&self) -> u8 {
-        let ch1 = u8::from(self.ch1.enabled);
-        let ch2 = u8::from(self.ch2.enabled) << 1;
-        let ch3 = u8::from(self.ch3.enabled) << 2;
-        let ch4 = u8::from(self.ch4.enabled) << 3;
-        ch1 | ch2 | ch3 | ch4
+    fn channel_status_flags(&self) -> Nr52 {
+        let mut status = Nr52::empty();
+        status.set(Nr52::CH1_ON, self.ch1.enabled);
+        status.set(Nr52::CH2_ON, self.ch2.enabled);
+        status.set(Nr52::CH3_ON, self.ch3.enabled);
+        status.set(Nr52::CH4_ON, self.ch4.enabled);
+        status
     }
 
     fn power_off_reset(&mut self) {
-        self.nr50 = 0;
-        self.nr51 = 0;
+        self.nr50.write_bits(0);
+        self.nr51.write_bits(0);
         self.ch1.frequency_hz = Self::CH1_DEFAULT_FREQUENCY_HZ;
         self.ch1.duty = DutyCycle::from_duty_bits(0b10);
         self.ch1.amplitude = Self::CH1_DEFAULT_AMPLITUDE;
@@ -446,11 +590,17 @@ impl Apu {
         }
     }
 
+    pub fn write_ch1_sweep_register(&mut self, nr10: Nr10) {
+        self.ch1.sweep_period_steps = nr10.sweep_period_steps();
+        self.ch1.sweep_shift = nr10.sweep_shift();
+        self.ch1.sweep_negate = nr10.sweep_negate();
+    }
+
     #[cfg(test)]
     fn set_ch1_sweep(&mut self, period_steps: u8, shift: u8, negate: bool) {
-        self.ch1.sweep_period_steps = period_steps;
-        self.ch1.sweep_shift = shift;
-        self.ch1.sweep_negate = negate;
+        self.write_ch1_sweep_register(Nr10::from(
+            (period_steps << 4) | (u8::from(negate) << 3) | shift,
+        ));
         self.ch1.sweep_tick_counter = 0;
     }
 

@@ -1,3 +1,5 @@
+use bitflags::bitflags;
+
 pub const LCDC_REGISTER: u16 = 0xFF40;
 pub const STAT_REGISTER: u16 = 0xFF41;
 pub const SCY_REGISTER: u16 = 0xFF42;
@@ -30,21 +32,6 @@ pub const FRAMEBUFFER_WIDTH: usize = 160;
 pub const FRAMEBUFFER_HEIGHT: usize = 144;
 pub const FRAMEBUFFER_LEN: usize = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT;
 
-const STAT_COINCIDENCE_INTERRUPT_BIT: u8 = 0x40;
-const STAT_MODE_2_INTERRUPT_BIT: u8 = 0x20;
-const STAT_MODE_1_INTERRUPT_BIT: u8 = 0x10;
-const STAT_MODE_0_INTERRUPT_BIT: u8 = 0x08;
-const STAT_LYC_EQUAL_BIT: u8 = 0x04;
-
-const STAT_MODE_MASK: u8 = 0x03;
-const LCDC_ENABLED_BIT: u8 = 0x80;
-const LCDC_BG_ENABLE_BIT: u8 = 0x01;
-const LCDC_SPRITE_ENABLE_BIT: u8 = 0x02;
-const LCDC_SPRITE_SIZE_BIT: u8 = 0x04;
-const LCDC_WINDOW_ENABLE_BIT: u8 = 0x20;
-const LCDC_WINDOW_TILE_MAP_SELECT_BIT: u8 = 0x40;
-const LCDC_BG_TILE_MAP_SELECT_BIT: u8 = 0x08;
-const LCDC_BG_TILE_DATA_SELECT_BIT: u8 = 0x10;
 const INTERRUPT_VBLANK_BIT: u8 = 0x01;
 const INTERRUPT_STAT_BIT: u8 = 0x02;
 const INTERRUPT_ENABLE_VBLANK_BIT: u8 = 0x01;
@@ -54,10 +41,219 @@ const BG_MAP_0_OFFSET: usize = 0x1800; // 0x9800-0x9BFF
 const BG_MAP_1_OFFSET: usize = 0x1C00; // 0x9C00-0x9FFF
 const TILE_BLOCK_0_OFFSET: usize = 0x0000; // 0x8000-0x87FF
 const TILE_BLOCK_2_OFFSET: usize = 0x1000; // 0x9000-0x97FF
-const SPRITE_ATTRIBUTE_PRIORITY_BIT: u8 = 0x80;
-const SPRITE_ATTRIBUTE_Y_FLIP_BIT: u8 = 0x40;
-const SPRITE_ATTRIBUTE_X_FLIP_BIT: u8 = 0x20;
-const SPRITE_ATTRIBUTE_PALETTE_BIT: u8 = 0x10;
+
+bitflags! {
+    /// Typed view of LCDC (`FF40`) control bits.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct Lcdc: u8 {
+        const BG_WINDOW_ENABLE = 0x01;
+        const OBJ_ENABLE = 0x02;
+        const OBJ_SIZE = 0x04;
+        const BG_TILE_MAP_AREA = 0x08;
+        const BG_WINDOW_TILE_DATA_AREA = 0x10;
+        const WINDOW_ENABLE = 0x20;
+        const WINDOW_TILE_MAP_AREA = 0x40;
+        const LCD_ENABLE = 0x80;
+    }
+}
+
+impl Lcdc {
+    pub const fn read_bits(self) -> u8 {
+        self.bits()
+    }
+
+    pub fn write_bits(&mut self, value: u8) {
+        *self = Self::from_bits_retain(value);
+    }
+
+    const fn enabled(self) -> bool {
+        self.contains(Self::LCD_ENABLE)
+    }
+
+    const fn bg_window_enabled(self) -> bool {
+        self.contains(Self::BG_WINDOW_ENABLE)
+    }
+
+    const fn obj_enabled(self) -> bool {
+        self.contains(Self::OBJ_ENABLE)
+    }
+
+    const fn tall_objs(self) -> bool {
+        self.contains(Self::OBJ_SIZE)
+    }
+
+    const fn window_enabled(self) -> bool {
+        self.contains(Self::WINDOW_ENABLE)
+    }
+
+    const fn window_map_base_offset(self) -> usize {
+        if self.contains(Self::WINDOW_TILE_MAP_AREA) {
+            BG_MAP_1_OFFSET
+        } else {
+            BG_MAP_0_OFFSET
+        }
+    }
+
+    const fn bg_map_base_offset(self) -> usize {
+        if self.contains(Self::BG_TILE_MAP_AREA) {
+            BG_MAP_1_OFFSET
+        } else {
+            BG_MAP_0_OFFSET
+        }
+    }
+
+    const fn unsigned_tile_data(self) -> bool {
+        self.contains(Self::BG_WINDOW_TILE_DATA_AREA)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PpuMode {
+    HBlank = 0,
+    VBlank = 1,
+    OamScan = 2,
+    Drawing = 3,
+}
+
+impl PpuMode {
+    const fn from_bits(bits: u8) -> Self {
+        match bits & 0x03 {
+            0 => Self::HBlank,
+            1 => Self::VBlank,
+            2 => Self::OamScan,
+            _ => Self::Drawing,
+        }
+    }
+
+    const fn bits(self) -> u8 {
+        self as u8
+    }
+}
+
+bitflags! {
+    /// Writable STAT (`FF41`) interrupt-source enable bits.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct StatInterruptSources: u8 {
+        const HBLANK = 0x08;
+        const VBLANK = 0x10;
+        const OAM = 0x20;
+        const LYC_EQUAL = 0x40;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Stat {
+    bits: u8,
+}
+
+impl Default for Stat {
+    fn default() -> Self {
+        Self { bits: 0x80 }
+    }
+}
+
+impl From<u8> for Stat {
+    fn from(value: u8) -> Self {
+        Self { bits: value }
+    }
+}
+
+impl From<Stat> for u8 {
+    fn from(value: Stat) -> Self {
+        value.read_bits()
+    }
+}
+
+impl Stat {
+    const LYC_EQUAL_BIT: u8 = 0x04;
+    const READ_ONLY_MASK: u8 = 0x07;
+    const WRITABLE_MASK: u8 = 0x78;
+    const READ_RESERVED: u8 = 0x80;
+
+    pub const fn read_bits(self) -> u8 {
+        self.bits | Self::READ_RESERVED
+    }
+
+    pub fn write_bits_preserving_status(&mut self, value: u8) {
+        let readonly_bits = self.bits & Self::READ_ONLY_MASK;
+        self.bits = Self::READ_RESERVED | readonly_bits | (value & Self::WRITABLE_MASK);
+    }
+
+    const fn mode(self) -> PpuMode {
+        PpuMode::from_bits(self.bits)
+    }
+
+    fn set_mode(&mut self, mode: PpuMode) {
+        self.bits = (self.bits & !0x03) | mode.bits();
+    }
+
+    const fn lyc_equal(self) -> bool {
+        (self.bits & Self::LYC_EQUAL_BIT) != 0
+    }
+
+    fn set_lyc_equal(&mut self, enabled: bool) {
+        if enabled {
+            self.bits |= Self::LYC_EQUAL_BIT;
+        } else {
+            self.bits &= !Self::LYC_EQUAL_BIT;
+        }
+    }
+
+    const fn interrupt_sources(self) -> StatInterruptSources {
+        StatInterruptSources::from_bits_truncate(self.bits)
+    }
+
+    const fn has_interrupt_source(self, source: StatInterruptSources) -> bool {
+        self.interrupt_sources().contains(source)
+    }
+}
+
+bitflags! {
+    /// Typed view of one OAM sprite's attribute byte.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+    pub struct SpriteAttributes: u8 {
+        const DMG_PALETTE_1 = 0x10;
+        const X_FLIP = 0x20;
+        const Y_FLIP = 0x40;
+        const PRIORITY = 0x80;
+    }
+}
+
+impl SpriteAttributes {
+    pub const fn read_bits(self) -> u8 {
+        self.bits()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct PaletteRegister(u8);
+
+impl From<u8> for PaletteRegister {
+    fn from(value: u8) -> Self {
+        Self(value)
+    }
+}
+
+impl From<PaletteRegister> for u8 {
+    fn from(value: PaletteRegister) -> Self {
+        value.read_bits()
+    }
+}
+
+impl PaletteRegister {
+    pub const fn read_bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn write_bits(&mut self, value: u8) {
+        self.0 = value;
+    }
+
+    pub const fn shade(self, color_id: u8) -> u8 {
+        let shift = (color_id & 0x03) * 2;
+        (self.0 >> shift) & 0x03
+    }
+}
 
 /// Resolves a 2-bit DMG palette shade (0-3) from a palette register and logical color id.
 ///
@@ -66,9 +262,46 @@ const SPRITE_ATTRIBUTE_PALETTE_BIT: u8 = 0x10;
 /// - bits 3:2 map color id 1
 /// - bits 5:4 map color id 2
 /// - bits 7:6 map color id 3
-pub fn dmg_palette_shade(palette: u8, color_id: u8) -> u8 {
-    let shift = (color_id & 0x03) * 2;
-    (palette >> shift) & 0x03
+
+#[cfg(test)]
+const LCDC_ENABLE: u8 = Lcdc::LCD_ENABLE.bits();
+#[cfg(test)]
+const LCDC_BG_ENABLE: u8 = Lcdc::BG_WINDOW_ENABLE.bits();
+#[cfg(test)]
+const LCDC_SPRITE_ENABLE: u8 = Lcdc::OBJ_ENABLE.bits();
+#[cfg(test)]
+const LCDC_SPRITE_SIZE: u8 = Lcdc::OBJ_SIZE.bits();
+#[cfg(test)]
+const LCDC_WINDOW_ENABLE: u8 = Lcdc::WINDOW_ENABLE.bits();
+#[cfg(test)]
+const LCDC_WINDOW_TILE_MAP_SELECT: u8 = Lcdc::WINDOW_TILE_MAP_AREA.bits();
+#[cfg(test)]
+const LCDC_BG_TILE_MAP_SELECT: u8 = Lcdc::BG_TILE_MAP_AREA.bits();
+#[cfg(test)]
+const LCDC_BG_TILE_DATA_SELECT: u8 = Lcdc::BG_WINDOW_TILE_DATA_AREA.bits();
+#[cfg(test)]
+const STAT_COINCIDENCE_INTERRUPT: u8 = StatInterruptSources::LYC_EQUAL.bits();
+#[cfg(test)]
+const STAT_MODE_2_INTERRUPT: u8 = StatInterruptSources::OAM.bits();
+#[cfg(test)]
+const STAT_MODE_1_INTERRUPT: u8 = StatInterruptSources::VBLANK.bits();
+#[cfg(test)]
+const STAT_MODE_0_INTERRUPT: u8 = StatInterruptSources::HBLANK.bits();
+#[cfg(test)]
+const STAT_LYC_EQUAL: u8 = Stat::LYC_EQUAL_BIT;
+#[cfg(test)]
+const STAT_MODE: u8 = 0x03;
+#[cfg(test)]
+const SPRITE_ATTRIBUTE_PRIORITY: u8 = SpriteAttributes::PRIORITY.bits();
+#[cfg(test)]
+const SPRITE_ATTRIBUTE_Y_FLIP: u8 = SpriteAttributes::Y_FLIP.bits();
+#[cfg(test)]
+const SPRITE_ATTRIBUTE_X_FLIP: u8 = SpriteAttributes::X_FLIP.bits();
+#[cfg(test)]
+const SPRITE_ATTRIBUTE_PALETTE: u8 = SpriteAttributes::DMG_PALETTE_1.bits();
+
+pub fn dmg_palette_shade(palette: impl Into<PaletteRegister>, color_id: u8) -> u8 {
+    palette.into().shade(color_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,16 +314,16 @@ pub struct SpritePixel {
 pub struct Ppu {
     vram: [u8; VRAM_SIZE],
     oam: [u8; OAM_SIZE],
-    lcdc: u8,
-    stat: u8,
+    lcdc: Lcdc,
+    stat: Stat,
     scy: u8,
     scx: u8,
     ly: u8,
     lyc: u8,
     dma: u8,
-    bgp: u8,
-    obp0: u8,
-    obp1: u8,
+    bgp: PaletteRegister,
+    obp0: PaletteRegister,
+    obp1: PaletteRegister,
     wy: u8,
     wx: u8,
     scanline_dot: u16,
@@ -117,16 +350,16 @@ impl Default for Ppu {
         Self {
             vram: [0; VRAM_SIZE],
             oam: [0; OAM_SIZE],
-            lcdc: 0,
-            stat: 0x80,
+            lcdc: Lcdc::empty(),
+            stat: Stat::default(),
             scy: 0,
             scx: 0,
             ly: 0,
             lyc: 0,
             dma: 0,
-            bgp: 0,
-            obp0: 0,
-            obp1: 0,
+            bgp: PaletteRegister::default(),
+            obp0: PaletteRegister::default(),
+            obp1: PaletteRegister::default(),
             wy: 0,
             wx: 0,
             scanline_dot: 0,
@@ -149,24 +382,16 @@ impl Ppu {
     }
 
     fn window_map_base_offset(&self) -> usize {
-        if (self.lcdc & LCDC_WINDOW_TILE_MAP_SELECT_BIT) != 0 {
-            BG_MAP_1_OFFSET
-        } else {
-            BG_MAP_0_OFFSET
-        }
+        self.lcdc.window_map_base_offset()
     }
 
     fn bg_map_base_offset(&self) -> usize {
-        if (self.lcdc & LCDC_BG_TILE_MAP_SELECT_BIT) != 0 {
-            BG_MAP_1_OFFSET
-        } else {
-            BG_MAP_0_OFFSET
-        }
+        self.lcdc.bg_map_base_offset()
     }
 
     fn tile_data_row_offset(&self, tile_index: u8, row_in_tile: u8) -> usize {
         let row_base = usize::from(row_in_tile) * 2;
-        if (self.lcdc & LCDC_BG_TILE_DATA_SELECT_BIT) != 0 {
+        if self.lcdc.unsigned_tile_data() {
             TILE_BLOCK_0_OFFSET + usize::from(tile_index) * 16 + row_base
         } else {
             let signed_index = i8::from_ne_bytes([tile_index]);
@@ -176,33 +401,36 @@ impl Ppu {
     }
 
     fn current_mode(&self) -> u8 {
-        self.stat & STAT_MODE_MASK
+        self.stat.mode().bits()
     }
 
     fn set_mode(&mut self, mode: u8) {
-        self.stat = (self.stat & !STAT_MODE_MASK) | (mode & STAT_MODE_MASK);
+        self.stat.set_mode(PpuMode::from_bits(mode));
     }
 
     fn update_lyc_coincidence_flag(&mut self) {
         if self.ly == self.lyc {
-            self.stat |= STAT_LYC_EQUAL_BIT;
+            self.stat.set_lyc_equal(true);
         } else {
-            self.stat &= !STAT_LYC_EQUAL_BIT;
+            self.stat.set_lyc_equal(false);
         }
     }
 
     fn stat_irq_condition_active(&self) -> bool {
-        let coincidence_enabled_and_true = (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0
-            && (self.stat & STAT_LYC_EQUAL_BIT) != 0;
+        let coincidence_enabled_and_true = self
+            .stat
+            .has_interrupt_source(StatInterruptSources::LYC_EQUAL)
+            && self.stat.lyc_equal();
 
-        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+        if !self.lcdc.enabled() {
             return coincidence_enabled_and_true;
         }
 
         let mode = self.current_mode();
-        let mode_enabled = (mode == 0 && (self.stat & STAT_MODE_0_INTERRUPT_BIT) != 0)
-            || (mode == 1 && (self.stat & STAT_MODE_1_INTERRUPT_BIT) != 0)
-            || (mode == 2 && (self.stat & STAT_MODE_2_INTERRUPT_BIT) != 0);
+        let mode_enabled = (mode == 0
+            && self.stat.has_interrupt_source(StatInterruptSources::HBLANK))
+            || (mode == 1 && self.stat.has_interrupt_source(StatInterruptSources::VBLANK))
+            || (mode == 2 && self.stat.has_interrupt_source(StatInterruptSources::OAM));
 
         mode_enabled || coincidence_enabled_and_true
     }
@@ -224,11 +452,11 @@ impl Ppu {
     }
 
     fn stat_write_glitch_condition_active(&self) -> bool {
-        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+        if !self.lcdc.enabled() {
             return false;
         }
 
-        self.current_mode() != 3 || (self.stat & STAT_LYC_EQUAL_BIT) != 0
+        self.current_mode() != 3 || self.stat.lyc_equal()
     }
 
     fn apply_stat_write_glitch(&mut self) {
@@ -246,7 +474,7 @@ impl Ppu {
     }
 
     pub fn may_request_interrupt(&self, interrupt_enable: u8) -> bool {
-        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+        if !self.lcdc.enabled() {
             return false;
         }
 
@@ -258,14 +486,15 @@ impl Ppu {
             return false;
         }
 
-        if (self.stat
-            & (STAT_MODE_0_INTERRUPT_BIT | STAT_MODE_1_INTERRUPT_BIT | STAT_MODE_2_INTERRUPT_BIT))
-            != 0
-        {
+        if self.stat.interrupt_sources().intersects(
+            StatInterruptSources::HBLANK | StatInterruptSources::VBLANK | StatInterruptSources::OAM,
+        ) {
             return true;
         }
 
-        (self.stat & STAT_COINCIDENCE_INTERRUPT_BIT) != 0 && self.lyc < TOTAL_SCANLINES
+        self.stat
+            .has_interrupt_source(StatInterruptSources::LYC_EQUAL)
+            && self.lyc < TOTAL_SCANLINES
     }
 
     pub fn read_vram(&self, address: u16) -> u8 {
@@ -314,16 +543,16 @@ impl Ppu {
 
     pub fn read_register(&self, address: u16) -> Option<u8> {
         let value = match address {
-            LCDC_REGISTER => self.lcdc,
-            STAT_REGISTER => self.stat | 0x80,
+            LCDC_REGISTER => self.lcdc.read_bits(),
+            STAT_REGISTER => self.stat.read_bits(),
             SCY_REGISTER => self.scy,
             SCX_REGISTER => self.scx,
             LY_REGISTER => self.ly,
             LYC_REGISTER => self.lyc,
             DMA_REGISTER => self.dma,
-            BGP_REGISTER => self.bgp,
-            OBP0_REGISTER => self.obp0,
-            OBP1_REGISTER => self.obp1,
+            BGP_REGISTER => self.bgp.read_bits(),
+            OBP0_REGISTER => self.obp0.read_bits(),
+            OBP1_REGISTER => self.obp1.read_bits(),
             WY_REGISTER => self.wy,
             WX_REGISTER => self.wx,
             _ => return None,
@@ -335,9 +564,9 @@ impl Ppu {
     pub fn write_register(&mut self, address: u16, value: u8) -> bool {
         match address {
             LCDC_REGISTER => {
-                let was_enabled = (self.lcdc & LCDC_ENABLED_BIT) != 0;
-                self.lcdc = value;
-                let now_enabled = (self.lcdc & LCDC_ENABLED_BIT) != 0;
+                let was_enabled = self.lcdc.enabled();
+                self.lcdc.write_bits(value);
+                let now_enabled = self.lcdc.enabled();
 
                 if !was_enabled && now_enabled {
                     self.scanline_dot = 0;
@@ -364,30 +593,29 @@ impl Ppu {
                 // value disables the source again.
                 self.apply_stat_write_glitch();
 
-                let readonly_bits = self.stat & 0x07;
-                self.stat = 0x80 | readonly_bits | (value & 0x78);
+                self.stat.write_bits_preserving_status(value);
                 self.update_stat_irq_line(None);
             }
             SCY_REGISTER => self.scy = value,
             SCX_REGISTER => self.scx = value,
             LY_REGISTER => {
                 self.ly = 0;
-                if (self.lcdc & LCDC_ENABLED_BIT) != 0 {
+                if self.lcdc.enabled() {
                     self.update_lyc_coincidence_flag();
                     self.update_stat_irq_line(None);
                 }
             }
             LYC_REGISTER => {
                 self.lyc = value;
-                if (self.lcdc & LCDC_ENABLED_BIT) != 0 {
+                if self.lcdc.enabled() {
                     self.update_lyc_coincidence_flag();
                     self.update_stat_irq_line(None);
                 }
             }
             DMA_REGISTER => self.dma = value,
-            BGP_REGISTER => self.bgp = value,
-            OBP0_REGISTER => self.obp0 = value,
-            OBP1_REGISTER => self.obp1 = value,
+            BGP_REGISTER => self.bgp.write_bits(value),
+            OBP0_REGISTER => self.obp0.write_bits(value),
+            OBP1_REGISTER => self.obp1.write_bits(value),
             WY_REGISTER => self.wy = value,
             WX_REGISTER => self.wx = value,
             _ => return false,
@@ -405,11 +633,11 @@ impl Ppu {
     /// - Applies scroll offsets using `SCX/SCY`.
     /// - Applies window positioning using `WX/WY` with the DMG `WX-7` rule when enabled.
     pub fn background_pixel_color_id(&self, screen_x: u8, screen_y: u8) -> u8 {
-        if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+        if !self.lcdc.bg_window_enabled() {
             return 0;
         }
 
-        let window_visible = (self.lcdc & LCDC_WINDOW_ENABLE_BIT) != 0
+        let window_visible = self.lcdc.window_enabled()
             && u16::from(screen_y) >= u16::from(self.wy)
             && u16::from(self.wx) <= 166
             && (u16::from(screen_x) + 7) >= u16::from(self.wx);
@@ -451,15 +679,11 @@ impl Ppu {
     /// - Resolves overlapping sprites by DMG priority (lowest X, then lowest OAM index).
     /// - Supports both 8x8 and 8x16 object modes (LCDC bit 2).
     pub fn sprite_pixel(&self, screen_x: u8, screen_y: u8, bg_color_id: u8) -> Option<SpritePixel> {
-        if (self.lcdc & LCDC_SPRITE_ENABLE_BIT) == 0 {
+        if !self.lcdc.obj_enabled() {
             return None;
         }
 
-        let sprite_height = if (self.lcdc & LCDC_SPRITE_SIZE_BIT) != 0 {
-            16
-        } else {
-            8
-        };
+        let sprite_height = if self.lcdc.tall_objs() { 16 } else { 8 };
 
         let mut scanline_sprites = [0usize; MAX_SPRITES_PER_SCANLINE];
         let mut scanline_sprite_count = 0usize;
@@ -478,13 +702,13 @@ impl Ppu {
             }
         }
 
-        let mut candidate: Option<(u8, usize, SpritePixel, u8)> = None;
+        let mut candidate: Option<(u8, usize, SpritePixel, SpriteAttributes)> = None;
         for sprite_index in scanline_sprites.into_iter().take(scanline_sprite_count) {
             let base = sprite_index * OAM_ENTRY_SIZE;
             let sprite_y = self.oam[base];
             let sprite_x = self.oam[base + 1];
             let tile_index = self.oam[base + 2];
-            let attributes = self.oam[base + 3];
+            let attributes = SpriteAttributes::from_bits_retain(self.oam[base + 3]);
 
             let sprite_top = i16::from(sprite_y) - 16;
             let sprite_left = i16::from(sprite_x) - 8;
@@ -500,10 +724,10 @@ impl Ppu {
 
             let mut row = (py - sprite_top) as u8;
             let mut col = (px - sprite_left) as u8;
-            if (attributes & SPRITE_ATTRIBUTE_Y_FLIP_BIT) != 0 {
+            if attributes.contains(SpriteAttributes::Y_FLIP) {
                 row = (sprite_height - 1) as u8 - row;
             }
-            if (attributes & SPRITE_ATTRIBUTE_X_FLIP_BIT) != 0 {
+            if attributes.contains(SpriteAttributes::X_FLIP) {
                 col = 7 - col;
             }
 
@@ -527,7 +751,7 @@ impl Ppu {
 
             let pixel = SpritePixel {
                 color_id,
-                use_obp1: (attributes & SPRITE_ATTRIBUTE_PALETTE_BIT) != 0,
+                use_obp1: attributes.contains(SpriteAttributes::DMG_PALETTE_1),
             };
 
             match candidate {
@@ -542,8 +766,8 @@ impl Ppu {
         }
 
         candidate.and_then(|(_, _, pixel, attributes)| {
-            let bg_can_mask_obj = (self.lcdc & LCDC_BG_ENABLE_BIT) != 0 && bg_color_id != 0;
-            if (attributes & SPRITE_ATTRIBUTE_PRIORITY_BIT) != 0 && bg_can_mask_obj {
+            let bg_can_mask_obj = self.lcdc.bg_window_enabled() && bg_color_id != 0;
+            if attributes.contains(SpriteAttributes::PRIORITY) && bg_can_mask_obj {
                 None
             } else {
                 Some(pixel)
@@ -553,15 +777,15 @@ impl Ppu {
 
     /// Returns the final DMG shade index (0-3) for the background/window layer.
     pub fn background_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
-        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+        if !self.lcdc.enabled() {
             return 0;
         }
-        if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+        if !self.lcdc.bg_window_enabled() {
             return 0;
         }
 
         let color_id = self.background_pixel_color_id(screen_x, screen_y);
-        dmg_palette_shade(self.bgp, color_id)
+        self.bgp.shade(color_id)
     }
 
     /// Returns the final DMG shade index (0-3) for the composited pixel at `(x, y)`.
@@ -569,7 +793,7 @@ impl Ppu {
     /// Sprite priority and transparency are resolved via [`Self::sprite_pixel`], then the
     /// selected BGP/OBP palette register is applied to obtain the framebuffer shade.
     pub fn composited_pixel_shade(&self, screen_x: u8, screen_y: u8) -> u8 {
-        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+        if !self.lcdc.enabled() {
             return 0;
         }
 
@@ -580,11 +804,11 @@ impl Ppu {
             } else {
                 self.obp0
             };
-            dmg_palette_shade(palette, sprite.color_id)
-        } else if (self.lcdc & LCDC_BG_ENABLE_BIT) == 0 {
+            palette.shade(sprite.color_id)
+        } else if !self.lcdc.bg_window_enabled() {
             0
         } else {
-            dmg_palette_shade(self.bgp, bg_color_id)
+            self.bgp.shade(bg_color_id)
         }
     }
 
@@ -628,7 +852,7 @@ impl Ppu {
     }
 
     pub fn step(&mut self, interrupt_flag: &mut u8) {
-        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+        if !self.lcdc.enabled() {
             self.scanline_dot = 0;
             self.ly = 0;
             self.lcd_enable_delay_dots = 0;
@@ -717,22 +941,22 @@ mod tests {
     #[test]
     fn lcd_disable_preserves_latched_stat_coincidence_bit() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         ppu.write_register(LYC_REGISTER, 0x01);
 
         // Force a latched coincidence state before LCD disable.
-        ppu.stat |= STAT_LYC_EQUAL_BIT;
+        ppu.stat.set_lyc_equal(true);
         ppu.write_register(LCDC_REGISTER, 0x00);
 
         let stat = ppu.read_register(STAT_REGISTER).unwrap();
-        assert_eq!(stat & STAT_MODE_MASK, 0x00);
-        assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+        assert_eq!(stat & STAT_MODE, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL, STAT_LYC_EQUAL);
 
         // Writing STAT should still preserve read-only mode/coincidence bits.
         ppu.write_register(STAT_REGISTER, 0x00);
         let stat_after_write = ppu.read_register(STAT_REGISTER).unwrap();
-        assert_eq!(stat_after_write & STAT_MODE_MASK, 0x00);
-        assert_eq!(stat_after_write & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+        assert_eq!(stat_after_write & STAT_MODE, 0x00);
+        assert_eq!(stat_after_write & STAT_LYC_EQUAL, STAT_LYC_EQUAL);
     }
 
     #[test]
@@ -742,11 +966,11 @@ mod tests {
         ppu.write_vram(0x8000, 0x12);
         assert_eq!(ppu.read_vram(0x8000), 0x12);
 
-        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
         assert_eq!(ppu.read_vram(0x8000), 0xFF);
 
         ppu.write_vram(0x8000, 0x34);
-        ppu.stat &= !0x03;
+        ppu.stat.set_mode(PpuMode::HBlank);
         assert_eq!(ppu.read_vram(0x8000), 0x12);
     }
 
@@ -757,25 +981,25 @@ mod tests {
         ppu.write_oam(0xFE00, 0x56);
         assert_eq!(ppu.read_oam(0xFE00), 0x56);
 
-        ppu.stat = (ppu.stat & !0x03) | 0x02;
+        ppu.stat.set_mode(PpuMode::from_bits(0x02));
         assert_eq!(ppu.read_oam(0xFE00), 0xFF);
         ppu.write_oam(0xFE00, 0x78);
 
-        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
         assert_eq!(ppu.read_oam(0xFE00), 0xFF);
 
-        ppu.stat &= !0x03;
+        ppu.stat.set_mode(PpuMode::HBlank);
         assert_eq!(ppu.read_oam(0xFE00), 0x56);
     }
 
     #[test]
     fn dma_write_oam_bypasses_mode_restrictions() {
         let mut ppu = Ppu::default();
-        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
 
         ppu.dma_write_oam(0, 0xAB);
 
-        ppu.stat &= !0x03;
+        ppu.stat.set_mode(PpuMode::HBlank);
         assert_eq!(ppu.read_oam(0xFE00), 0xAB);
     }
 
@@ -785,7 +1009,7 @@ mod tests {
         ppu.write_vram(0x8000, 0x11);
         ppu.write_oam(0xFE00, 0x22);
 
-        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
         assert_eq!(ppu.read_vram(0x8000), 0xFF);
         assert_eq!(ppu.read_oam(0xFE00), 0xFF);
 
@@ -796,11 +1020,11 @@ mod tests {
     #[test]
     fn sprite_pixel_uses_dma_written_oam_data_during_mode_3() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE);
         ppu.write_vram(0x8010, 0b1000_0000);
         ppu.write_vram(0x8011, 0x00);
 
-        ppu.stat = (ppu.stat & !0x03) | 0x03;
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
         ppu.write_oam(0xFE00, 16);
         assert_eq!(ppu.read_oam(0xFE00), 0xFF);
 
@@ -855,7 +1079,7 @@ mod tests {
         let mut ppu = Ppu::default();
         let mut interrupt_flag = 0u8;
         ppu.write_register(LCDC_REGISTER, 0x80);
-        ppu.write_register(STAT_REGISTER, STAT_MODE_1_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_1_INTERRUPT);
 
         for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
             ppu.step(&mut interrupt_flag);
@@ -895,7 +1119,7 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(BGP_REGISTER, 0xE4);
 
@@ -930,7 +1154,7 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(BGP_REGISTER, 0xE4);
 
@@ -965,7 +1189,7 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(BGP_REGISTER, 0xE4);
         ppu.write_vram(0x9800, 0x01);
@@ -992,7 +1216,7 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_ENABLED_BIT | LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(BGP_REGISTER, 0xE4);
         ppu.write_vram(0x9800, 0x01);
@@ -1022,7 +1246,7 @@ mod tests {
         let mut interrupt_flag = 0u8;
         ppu.write_register(LCDC_REGISTER, 0x80);
         ppu.write_register(LYC_REGISTER, 0x01);
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
 
         for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
             ppu.step(&mut interrupt_flag);
@@ -1034,8 +1258,8 @@ mod tests {
 
         assert_eq!(ppu.read_register(LY_REGISTER), Some(0x01));
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, INTERRUPT_STAT_BIT);
     }
@@ -1043,28 +1267,28 @@ mod tests {
     #[test]
     fn lcd_disable_preserves_coincidence_bit_when_currently_matching() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         ppu.write_register(LYC_REGISTER, 0x00);
 
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
 
         ppu.write_register(LCDC_REGISTER, 0x00);
 
         let stat = ppu.read_register(STAT_REGISTER).unwrap();
-        assert_eq!(stat & STAT_MODE_MASK, 0x00);
-        assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+        assert_eq!(stat & STAT_MODE, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL, STAT_LYC_EQUAL);
         assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
     }
 
     #[test]
     fn lcd_off_step_keeps_latched_coincidence_and_does_not_raise_stat() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         ppu.write_register(LYC_REGISTER, 0x00);
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         assert!(ppu.take_stat_irq_pending());
 
         ppu.write_register(LCDC_REGISTER, 0x00);
@@ -1073,8 +1297,8 @@ mod tests {
         for _ in 0..8 {
             ppu.step(&mut interrupt_flag);
             let stat = ppu.read_register(STAT_REGISTER).unwrap();
-            assert_eq!(stat & STAT_MODE_MASK, 0x00);
-            assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+            assert_eq!(stat & STAT_MODE, 0x00);
+            assert_eq!(stat & STAT_LYC_EQUAL, STAT_LYC_EQUAL);
             assert_eq!(ppu.read_register(LY_REGISTER), Some(0x00));
         }
 
@@ -1084,15 +1308,15 @@ mod tests {
     #[test]
     fn lcd_off_lyc_write_preserves_latched_coincidence_bit() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
-        ppu.stat |= STAT_LYC_EQUAL_BIT;
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
+        ppu.stat.set_lyc_equal(true);
         ppu.write_register(LCDC_REGISTER, 0x00);
 
         ppu.write_register(LYC_REGISTER, 0x01);
 
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
     }
 
@@ -1104,10 +1328,10 @@ mod tests {
         assert!(ppu.may_request_interrupt(INTERRUPT_ENABLE_VBLANK_BIT));
         assert!(!ppu.may_request_interrupt(0x00));
 
-        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT);
         assert!(ppu.may_request_interrupt(INTERRUPT_ENABLE_STAT_BIT));
 
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         ppu.write_register(LYC_REGISTER, 153);
         assert!(ppu.may_request_interrupt(INTERRUPT_ENABLE_STAT_BIT));
 
@@ -1131,7 +1355,7 @@ mod tests {
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert!(!ppu.take_stat_irq_pending());
 
-        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT);
         assert!(ppu.take_stat_irq_pending());
     }
 
@@ -1139,16 +1363,13 @@ mod tests {
     fn stat_write_glitch_queues_irq_for_active_mode_even_when_source_is_disabled() {
         let mut ppu = Ppu::default();
         let mut interrupt_flag = 0u8;
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
 
         for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
             ppu.step(&mut interrupt_flag);
         }
         ppu.step(&mut interrupt_flag);
-        assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_MODE_MASK,
-            0x02
-        );
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & STAT_MODE, 0x02);
         assert!(!ppu.take_stat_irq_pending());
 
         ppu.write_register(STAT_REGISTER, 0x00);
@@ -1161,21 +1382,18 @@ mod tests {
     fn stat_write_glitch_does_not_retrigger_while_stat_line_is_already_high() {
         let mut ppu = Ppu::default();
         let mut interrupt_flag = 0u8;
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
 
         for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
             ppu.step(&mut interrupt_flag);
         }
         ppu.step(&mut interrupt_flag);
-        assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_MODE_MASK,
-            0x02
-        );
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & STAT_MODE, 0x02);
 
-        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT);
         assert!(ppu.take_stat_irq_pending());
 
-        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT);
 
         assert!(!ppu.take_stat_irq_pending());
     }
@@ -1186,17 +1404,17 @@ mod tests {
         ppu.write_register(LCDC_REGISTER, 0x80);
         ppu.write_register(LYC_REGISTER, 0x00);
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
 
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         assert!(ppu.take_stat_irq_pending());
 
         let mut ppu = Ppu::default();
         ppu.write_register(LCDC_REGISTER, 0x80);
         ppu.write_register(LYC_REGISTER, 0x01);
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         // Writing STAT while LCD is enabled can request the DMG STAT write
         // glitch; clear that edge before verifying the later LYC match edge.
         ppu.take_stat_irq_pending();
@@ -1207,7 +1425,7 @@ mod tests {
     #[test]
     fn lcd_enable_starts_in_mode_0_until_ppu_is_clocked() {
         let mut ppu = Ppu::default();
-        ppu.write_register(STAT_REGISTER, STAT_MODE_0_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_0_INTERRUPT);
         assert!(!ppu.take_stat_irq_pending());
 
         ppu.write_register(LCDC_REGISTER, 0x80);
@@ -1227,7 +1445,7 @@ mod tests {
     #[test]
     fn lcd_enable_mode_2_stat_interrupt_only_appears_after_step() {
         let mut ppu = Ppu::default();
-        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT);
         assert!(!ppu.take_stat_irq_pending());
 
         ppu.write_register(LCDC_REGISTER, 0x80);
@@ -1249,60 +1467,60 @@ mod tests {
     #[test]
     fn lcd_enable_immediate_stat_read_keeps_mode_0_with_latched_coincidence() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         ppu.write_register(LYC_REGISTER, 0x00);
         assert!(ppu.take_stat_irq_pending());
 
         ppu.write_register(LCDC_REGISTER, 0x00);
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
 
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         let stat = ppu.read_register(STAT_REGISTER).unwrap();
-        assert_eq!(stat & STAT_MODE_MASK, 0x00);
-        assert_eq!(stat & STAT_LYC_EQUAL_BIT, STAT_LYC_EQUAL_BIT);
+        assert_eq!(stat & STAT_MODE, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL, STAT_LYC_EQUAL);
         assert_eq!(stat & 0xC0, 0xC0);
     }
 
     #[test]
     fn lcd_enable_round1_recomputes_coincidence_without_immediate_mode_2() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         ppu.write_register(LYC_REGISTER, 0x00);
         assert!(ppu.take_stat_irq_pending());
 
         ppu.write_register(LCDC_REGISTER, 0x00);
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
 
         // While LCD is off, writes should not update coincidence.
         ppu.write_register(LYC_REGISTER, 0x01);
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
 
         // Re-enabling must recompute coincidence against LY=0 immediately.
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         let stat = ppu.read_register(STAT_REGISTER).unwrap();
-        assert_eq!(stat & STAT_MODE_MASK, 0x00);
-        assert_eq!(stat & STAT_LYC_EQUAL_BIT, 0x00);
+        assert_eq!(stat & STAT_MODE, 0x00);
+        assert_eq!(stat & STAT_LYC_EQUAL, 0x00);
         assert!(!ppu.take_stat_irq_pending());
     }
 
     #[test]
     fn lcd_toggle_preserves_latched_coincidence_until_reenable_recomputes_stat() {
-        const STAT_STABLE_MASK: u8 = 0x80 | 0x78 | STAT_LYC_EQUAL_BIT | STAT_MODE_MASK;
+        const STAT_STABLE_MASK: u8 = 0x80 | 0x78 | STAT_LYC_EQUAL | STAT_MODE;
 
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
-        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
+        ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT);
         ppu.write_register(LYC_REGISTER, 0x00);
 
         // 1) Reach LY==LYC with coincidence set.
@@ -1326,7 +1544,7 @@ mod tests {
         );
 
         // 4) Re-enabling LCD immediately recomputes coincidence (LY=0, LYC=1) while mode is still 0.
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         assert_eq!(
             ppu.read_register(STAT_REGISTER).unwrap() & STAT_STABLE_MASK,
             0xC0
@@ -1341,7 +1559,7 @@ mod tests {
         ppu.write_register(LYC_REGISTER, 0x01);
         ppu.write_register(
             STAT_REGISTER,
-            STAT_MODE_0_INTERRUPT_BIT | STAT_COINCIDENCE_INTERRUPT_BIT,
+            STAT_MODE_0_INTERRUPT | STAT_COINCIDENCE_INTERRUPT,
         );
 
         for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
@@ -1360,8 +1578,8 @@ mod tests {
         assert_eq!(ppu.read_register(LY_REGISTER), Some(0x01));
         assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x03, 0x02);
         assert_eq!(
-            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL_BIT,
-            STAT_LYC_EQUAL_BIT
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_LYC_EQUAL,
+            STAT_LYC_EQUAL
         );
         assert_eq!(interrupt_flag & INTERRUPT_STAT_BIT, 0);
     }
@@ -1369,10 +1587,7 @@ mod tests {
     #[test]
     fn background_pixel_fetch_uses_unsigned_tile_data_region() {
         let mut ppu = Ppu::default();
-        ppu.write_register(
-            LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
-        );
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT);
 
         ppu.write_vram(0x9800, 0x02);
         ppu.write_vram(0x8020, 0b1000_0000);
@@ -1384,7 +1599,7 @@ mod tests {
     #[test]
     fn background_pixel_fetch_uses_signed_tile_data_region() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE);
 
         ppu.write_vram(0x9800, 0xFF);
         ppu.write_vram(0x8FF0, 0b1000_0000);
@@ -1398,7 +1613,7 @@ mod tests {
         let mut ppu = Ppu::default();
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT | LCDC_BG_TILE_MAP_SELECT_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_BG_ENABLE | LCDC_BG_TILE_MAP_SELECT | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(SCX_REGISTER, 8);
         ppu.write_register(SCY_REGISTER, 16);
@@ -1415,10 +1630,10 @@ mod tests {
         let mut ppu = Ppu::default();
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT
-                | LCDC_WINDOW_ENABLE_BIT
-                | LCDC_WINDOW_TILE_MAP_SELECT_BIT
-                | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_BG_ENABLE
+                | LCDC_WINDOW_ENABLE
+                | LCDC_WINDOW_TILE_MAP_SELECT
+                | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(WX_REGISTER, 7);
         ppu.write_register(WY_REGISTER, 0);
@@ -1435,7 +1650,7 @@ mod tests {
         let mut ppu = Ppu::default();
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT | LCDC_WINDOW_ENABLE_BIT | LCDC_BG_TILE_DATA_SELECT_BIT,
+            LCDC_BG_ENABLE | LCDC_WINDOW_ENABLE | LCDC_BG_TILE_DATA_SELECT,
         );
         ppu.write_register(WX_REGISTER, 167);
         ppu.write_register(WY_REGISTER, 0);
@@ -1453,7 +1668,7 @@ mod tests {
     #[test]
     fn sprite_pixel_uses_dmg_offsets_and_selects_obp0_or_obp1() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE);
 
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
@@ -1470,7 +1685,7 @@ mod tests {
             })
         );
 
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE);
         assert_eq!(
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
@@ -1483,7 +1698,7 @@ mod tests {
     #[test]
     fn sprite_pixel_applies_x_y_flipping() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE);
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x02);
@@ -1498,10 +1713,7 @@ mod tests {
             })
         );
 
-        ppu.write_oam(
-            0xFE03,
-            SPRITE_ATTRIBUTE_X_FLIP_BIT | SPRITE_ATTRIBUTE_Y_FLIP_BIT,
-        );
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_X_FLIP | SPRITE_ATTRIBUTE_Y_FLIP);
         ppu.write_vram(0x802E, 0b1000_0000);
         ppu.write_vram(0x802F, 0b0000_0000);
         assert_eq!(
@@ -1516,12 +1728,12 @@ mod tests {
     #[test]
     fn sprite_pixel_honors_priority_and_oam_ordering_rules() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_BG_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE | LCDC_BG_ENABLE);
 
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x03);
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY);
         ppu.write_vram(0x8030, 0b1000_0000);
         ppu.write_vram(0x8031, 0b0000_0000);
 
@@ -1545,7 +1757,7 @@ mod tests {
     #[test]
     fn sprite_pixel_supports_8x16_mode_and_ignores_lsb_of_tile_index() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_SPRITE_SIZE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE | LCDC_SPRITE_SIZE);
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x03);
@@ -1575,11 +1787,11 @@ mod tests {
     #[test]
     fn sprite_pixel_applies_y_flip_across_full_8x16_height() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_SPRITE_SIZE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE | LCDC_SPRITE_SIZE);
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x02);
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_Y_FLIP_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_Y_FLIP);
 
         // Unflipped row 0 should sample from bottom tile row 7.
         ppu.write_vram(0x803E, 0b1000_0000);
@@ -1597,13 +1809,13 @@ mod tests {
     #[test]
     fn sprite_pixel_does_not_leak_lower_priority_obj_behind_non_zero_bg() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_BG_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE | LCDC_BG_ENABLE);
 
         // Higher-priority sprite in OAM order, masked by BG-over-OBJ when BG is non-zero.
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x05);
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY);
         ppu.write_vram(0x8050, 0b1000_0000);
         ppu.write_vram(0x8051, 0b0000_0000);
 
@@ -1628,7 +1840,7 @@ mod tests {
     #[test]
     fn sprite_pixel_allows_lower_priority_sprite_through_transparent_winner_pixel() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE);
 
         // Lower-X sprite has higher DMG OBJ priority, but its pixel at (0, 0) is transparent.
         ppu.write_oam(0xFE00, 16);
@@ -1642,7 +1854,7 @@ mod tests {
         ppu.write_oam(0xFE04, 16);
         ppu.write_oam(0xFE05, 7);
         ppu.write_oam(0xFE06, 0x09);
-        ppu.write_oam(0xFE07, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_oam(0xFE07, SPRITE_ATTRIBUTE_PALETTE);
         ppu.write_vram(0x8090, 0b0100_0000);
         ppu.write_vram(0x8091, 0x00);
 
@@ -1658,12 +1870,12 @@ mod tests {
     #[test]
     fn sprite_pixel_ignores_bg_over_obj_priority_when_bg_layer_is_disabled() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE);
 
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x0A);
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY);
         ppu.write_vram(0x80A0, 0b1000_0000);
         ppu.write_vram(0x80A1, 0x00);
 
@@ -1679,7 +1891,7 @@ mod tests {
     #[test]
     fn sprite_pixel_limits_scanline_selection_to_first_10_oam_entries() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE);
 
         for sprite_index in 0..10usize {
             let base = 0xFE00 + (sprite_index as u16) * 4;
@@ -1712,7 +1924,7 @@ mod tests {
     #[test]
     fn composited_pixel_shade_applies_obj_palette_when_sprite_wins() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_SPRITE_ENABLE);
 
         // Background tile 0 emits color id 0 at (0,0), which keeps sprite visible.
         ppu.write_vram(0x8000, 0x00);
@@ -1723,7 +1935,7 @@ mod tests {
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x01);
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE);
         ppu.write_vram(0x8010, 0b1000_0000);
         ppu.write_vram(0x8011, 0x00);
 
@@ -1731,7 +1943,7 @@ mod tests {
         ppu.write_register(OBP1_REGISTER, 0b00_00_10_00);
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT | LCDC_ENABLED_BIT,
+            LCDC_BG_ENABLE | LCDC_SPRITE_ENABLE | LCDC_ENABLE,
         );
 
         assert_eq!(ppu.background_pixel_shade(0, 0), 0);
@@ -1741,68 +1953,68 @@ mod tests {
     #[test]
     fn composited_pixel_shade_returns_blank_when_lcd_disabled() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_SPRITE_ENABLE);
         ppu.write_vram(0x8000, 0x00);
         ppu.write_vram(0x8001, 0x00);
         ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
         ppu.write_oam(0xFE02, 0x01);
-        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PALETTE);
         ppu.write_vram(0x8010, 0b1000_0000);
         ppu.write_vram(0x8011, 0x00);
         ppu.write_register(OBP1_REGISTER, 0b00_00_10_00);
 
         ppu.write_register(
             LCDC_REGISTER,
-            LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT | LCDC_ENABLED_BIT,
+            LCDC_BG_ENABLE | LCDC_SPRITE_ENABLE | LCDC_ENABLE,
         );
 
         assert_eq!(ppu.composited_pixel_shade(0, 0), 2);
 
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_SPRITE_ENABLE);
         assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
     }
 
     #[test]
     fn background_pixel_shade_returns_blank_when_lcd_disabled() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE);
         ppu.write_vram(0x8000, 0xFF);
         ppu.write_vram(0x8001, 0xFF);
         ppu.write_register(BGP_REGISTER, 0b11_10_01_00);
 
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_ENABLE);
 
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE);
         assert_eq!(ppu.background_pixel_shade(0, 0), 0);
     }
 
     #[test]
     fn background_pixel_shade_returns_white_when_bg_window_disabled() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_ENABLE);
         ppu.write_vram(0x8000, 0x00);
         ppu.write_vram(0x8001, 0x00);
         ppu.write_register(BGP_REGISTER, 0b11_10_01_01);
 
         assert_eq!(ppu.background_pixel_shade(0, 0), 1);
 
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         assert_eq!(ppu.background_pixel_shade(0, 0), 0);
     }
 
     #[test]
     fn composited_pixel_shade_returns_white_when_bg_window_disabled_and_no_sprite() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE_BIT | LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_BG_ENABLE | LCDC_ENABLE);
         ppu.write_vram(0x8000, 0x00);
         ppu.write_vram(0x8001, 0x00);
         ppu.write_register(BGP_REGISTER, 0b11_10_01_01);
 
         assert_eq!(ppu.composited_pixel_shade(0, 0), 1);
 
-        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
     }
 }
