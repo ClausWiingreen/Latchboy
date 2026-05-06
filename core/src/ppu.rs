@@ -207,16 +207,34 @@ impl Ppu {
         mode_enabled || coincidence_enabled_and_true
     }
 
+    fn request_stat_irq_edge(&mut self, interrupt_flag: Option<&mut u8>) {
+        if let Some(flag) = interrupt_flag {
+            *flag |= INTERRUPT_STAT_BIT;
+        } else {
+            self.stat_irq_pending = true;
+        }
+    }
+
     fn update_stat_irq_line(&mut self, interrupt_flag: Option<&mut u8>) {
         let next_line_high = self.stat_irq_condition_active();
         if !self.stat_irq_line_high && next_line_high {
-            if let Some(flag) = interrupt_flag {
-                *flag |= INTERRUPT_STAT_BIT;
-            } else {
-                self.stat_irq_pending = true;
-            }
+            self.request_stat_irq_edge(interrupt_flag);
         }
         self.stat_irq_line_high = next_line_high;
+    }
+
+    fn stat_write_glitch_condition_active(&self) -> bool {
+        if (self.lcdc & LCDC_ENABLED_BIT) == 0 {
+            return false;
+        }
+
+        self.current_mode() != 3 || (self.stat & STAT_LYC_EQUAL_BIT) != 0
+    }
+
+    fn apply_stat_write_glitch(&mut self) {
+        if !self.stat_irq_line_high && self.stat_write_glitch_condition_active() {
+            self.request_stat_irq_edge(None);
+        }
     }
 
     fn vram_accessible(&self) -> bool {
@@ -339,6 +357,13 @@ impl Ppu {
                 self.update_stat_irq_line(None);
             }
             STAT_REGISTER => {
+                // DMG compatibility quirk: a write to STAT briefly behaves like all
+                // STAT interrupt source enable bits are set. If the LCD is enabled
+                // and the PPU is currently in an interruptable STAT condition, that
+                // transient level can create a STAT IRQ edge even when the stored
+                // value disables the source again.
+                self.apply_stat_write_glitch();
+
                 let readonly_bits = self.stat & 0x07;
                 self.stat = 0x80 | readonly_bits | (value & 0x78);
                 self.update_stat_irq_line(None);
@@ -1110,6 +1135,51 @@ mod tests {
     }
 
     #[test]
+    fn stat_write_glitch_queues_irq_for_active_mode_even_when_source_is_disabled() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
+        ppu.step(&mut interrupt_flag);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_MODE_MASK,
+            0x02
+        );
+        assert!(!ppu.take_stat_irq_pending());
+
+        ppu.write_register(STAT_REGISTER, 0x00);
+
+        assert!(ppu.take_stat_irq_pending());
+        assert_eq!(ppu.read_register(STAT_REGISTER).unwrap() & 0x78, 0x00);
+    }
+
+    #[test]
+    fn stat_write_glitch_does_not_retrigger_while_stat_line_is_already_high() {
+        let mut ppu = Ppu::default();
+        let mut interrupt_flag = 0u8;
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLED_BIT);
+
+        for _ in 0..LCD_ENABLE_STARTUP_DELAY_DOTS {
+            ppu.step(&mut interrupt_flag);
+        }
+        ppu.step(&mut interrupt_flag);
+        assert_eq!(
+            ppu.read_register(STAT_REGISTER).unwrap() & STAT_MODE_MASK,
+            0x02
+        );
+
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+        assert!(ppu.take_stat_irq_pending());
+
+        ppu.write_register(STAT_REGISTER, STAT_MODE_2_INTERRUPT_BIT);
+
+        assert!(!ppu.take_stat_irq_pending());
+    }
+
+    #[test]
     fn enabling_or_matching_coincidence_condition_queues_stat_interrupt() {
         let mut ppu = Ppu::default();
         ppu.write_register(LCDC_REGISTER, 0x80);
@@ -1126,7 +1196,9 @@ mod tests {
         ppu.write_register(LCDC_REGISTER, 0x80);
         ppu.write_register(LYC_REGISTER, 0x01);
         ppu.write_register(STAT_REGISTER, STAT_COINCIDENCE_INTERRUPT_BIT);
-        assert!(!ppu.take_stat_irq_pending());
+        // Writing STAT while LCD is enabled can request the DMG STAT write
+        // glitch; clear that edge before verifying the later LYC match edge.
+        ppu.take_stat_irq_pending();
         ppu.write_register(LYC_REGISTER, 0x00);
         assert!(ppu.take_stat_irq_pending());
     }

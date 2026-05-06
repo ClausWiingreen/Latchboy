@@ -397,7 +397,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Snapshot-based rendering regression tests.
 - [ ] **Edge-case behavior fixes**
   - [x] HALT bug nuances.
-  - [ ] STAT interrupt quirks.
+  - [x] STAT interrupt quirks (DMG STAT write glitch + source-line handoff coverage).
   - [ ] Sprite priority corner cases.
 - [ ] **Performance profiling**
   - [ ] CPU hotspots.
