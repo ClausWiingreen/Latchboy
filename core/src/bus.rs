@@ -4,28 +4,15 @@ use std::hash::{Hash, Hasher};
 use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::input::{Joypad, JoypadButton};
+use crate::memory::{
+    route_address, route_io_address, BusRoute, IoRoute, MemoryMappedDevice, BOOT_ROM_SIZE,
+    HRAM_END, HRAM_SIZE, HRAM_START, IO_REGISTERS_SIZE, IO_REGISTERS_START, WRAM_ECHO_START,
+    WRAM_SIZE, WRAM_START,
+};
 use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
 use crate::serial::SerialPort;
-use crate::timer::{Timer, DIV_REGISTER, TAC_REGISTER, TIMA_REGISTER, TMA_REGISTER};
-
-const VRAM_START: u16 = 0x8000;
-const EXTERNAL_RAM_START: u16 = 0xA000;
-const WRAM_START: u16 = 0xC000;
-const WRAM_END: u16 = 0xDFFF;
-const WRAM_ECHO_START: u16 = 0xE000;
-const WRAM_ECHO_END: u16 = 0xFDFF;
-const OAM_START: u16 = 0xFE00;
-const OAM_END: u16 = 0xFE9F;
-const UNUSABLE_START: u16 = 0xFEA0;
-const UNUSABLE_END: u16 = 0xFEFF;
-const IO_REGISTERS_START: u16 = 0xFF00;
-const IO_REGISTERS_END: u16 = 0xFF7F;
-const JOYP_REGISTER: u16 = 0xFF00;
-const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
-const HRAM_START: u16 = 0xFF80;
-const HRAM_END: u16 = 0xFFFE;
-const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
+use crate::timer::Timer;
 const JOYPAD_INTERRUPT_MASK: u8 = 0x10;
 const WATCHED_IO_ADDRESSES: [u16; 6] = [
     crate::ppu::LCDC_REGISTER,
@@ -36,10 +23,6 @@ const WATCHED_IO_ADDRESSES: [u16; 6] = [
     crate::interrupts::ENABLE_REGISTER,
 ];
 
-const WRAM_SIZE: usize = 0x2000;
-const IO_REGISTERS_SIZE: usize = 0x80;
-const HRAM_SIZE: usize = 0x7F;
-const BOOT_ROM_SIZE: usize = 0x100;
 const NO_BOOT_DEFAULTS: &[(u16, u8)] = &[
     (0xFF05, 0x00),
     (0xFF06, 0x00),
@@ -131,6 +114,12 @@ pub struct BusWatchIoEvent {
     pub ppu_stat_after: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DmaBypass {
+    No,
+    Yes,
+}
+
 impl Bus {
     const OAM_DMA_BYTES: u16 = 0xA0;
     // OAM DMA copies 160 bytes and blocks CPU bus access for 160 machine cycles.
@@ -174,47 +163,7 @@ impl Bus {
         let value = if self.is_cpu_bus_access_blocked_by_oam_dma(address) {
             0xFF
         } else {
-            match address {
-                0x0000..=0x7FFF => {
-                    if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
-                        self.boot_rom
-                            .as_ref()
-                            .and_then(|rom| rom.get(address as usize))
-                            .copied()
-                            .unwrap_or(0xFF)
-                    } else {
-                        self.cartridge.read(address)
-                    }
-                }
-                VRAM_START..=0x9FFF => self.ppu.read_vram(address),
-                EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
-                WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
-                WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
-                OAM_START..=OAM_END => self.ppu.read_oam(address),
-                UNUSABLE_START..=UNUSABLE_END => 0xFF,
-                IO_REGISTERS_START..=IO_REGISTERS_END => {
-                    if address == BOOT_ROM_DISABLE_REGISTER {
-                        self.boot_rom_disable_value
-                    } else if address == JOYP_REGISTER {
-                        self.joypad.read_p1()
-                    } else if let Some(value) = self.apu.read_register(address) {
-                        value
-                    } else if let Some(value) = self.serial.read(address) {
-                        value
-                    } else if matches!(
-                        address,
-                        DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
-                    ) {
-                        self.timer.read(address)
-                    } else if let Some(value) = self.ppu.read_register(address) {
-                        value
-                    } else {
-                        self.io_registers[(address - IO_REGISTERS_START) as usize]
-                    }
-                }
-                HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize],
-                INTERRUPT_ENABLE_REGISTER => self.interrupt_enable,
-            }
+            self.read8_routed(address, DmaBypass::No)
         };
 
         self.record_watch_io_event(BusWatchIoAccessType::Read, address, value);
@@ -251,98 +200,117 @@ impl Bus {
             return;
         }
 
-        match address {
-            0x0000..=0x7FFF => self.cartridge.write(address, value),
-            VRAM_START..=0x9FFF => self.ppu.write_vram(address, value),
-            EXTERNAL_RAM_START..=0xBFFF => self.cartridge.write(address, value),
-            WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize] = value,
-            WRAM_ECHO_START..=WRAM_ECHO_END => {
-                self.wram[(address - WRAM_ECHO_START) as usize] = value
-            }
-            OAM_START..=OAM_END => self.ppu.write_oam(address, value),
-            UNUSABLE_START..=UNUSABLE_END => {}
-            IO_REGISTERS_START..=IO_REGISTERS_END => {
-                if address == BOOT_ROM_DISABLE_REGISTER {
-                    self.boot_rom_disable_value = value;
-                    if self.boot_rom_enabled && value != 0 {
-                        self.boot_rom_enabled = false;
-                    }
-                } else if address == DMA_REGISTER {
-                    self.ppu.write_register(address, value);
-                    self.start_oam_dma(value);
-                } else if matches!(
-                    address,
-                    DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
-                ) {
-                    self.timer.write(address, value);
-                } else if address == JOYP_REGISTER {
-                    let requested_interrupt = self.joypad.write_p1(value);
-                    if requested_interrupt {
-                        self.request_joypad_interrupt();
-                    }
-                } else if self.apu.write_register(address, value)
-                    || self.serial.write(address, value)
-                {
-                } else if self.ppu.write_register(address, value) {
-                    if self.ppu.take_stat_irq_pending() {
-                        let interrupt_flag_index =
-                            (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
-                        self.io_registers[interrupt_flag_index] |= 0x02;
-                    }
-                } else {
-                    self.io_registers[(address - IO_REGISTERS_START) as usize] = value;
-                }
-            }
-            HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize] = value,
-            INTERRUPT_ENABLE_REGISTER => self.interrupt_enable = value,
-        }
-
+        self.write8_routed(address, value);
         self.record_watch_io_write(address, value);
     }
 
     fn read8_for_dma_source(&self, address: u16) -> u8 {
-        match address {
-            0x0000..=0x7FFF => {
-                if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
-                    return self
-                        .boot_rom
-                        .as_ref()
-                        .and_then(|rom| rom.get(address as usize))
-                        .copied()
-                        .unwrap_or(0xFF);
-                }
+        self.read8_routed(address, DmaBypass::Yes)
+    }
 
-                self.cartridge.read(address)
-            }
-            VRAM_START..=0x9FFF => self.ppu.dma_read_vram(address),
-            EXTERNAL_RAM_START..=0xBFFF => self.cartridge.read(address),
-            WRAM_START..=WRAM_END => self.wram[(address - WRAM_START) as usize],
-            WRAM_ECHO_START..=WRAM_ECHO_END => self.wram[(address - WRAM_ECHO_START) as usize],
-            OAM_START..=OAM_END => self.ppu.dma_read_oam(address),
-            UNUSABLE_START..=UNUSABLE_END => 0xFF,
-            IO_REGISTERS_START..=IO_REGISTERS_END => {
-                if address == BOOT_ROM_DISABLE_REGISTER {
-                    self.boot_rom_disable_value
-                } else if address == JOYP_REGISTER {
-                    self.joypad.read_p1()
-                } else if let Some(value) = self.apu.read_register(address) {
-                    value
-                } else if let Some(value) = self.serial.read(address) {
-                    value
-                } else if matches!(
-                    address,
-                    DIV_REGISTER | TIMA_REGISTER | TMA_REGISTER | TAC_REGISTER
-                ) {
-                    self.timer.read(address)
-                } else if let Some(value) = self.ppu.read_register(address) {
-                    value
+    fn read8_routed(&self, address: u16, dma_bypass: DmaBypass) -> u8 {
+        match route_address(address) {
+            BusRoute::BootRomOrCartridge => self.read_boot_rom_or_cartridge(address),
+            BusRoute::Cartridge => self.cartridge.read(address),
+            BusRoute::PpuVram => {
+                if dma_bypass == DmaBypass::Yes {
+                    self.ppu.dma_read_vram(address)
                 } else {
-                    self.io_registers[(address - IO_REGISTERS_START) as usize]
+                    self.ppu.read8(address)
                 }
             }
-            HRAM_START..=HRAM_END => self.hram[(address - HRAM_START) as usize],
-            INTERRUPT_ENABLE_REGISTER => self.interrupt_enable,
+            BusRoute::WorkRam => self.wram[(address - WRAM_START) as usize],
+            BusRoute::WorkRamEcho => self.wram[(address - WRAM_ECHO_START) as usize],
+            BusRoute::PpuOam => {
+                if dma_bypass == DmaBypass::Yes {
+                    self.ppu.dma_read_oam(address)
+                } else {
+                    self.ppu.read8(address)
+                }
+            }
+            BusRoute::Unusable => 0xFF,
+            BusRoute::Io => self.read8_io(address),
+            BusRoute::HighRam => self.hram[(address - HRAM_START) as usize],
+            BusRoute::InterruptEnable => self.interrupt_enable,
         }
+    }
+
+    fn write8_routed(&mut self, address: u16, value: u8) {
+        match route_address(address) {
+            BusRoute::BootRomOrCartridge | BusRoute::Cartridge => {
+                self.cartridge.write(address, value);
+            }
+            BusRoute::PpuVram | BusRoute::PpuOam => self.ppu.write8(address, value),
+            BusRoute::WorkRam => self.wram[(address - WRAM_START) as usize] = value,
+            BusRoute::WorkRamEcho => self.wram[(address - WRAM_ECHO_START) as usize] = value,
+            BusRoute::Unusable => {}
+            BusRoute::Io => self.write8_io(address, value),
+            BusRoute::HighRam => self.hram[(address - HRAM_START) as usize] = value,
+            BusRoute::InterruptEnable => self.interrupt_enable = value,
+        }
+    }
+
+    fn read_boot_rom_or_cartridge(&self, address: u16) -> u8 {
+        if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
+            self.boot_rom
+                .as_ref()
+                .and_then(|rom| rom.get(address as usize))
+                .copied()
+                .unwrap_or(0xFF)
+        } else {
+            self.cartridge.read(address)
+        }
+    }
+
+    fn read8_io(&self, address: u16) -> u8 {
+        match route_io_address(address) {
+            IoRoute::BootRomDisable => self.boot_rom_disable_value,
+            IoRoute::Joypad => self.joypad.read8(address),
+            IoRoute::Apu => self.apu.read8(address),
+            IoRoute::Serial => self.serial.read8(address),
+            IoRoute::Timer => self.timer.read8(address),
+            IoRoute::Ppu => self.ppu.read8(address),
+            IoRoute::GenericIo => self.io_registers[(address - IO_REGISTERS_START) as usize],
+        }
+    }
+
+    fn write8_io(&mut self, address: u16, value: u8) {
+        match route_io_address(address) {
+            IoRoute::BootRomDisable => {
+                self.boot_rom_disable_value = value;
+                if self.boot_rom_enabled && value != 0 {
+                    self.boot_rom_enabled = false;
+                }
+            }
+            IoRoute::Joypad => {
+                let previous_p1 = self.joypad.read8(address);
+                self.joypad.write8(address, value);
+                if Self::joypad_write_requested_interrupt(previous_p1, self.joypad.read8(address)) {
+                    self.request_joypad_interrupt();
+                }
+            }
+            IoRoute::Apu => self.apu.write8(address, value),
+            IoRoute::Serial => self.serial.write8(address, value),
+            IoRoute::Timer => self.timer.write8(address, value),
+            IoRoute::Ppu => {
+                self.ppu.write8(address, value);
+                if address == DMA_REGISTER {
+                    self.start_oam_dma(value);
+                }
+                if self.ppu.take_stat_irq_pending() {
+                    let interrupt_flag_index =
+                        (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+                    self.io_registers[interrupt_flag_index] |= 0x02;
+                }
+            }
+            IoRoute::GenericIo => {
+                self.io_registers[(address - IO_REGISTERS_START) as usize] = value
+            }
+        }
+    }
+
+    const fn joypad_write_requested_interrupt(previous_p1: u8, current_p1: u8) -> bool {
+        (previous_p1 & !current_p1 & 0x0F) != 0
     }
 
     fn start_oam_dma(&mut self, source_high: u8) {
@@ -385,10 +353,15 @@ impl Bus {
             }
             let interrupt_flag_index =
                 (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
-            self.ppu.step(&mut self.io_registers[interrupt_flag_index]);
+            self.ppu
+                .tick(1, &mut self.io_registers[interrupt_flag_index]);
             self.timer
-                .step(&mut self.io_registers[interrupt_flag_index]);
-            let _ = self.apu.tick(1);
+                .tick(1, &mut self.io_registers[interrupt_flag_index]);
+            MemoryMappedDevice::tick(
+                &mut self.apu,
+                1,
+                &mut self.io_registers[interrupt_flag_index],
+            );
         }
     }
 
