@@ -128,12 +128,14 @@ struct TraceArgs {
     max_steps: Option<u64>,
     #[arg(long)]
     max_cycles: Option<u64>,
-    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
-    #[arg(long = "no-exit-on-jr-fe", action = clap::ArgAction::SetFalse)]
+    #[arg(long = "exit-on-jr-fe", action = clap::ArgAction::SetTrue, overrides_with = "no_exit_on_jr_fe")]
     exit_on_jr_fe: bool,
-    #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
-    #[arg(long = "no-exit-on-unimplemented", action = clap::ArgAction::SetFalse)]
+    #[arg(long = "no-exit-on-jr-fe", action = clap::ArgAction::SetTrue, overrides_with = "exit_on_jr_fe")]
+    no_exit_on_jr_fe: bool,
+    #[arg(long = "exit-on-unimplemented", action = clap::ArgAction::SetTrue, overrides_with = "no_exit_on_unimplemented")]
     exit_on_unimplemented: bool,
+    #[arg(long = "no-exit-on-unimplemented", action = clap::ArgAction::SetTrue, overrides_with = "exit_on_unimplemented")]
+    no_exit_on_unimplemented: bool,
     #[arg(long)]
     watch_io: bool,
     #[arg(long, value_enum, default_value_t = TraceFormat::Normal)]
@@ -168,8 +170,8 @@ impl TraceArgs {
             cycle_step: self.cycle_step,
             max_steps: self.max_steps,
             max_cycles: self.max_cycles,
-            exit_on_jr_fe: self.exit_on_jr_fe,
-            exit_on_unimplemented: self.exit_on_unimplemented,
+            exit_on_jr_fe: self.exit_on_jr_fe || !self.no_exit_on_jr_fe,
+            exit_on_unimplemented: self.exit_on_unimplemented || !self.no_exit_on_unimplemented,
             watch_io: self.watch_io,
             format: self.format,
             summarize_waits,
@@ -1028,6 +1030,56 @@ mod tests {
             },
             unimplemented_opcode: None,
         }
+    }
+
+    #[test]
+    fn cli_accepts_legacy_positive_trace_exit_flags() {
+        let config = TraceArgs::try_parse_from([
+            "trace_rom",
+            "rom.gb",
+            "trace.txt",
+            "--exit-on-jr-fe",
+            "--exit-on-unimplemented",
+        ])
+        .expect("positive exit flags should remain accepted")
+        .into_config();
+
+        assert!(config.exit_on_jr_fe);
+        assert!(config.exit_on_unimplemented);
+    }
+
+    #[test]
+    fn cli_accepts_negative_trace_exit_flags() {
+        let config = TraceArgs::try_parse_from([
+            "trace_rom",
+            "rom.gb",
+            "trace.txt",
+            "--no-exit-on-jr-fe",
+            "--no-exit-on-unimplemented",
+        ])
+        .expect("negative exit flags should remain accepted")
+        .into_config();
+
+        assert!(!config.exit_on_jr_fe);
+        assert!(!config.exit_on_unimplemented);
+    }
+
+    #[test]
+    fn cli_trace_exit_flags_use_last_occurrence() {
+        let config = TraceArgs::try_parse_from([
+            "trace_rom",
+            "rom.gb",
+            "trace.txt",
+            "--no-exit-on-jr-fe",
+            "--exit-on-jr-fe",
+            "--exit-on-unimplemented",
+            "--no-exit-on-unimplemented",
+        ])
+        .expect("opposite exit flags should override each other")
+        .into_config();
+
+        assert!(config.exit_on_jr_fe);
+        assert!(!config.exit_on_unimplemented);
     }
 
     #[test]
