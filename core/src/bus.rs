@@ -171,7 +171,7 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
-        self.cartridge.reset_mapper_state();
+        self.cartridge.reset();
 
         self.boot_rom_enabled = self.boot_rom.is_some();
         self.boot_rom_disable_value = 0;
@@ -211,7 +211,7 @@ impl Bus {
     fn read8_routed(&self, address: u16, dma_bypass: DmaBypass) -> u8 {
         match route_address(address) {
             BusRoute::BootRomOrCartridge => self.read_boot_rom_or_cartridge(address),
-            BusRoute::Cartridge => self.cartridge.read(address),
+            BusRoute::Cartridge => self.cartridge.read8(address),
             BusRoute::PpuVram => {
                 if dma_bypass == DmaBypass::Yes {
                     self.ppu.dma_read_vram(address)
@@ -238,7 +238,7 @@ impl Bus {
     fn write8_routed(&mut self, address: u16, value: u8) {
         match route_address(address) {
             BusRoute::BootRomOrCartridge | BusRoute::Cartridge => {
-                self.cartridge.write(address, value);
+                self.cartridge.write8(address, value);
             }
             BusRoute::PpuVram | BusRoute::PpuOam => self.ppu.write8(address, value),
             BusRoute::WorkRam => self.wram[(address - WRAM_START) as usize] = value,
@@ -258,7 +258,7 @@ impl Bus {
                 .copied()
                 .unwrap_or(0xFF)
         } else {
-            self.cartridge.read(address)
+            self.cartridge.read8(address)
         }
     }
 

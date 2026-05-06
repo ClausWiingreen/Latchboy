@@ -33,16 +33,16 @@ fn save_file_round_trips_battery_backed_ram() {
     fs::write(&rom_path, &rom).expect("rom should be written for path derivation context");
 
     let mut cartridge = Cartridge::from_rom(rom.clone()).expect("cartridge should load");
-    cartridge.write(0xA000, 0xAB);
-    cartridge.write(0xA001, 0xCD);
+    cartridge.write8(0xA000, 0xAB);
+    cartridge.write8(0xA001, 0xCD);
     persist_save_data(&cartridge, &save_path);
 
     let mut reloaded = Cartridge::from_rom(rom).expect("reloaded cartridge should load");
     let load_status = load_save_data_if_available(&mut reloaded, &save_path);
     assert_eq!(load_status, SaveLoadStatus::Loaded);
 
-    assert_eq!(reloaded.read(0xA000), 0xAB);
-    assert_eq!(reloaded.read(0xA001), 0xCD);
+    assert_eq!(reloaded.read8(0xA000), 0xAB);
+    assert_eq!(reloaded.read8(0xA001), 0xCD);
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
@@ -60,8 +60,8 @@ fn load_ignores_corrupt_size_mismatch_and_leaves_ram_zeroed() {
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
     assert_eq!(load_status, SaveLoadStatus::InvalidData);
 
-    assert_eq!(cartridge.read(0xA000), 0x00);
-    assert_eq!(cartridge.read(0xA001), 0x00);
+    assert_eq!(cartridge.read8(0xA000), 0x00);
+    assert_eq!(cartridge.read8(0xA001), 0x00);
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
@@ -105,7 +105,7 @@ fn oversized_save_is_rejected_via_size_check_before_loading() {
     let load_status = load_save_data_if_available(&mut cartridge, &save_path);
     assert_eq!(load_status, SaveLoadStatus::InvalidData);
     assert!(!should_persist_after_load(load_status));
-    assert_eq!(cartridge.read(0xA000), 0x00);
+    assert_eq!(cartridge.read8(0xA000), 0x00);
 
     fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
 }
