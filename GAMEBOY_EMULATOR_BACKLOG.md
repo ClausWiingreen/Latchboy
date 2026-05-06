@@ -401,12 +401,14 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Sprite priority corner cases.
 - [ ] **Performance profiling**
   - [x] CPU hotspots.
-  - [ ] PPU scanline throughput.
+  - [x] PPU scanline throughput.
   - [ ] Audio callback stability.
 
 **Performance profiling notes (2026-05-06)**
 - CPU hotspot profiling now has a dedicated Criterion target, `cpu_hotspots`, covering register ALU dispatch, CB-prefixed bit operations, and stack/control-flow-heavy loops.
+- PPU scanline throughput profiling now has a dedicated Criterion target, `ppu_scanline_throughput`, covering one busy frame of dot-stepped background/window/sprite composition.
 - Benchmarking docs identify `cpu_hotspots` as the focused CPU-dispatch profiling entry point and list the per-hotspot benchmark names used for baseline comparisons.
+- Benchmarking docs identify `ppu_scanline_throughput` as the focused PPU rendering throughput entry point and list the busy-frame benchmark used for baseline comparisons.
 
 **Acceptance criteria**
 - Consistent pass rate across selected official/community suites.

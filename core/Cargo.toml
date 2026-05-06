@@ -33,3 +33,7 @@ harness = false
 [[bench]]
 name = "interrupt_heavy"
 harness = false
+
+[[bench]]
+name = "ppu_scanline_throughput"
+harness = false
