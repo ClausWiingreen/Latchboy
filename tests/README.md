@@ -13,6 +13,23 @@ cargo test -p latchboy-core --test headless_harness
 The harness currently validates that cycle stepping and reset behavior are reproducible,
 using a test-side hash of observable emulator state (`total_cycles`) for deterministic assertions.
 
+## Snapshot-based rendering regression tests
+
+Milestone 9 adds deterministic PPU framebuffer snapshot tests that render synthetic,
+non-copyrighted scenes directly through `latchboy_core::ppu::Ppu` and compare stable
+FNV-1a 64-bit hashes against `tests/rendering_snapshots.toml`. These cases cover
+scrolling background tile fetches plus window/sprite priority composition without
+requiring external ROM fixtures.
+
+Run them with:
+
+```bash
+cargo test -p latchboy-core --test rendering_snapshots
+```
+
+Only update `tests/rendering_snapshots.toml` after reviewing the intentional visual
+behavior change that caused a framebuffer hash delta.
+
 ## External ROM validation flow
 
 Milestone 3.5 adds a ROM manifest consumed by `core/tests/external_rom_validation.rs`:

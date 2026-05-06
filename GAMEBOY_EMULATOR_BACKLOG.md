@@ -394,7 +394,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 - [ ] **Test ROM automation**
   - [x] Integrate Blargg and Mooneye test runs in CI.
-  - [ ] Snapshot-based rendering regression tests.
+  - [x] Snapshot-based rendering regression tests.
 - [ ] **Edge-case behavior fixes**
   - [ ] HALT bug nuances.
   - [ ] STAT interrupt quirks.
