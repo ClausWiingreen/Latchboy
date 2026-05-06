@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 
+use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::input::{Joypad, JoypadButton};
 use crate::observability::PpuSnapshot;
@@ -87,6 +88,7 @@ pub struct Bus {
     joypad: Joypad,
     serial: SerialPort,
     timer: Timer,
+    apu: Apu,
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
     oam_dma_cycles_remaining: u16,
@@ -106,6 +108,7 @@ impl Hash for Bus {
         self.joypad.hash(state);
         self.serial.hash(state);
         self.timer.hash(state);
+        self.apu.hash(state);
         self.hram.hash(state);
         self.interrupt_enable.hash(state);
         self.oam_dma_cycles_remaining.hash(state);
@@ -147,6 +150,7 @@ impl Bus {
             joypad: Joypad::default(),
             serial: SerialPort::default(),
             timer: Timer::default(),
+            apu: Apu::default(),
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
             oam_dma_cycles_remaining: 0,
@@ -193,6 +197,8 @@ impl Bus {
                         self.boot_rom_disable_value
                     } else if address == JOYP_REGISTER {
                         self.joypad.read_p1()
+                    } else if let Some(value) = self.apu.read_register(address) {
+                        value
                     } else if let Some(value) = self.serial.read(address) {
                         value
                     } else if matches!(
@@ -226,6 +232,7 @@ impl Bus {
         self.joypad = Joypad::default();
         self.serial = SerialPort::default();
         self.timer = Timer::default();
+        self.apu = Apu::default();
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
         self.oam_dma_cycles_remaining = 0;
@@ -273,7 +280,9 @@ impl Bus {
                     if requested_interrupt {
                         self.request_joypad_interrupt();
                     }
-                } else if self.serial.write(address, value) {
+                } else if self.apu.write_register(address, value)
+                    || self.serial.write(address, value)
+                {
                 } else if self.ppu.write_register(address, value) {
                     if self.ppu.take_stat_irq_pending() {
                         let interrupt_flag_index =
@@ -316,6 +325,8 @@ impl Bus {
                     self.boot_rom_disable_value
                 } else if address == JOYP_REGISTER {
                     self.joypad.read_p1()
+                } else if let Some(value) = self.apu.read_register(address) {
+                    value
                 } else if let Some(value) = self.serial.read(address) {
                     value
                 } else if matches!(
@@ -377,6 +388,7 @@ impl Bus {
             self.ppu.step(&mut self.io_registers[interrupt_flag_index]);
             self.timer
                 .step(&mut self.io_registers[interrupt_flag_index]);
+            let _ = self.apu.tick(1);
         }
     }
 
@@ -449,6 +461,14 @@ impl Bus {
 
     pub fn take_serial_transfer_log(&mut self) -> Vec<u8> {
         self.serial.take_transfer_log()
+    }
+
+    pub fn pull_audio_samples(&mut self, requested_samples: usize) -> Vec<i16> {
+        self.apu.pull_output_samples(requested_samples)
+    }
+
+    pub fn queued_audio_samples(&self) -> usize {
+        self.apu.queued_samples()
     }
 
     fn record_watch_io_write(&self, address: u16, value: u8) {
@@ -556,6 +576,33 @@ mod tests {
         assert_eq!(bus.read8(crate::serial::SB_REGISTER), 0xFF);
         assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
         assert_eq!(bus.take_serial_transfer_log(), vec![b'P']);
+    }
+
+    #[test]
+    fn apu_mmio_reads_and_writes_are_forwarded_through_bus() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.write8(0xFF24, 0x12);
+        bus.write8(0xFF25, 0x34);
+        assert_eq!(bus.read8(0xFF24), 0x12);
+        assert_eq!(bus.read8(0xFF25), 0x34);
+    }
+
+    #[test]
+    fn apu_power_off_via_mmio_silences_generated_samples() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.tick(20_000);
+        let audible = bus.pull_audio_samples(64);
+        assert!(audible.iter().any(|sample| *sample != 0));
+
+        bus.write8(0xFF26, 0x00);
+        let _ = bus.pull_audio_samples(crate::apu::Apu::OUTPUT_QUEUE_MAX_SAMPLES);
+        bus.tick(20_000);
+        let muted = bus.pull_audio_samples(64);
+        assert!(muted.iter().all(|sample| *sample == 0));
     }
 
     #[test]

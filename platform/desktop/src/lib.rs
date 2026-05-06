@@ -19,6 +19,7 @@ const DMG_FRAME_CYCLES: u32 = 70_224;
 const MAX_CPU_INSTRUCTION_CYCLES: u32 = 24;
 const MAX_CYCLES_BETWEEN_FRAME_POLLS: u32 = DMG_FRAME_CYCLES - MAX_CPU_INSTRUCTION_CYCLES;
 const PAUSED_POLL_SLEEP: Duration = Duration::from_millis(1);
+const AUDIO_PULL_SAMPLES: usize = 1_024;
 
 const JOYPAD_BUTTONS: [JoypadButton; 8] = [
     JoypadButton::A,
@@ -478,8 +479,10 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             let chunk = cycles_remaining.min(MAX_CYCLES_BETWEEN_FRAME_POLLS);
             emulator.step_cycles(chunk);
             if let Some(sink) = audio_sink.as_deref_mut() {
-                let samples = emulator.drain_audio_samples();
-                if !samples.is_empty() {
+                let queued_samples = emulator.queued_audio_samples();
+                if queued_samples != 0 {
+                    let request = queued_samples.min(AUDIO_PULL_SAMPLES);
+                    let samples = emulator.pull_audio_samples(request);
                     sink.push_samples(&samples)
                         .map_err(EmulationRunError::Audio)?;
                 }
