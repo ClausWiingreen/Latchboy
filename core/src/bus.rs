@@ -280,8 +280,9 @@ impl Bus {
                     if requested_interrupt {
                         self.request_joypad_interrupt();
                     }
-                } else if self.apu.write_register(address, value) {
-                } else if self.serial.write(address, value) {
+                } else if self.apu.write_register(address, value)
+                    || self.serial.write(address, value)
+                {
                 } else if self.ppu.write_register(address, value) {
                     if self.ppu.take_stat_irq_pending() {
                         let interrupt_flag_index =
