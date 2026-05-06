@@ -23,7 +23,7 @@ Tip: for quick local iteration, run a single target:
 
 Use `audio_callback_stability` as the focused APU output queue and audio-device callback profiling entry point. It simulates a steady 512-sample callback cadence while the APU produces mixed output for all tone/wave channels:
 
-- `audio_callback_stability_512_sample_cadence`: producer tick plus fixed-size callback pulls over 120 callbacks, including queue trimming/padding behavior.
+- `audio_callback_stability_512_sample_cadence`: prefilled queue trimming plus producer ticks and fixed-size callback pulls over 120 callbacks.
 
 ## CPU hotspot coverage
 

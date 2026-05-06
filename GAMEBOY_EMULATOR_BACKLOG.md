@@ -410,7 +410,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - Benchmarking docs identify `cpu_hotspots` as the focused CPU-dispatch profiling entry point and list the per-hotspot benchmark names used for baseline comparisons.
 - Benchmarking docs identify `ppu_scanline_throughput` as the focused PPU rendering throughput entry point and list the busy-frame benchmark used for baseline comparisons.
 
-- Audio callback stability profiling now has a dedicated Criterion target, `audio_callback_stability`, covering a steady 512-sample callback cadence while exercising APU sample generation and queue pull behavior.
+- Audio callback stability profiling now has a dedicated Criterion target, `audio_callback_stability`, covering a prefilled queue trim and steady 512-sample callback cadence while exercising APU sample generation and queue pull behavior.
 
 **Acceptance criteria**
 - Consistent pass rate across selected official/community suites.

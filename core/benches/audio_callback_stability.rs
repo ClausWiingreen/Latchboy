@@ -5,6 +5,7 @@ const CALLBACK_SAMPLES: usize = 512;
 const CALLBACKS_PER_RUN: usize = 120;
 const CALLBACK_T_CYCLES: u32 =
     (CALLBACK_SAMPLES as u32 * Apu::DMG_CLOCK_HZ) / Apu::OUTPUT_SAMPLE_RATE_HZ;
+const PREFILL_T_CYCLES: u32 = Apu::DMG_CLOCK_HZ / 10;
 
 fn configured_apu() -> Apu {
     let mut apu = Apu::new();
@@ -13,6 +14,10 @@ fn configured_apu() -> Apu {
     apu.set_ch3_enabled(true);
     assert!(apu.write_register(0xFF24, 0x77));
     assert!(apu.write_register(0xFF25, 0x77));
+
+    let _ = apu.tick(PREFILL_T_CYCLES);
+    assert!(apu.queued_samples() > Apu::OUTPUT_QUEUE_TARGET_SAMPLES);
+
     apu
 }
 
