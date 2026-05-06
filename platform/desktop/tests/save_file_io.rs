@@ -48,6 +48,100 @@ fn save_file_round_trips_battery_backed_ram() {
 }
 
 #[test]
+fn persist_save_data_creates_parent_directories_and_overwrites_existing_save() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("nested").join("saves").join("overwrite.sav");
+    let rom = build_rom(CartridgeType::RomRamBattery.code(), 0x02);
+
+    fs::create_dir_all(save_path.parent().expect("save path should have parent"))
+        .expect("save parent should be created");
+    fs::write(&save_path, vec![0x00; 8 * 1024]).expect("existing save should be written");
+
+    let mut cartridge = Cartridge::from_rom(rom.clone()).expect("cartridge should load");
+    cartridge.write8(0xA000, 0x5A);
+    cartridge.write8(0xA001, 0xA5);
+    persist_save_data(&cartridge, &save_path);
+
+    let mut reloaded = Cartridge::from_rom(rom).expect("reloaded cartridge should load");
+    let load_status = load_save_data_if_available(&mut reloaded, &save_path);
+    assert_eq!(load_status, SaveLoadStatus::Loaded);
+    assert_eq!(reloaded.read8(0xA000), 0x5A);
+    assert_eq!(reloaded.read8(0xA001), 0xA5);
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn persist_save_data_creates_missing_parent_directories() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("new").join("deep").join("save.sav");
+    let rom = build_rom(CartridgeType::RomRamBattery.code(), 0x02);
+
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
+    cartridge.write8(0xA000, 0x7E);
+    persist_save_data(&cartridge, &save_path);
+
+    let bytes = fs::read(&save_path).expect("save file should be created in missing parent dirs");
+    assert_eq!(bytes.len(), 8 * 1024);
+    assert_eq!(bytes[0], 0x7E);
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn persist_save_data_skips_non_battery_backed_ram() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("non-battery.sav");
+    let rom = build_rom(CartridgeType::RomRam.code(), 0x02);
+
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
+    cartridge.write8(0xA000, 0x66);
+    persist_save_data(&cartridge, &save_path);
+
+    assert!(
+        !save_path.exists(),
+        "non-battery-backed cartridges should not create save files"
+    );
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn load_save_data_skips_non_battery_backed_ram() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("non-battery-load.sav");
+    let rom = build_rom(CartridgeType::RomRam.code(), 0x02);
+    fs::write(&save_path, vec![0x99; 8 * 1024]).expect("save file should be written");
+
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
+    let load_status = load_save_data_if_available(&mut cartridge, &save_path);
+
+    assert_eq!(load_status, SaveLoadStatus::NotBatteryBacked);
+    assert_eq!(cartridge.read8(0xA000), 0x00);
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
+fn persist_save_data_does_not_replace_directory_destination() {
+    let temp_dir = create_temp_dir();
+    let save_path = temp_dir.join("directory.sav");
+    let rom = build_rom(CartridgeType::RomRamBattery.code(), 0x02);
+    fs::create_dir_all(&save_path).expect("directory destination should be created");
+
+    let mut cartridge = Cartridge::from_rom(rom).expect("cartridge should load");
+    cartridge.write8(0xA000, 0xAA);
+    persist_save_data(&cartridge, &save_path);
+
+    assert!(
+        save_path.is_dir(),
+        "failed persistence should leave a directory destination untouched"
+    );
+
+    fs::remove_dir_all(temp_dir).expect("temp dir should be removed");
+}
+
+#[test]
 fn load_ignores_corrupt_size_mismatch_and_leaves_ram_zeroed() {
     let temp_dir = create_temp_dir();
     let rom_path = temp_dir.join("corrupt.gb");
