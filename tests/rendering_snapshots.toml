@@ -1,0 +1,8 @@
+# Deterministic PPU rendering regression snapshots.
+# Hashes are FNV-1a 64-bit over the row-major 160x144 DMG shade-index framebuffer.
+
+[snapshots.scrolled_checkerboard_background]
+framebuffer_fnv1a64 = "a8a5d979d0ac1ea5"
+
+[snapshots.window_sprite_priority_scene]
+framebuffer_fnv1a64 = "76152d676ee8678d"
