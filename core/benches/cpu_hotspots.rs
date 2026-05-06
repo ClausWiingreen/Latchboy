@@ -21,7 +21,7 @@ fn bench_register_alu_dispatch(c: &mut Criterion) {
             (0x010A, 0xB0), // OR B
             (0x010B, 0xB8), // CP B
             (0x010C, 0x18), // JR r8
-            (0x010D, 0xF5), // back to ALU mix at 0x0104
+            (0x010D, 0xF6), // back to ALU mix at 0x0104
         ],
         b"ALUH",
     );
@@ -88,7 +88,7 @@ fn bench_stack_and_control_flow(c: &mut Criterion) {
             (0x010A, 0x20),
             (0x010B, 0x01),
             (0x010C, 0x18), // JR r8
-            (0x010D, 0xFA), // back to CALL at 0x0109
+            (0x010D, 0xFB), // back to CALL at 0x0109
             (0x0120, 0xC5), // PUSH BC
             (0x0121, 0xD5), // PUSH DE
             (0x0122, 0xD1), // POP DE
