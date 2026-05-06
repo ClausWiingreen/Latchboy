@@ -1,0 +1,9 @@
+# LR35902 opcode metadata source consumed by core/build.rs.
+# The build script expands these opcode-pattern rows into const Rust tables used by Cpu::step.
+# Each row names the instruction family and includes opcode(s), operands, and cycle metadata.
+
+[[opcodes]]
+family = "base"
+
+[[cb_opcodes]]
+family = "cb_bitops"
