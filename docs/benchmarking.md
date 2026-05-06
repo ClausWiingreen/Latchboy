@@ -15,6 +15,7 @@ Tip: for quick local iteration, run a single target:
 - `cargo bench -p latchboy-core --bench emulator_step_cycles`
 - `cargo bench -p latchboy-core --bench instruction_stepping`
 - `cargo bench -p latchboy-core --bench interrupt_heavy`
+- `cargo bench -p latchboy-core --bench ppu_scanline_throughput`
 - `cargo bench -p latchboy-desktop --bench framebuffer_blit`
 
 ## CPU hotspot coverage
@@ -24,6 +25,12 @@ Use `cpu_hotspots` as the focused CPU-dispatch profiling entry point. It isolate
 - `cpu_hotspot_register_alu_dispatch`: tight register ALU opcode dispatch.
 - `cpu_hotspot_cb_prefixed_bit_ops`: CB-prefixed register and `(HL)` bit operations.
 - `cpu_hotspot_stack_and_control_flow`: CALL/RET plus PUSH/POP-heavy control flow.
+
+## PPU scanline coverage
+
+Use `ppu_scanline_throughput` as the focused PPU rendering throughput entry point. It steps one busy DMG frame through the PPU dot pipeline with background, window, and sprite composition enabled:
+
+- `ppu_scanline_throughput_busy_frame`: visible scanline stepping and framebuffer composition for a populated scene.
 
 ## PR review baseline metrics
 
