@@ -368,6 +368,49 @@ fn required_manifest_entries_are_covered_by_milestone_gate_tests() {
 }
 
 #[test]
+fn milestone9_required_suite_baseline_covers_selected_community_suites() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    let required_suite_baseline = [
+        "blargg_cpu_instrs",
+        "blargg_instr_timing",
+        "mooneye_acceptance_boot",
+        "mooneye_acceptance_timer",
+        "mooneye_acceptance_ppu",
+    ];
+
+    for suite in required_suite_baseline {
+        assert!(
+            manifest
+                .roms
+                .iter()
+                .any(|rom| rom.required && rom.suite == suite),
+            "Milestone 9 selected-suite baseline must include at least one required {suite} entry"
+        );
+    }
+
+    let required_roms: Vec<&RomEntry> = manifest.roms.iter().filter(|rom| rom.required).collect();
+    assert!(
+        !required_roms.is_empty(),
+        "Milestone 9 selected-suite baseline must include required ROM automation entries"
+    );
+
+    for rom in required_roms {
+        assert!(
+            !is_noop_pass_condition(rom.pass_condition),
+            "{} is part of the required Milestone 9 suite baseline and must have an objective pass_condition",
+            rom.id
+        );
+        assert!(
+            rom.cycle_limit > 0 && rom.frame_limit > 0 && rom.wall_time_limit_ms > 0,
+            "{} is part of the required Milestone 9 suite baseline and must define deterministic budgets",
+            rom.id
+        );
+    }
+}
+
+#[test]
 fn rom_manifest_registers_required_milestone_2_and_3_suites() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
