@@ -187,12 +187,23 @@ pub enum RuntimeEvent {
     SetFastForward(bool),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EmulationRunStats {
     pub frames_presented: u64,
     pub iterations: u64,
     pub resets_triggered: u64,
     pub reloads_triggered: u64,
+}
+
+impl EmulationRunStats {
+    fn record_runtime_outcome(&mut self, outcome: RuntimeControlOutcome) {
+        self.resets_triggered = self
+            .resets_triggered
+            .saturating_add(outcome.resets_triggered);
+        self.reloads_triggered = self
+            .reloads_triggered
+            .saturating_add(outcome.reloads_triggered);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -203,6 +214,89 @@ pub struct RuntimeSessionState {
     pub frame_steps_remaining: u64,
     pub fast_forward: bool,
     pub reload_requested: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RuntimeControlOutcome {
+    pub resets_triggered: u64,
+    pub reloads_triggered: u64,
+    pub presenter_open: bool,
+    pub reload_requested: bool,
+}
+
+impl RuntimeControlOutcome {
+    pub fn should_stop(&self) -> bool {
+        !self.presenter_open || self.reload_requested
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct RuntimeController;
+
+impl RuntimeController {
+    pub fn poll_and_apply<P: FramePresenter>(
+        presenter: &mut P,
+        emulator: &mut Emulator,
+        runtime_state: &mut RuntimeSessionState,
+    ) -> Result<RuntimeControlOutcome, P::Error> {
+        presenter.poll_events()?;
+
+        let mut outcome = RuntimeControlOutcome::default();
+        for event in presenter.drain_runtime_events() {
+            match event {
+                RuntimeEvent::Reset => {
+                    emulator.reset();
+                    outcome.resets_triggered = outcome.resets_triggered.saturating_add(1);
+                }
+                RuntimeEvent::ReloadRom => {
+                    runtime_state.reload_requested = true;
+                    outcome.reloads_triggered = outcome.reloads_triggered.saturating_add(1);
+                }
+                RuntimeEvent::SaveState { slot } => {
+                    runtime_state
+                        .save_state_slots
+                        .insert(slot, emulator.clone());
+                }
+                RuntimeEvent::LoadState { slot } => {
+                    if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
+                        *emulator = saved.clone();
+                        for button in JOYPAD_BUTTONS {
+                            emulator.set_button_pressed(
+                                button,
+                                runtime_state.pressed_buttons.contains(&button),
+                            );
+                        }
+                    }
+                }
+                RuntimeEvent::SetPaused(paused) => {
+                    runtime_state.paused = paused;
+                    if !paused {
+                        runtime_state.frame_steps_remaining = 0;
+                    }
+                }
+                RuntimeEvent::StepFrame => {
+                    if runtime_state.paused {
+                        runtime_state.frame_steps_remaining =
+                            runtime_state.frame_steps_remaining.saturating_add(1);
+                    }
+                }
+                RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
+            }
+        }
+
+        for (button, pressed) in presenter.drain_input_events() {
+            if pressed {
+                runtime_state.pressed_buttons.insert(button);
+            } else {
+                runtime_state.pressed_buttons.remove(&button);
+            }
+            emulator.set_button_pressed(button, pressed);
+        }
+
+        outcome.presenter_open = presenter.is_open();
+        outcome.reload_requested = runtime_state.reload_requested;
+        Ok(outcome)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -293,73 +387,19 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
     }
 
     let mut surface = vec![0u32; FRAMEBUFFER_LEN];
-    let mut frames_presented = 0u64;
-    let mut iterations = 0u64;
-    let mut resets_triggered = 0u64;
-    let mut reloads_triggered = 0u64;
+    let mut stats = EmulationRunStats::default();
 
     while presenter.is_open() {
         if let Some(limit) = frame_limit {
-            if frames_presented >= limit {
+            if stats.frames_presented >= limit {
                 break;
             }
         }
-        presenter
-            .poll_events()
+        let outcome = RuntimeController::poll_and_apply(presenter, emulator, runtime_state)
             .map_err(EmulationRunError::Present)?;
-        for event in presenter.drain_runtime_events() {
-            match event {
-                RuntimeEvent::Reset => {
-                    emulator.reset();
-                    resets_triggered = resets_triggered.saturating_add(1);
-                }
-                RuntimeEvent::ReloadRom => {
-                    runtime_state.reload_requested = true;
-                    reloads_triggered = reloads_triggered.saturating_add(1);
-                }
-                RuntimeEvent::SaveState { slot } => {
-                    runtime_state
-                        .save_state_slots
-                        .insert(slot, emulator.clone());
-                }
-                RuntimeEvent::LoadState { slot } => {
-                    if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
-                        *emulator = saved.clone();
-                        for button in JOYPAD_BUTTONS {
-                            emulator.set_button_pressed(
-                                button,
-                                runtime_state.pressed_buttons.contains(&button),
-                            );
-                        }
-                    }
-                }
-                RuntimeEvent::SetPaused(paused) => {
-                    runtime_state.paused = paused;
-                    if !paused {
-                        runtime_state.frame_steps_remaining = 0;
-                    }
-                }
-                RuntimeEvent::StepFrame => {
-                    if runtime_state.paused {
-                        runtime_state.frame_steps_remaining =
-                            runtime_state.frame_steps_remaining.saturating_add(1);
-                    }
-                }
-                RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
-            }
-        }
-        if runtime_state.reload_requested {
-            break;
-        }
-        for (button, pressed) in presenter.drain_input_events() {
-            if pressed {
-                runtime_state.pressed_buttons.insert(button);
-            } else {
-                runtime_state.pressed_buttons.remove(&button);
-            }
-            emulator.set_button_pressed(button, pressed);
-        }
-        if !presenter.is_open() {
+        let should_stop = outcome.should_stop();
+        stats.record_runtime_outcome(outcome);
+        if should_stop {
             break;
         }
         if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
@@ -367,7 +407,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             continue;
         }
         if present_if_ready(emulator, presenter, &mut surface)? {
-            frames_presented += 1;
+            stats.frames_presented += 1;
             if runtime_state.paused && runtime_state.frame_steps_remaining > 0 {
                 runtime_state.frame_steps_remaining -= 1;
             }
@@ -376,92 +416,21 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
         let mut cycles_remaining = cycle_step;
         while cycles_remaining != 0 && presenter.is_open() {
             if let Some(limit) = iteration_limit {
-                if iterations >= limit {
-                    return Ok(EmulationRunStats {
-                        frames_presented,
-                        iterations,
-                        resets_triggered,
-                        reloads_triggered,
-                    });
+                if stats.iterations >= limit {
+                    return Ok(stats);
                 }
             }
             if let Some(limit) = frame_limit {
-                if frames_presented >= limit {
-                    return Ok(EmulationRunStats {
-                        frames_presented,
-                        iterations,
-                        resets_triggered,
-                        reloads_triggered,
-                    });
+                if stats.frames_presented >= limit {
+                    return Ok(stats);
                 }
             }
-            presenter
-                .poll_events()
+            let outcome = RuntimeController::poll_and_apply(presenter, emulator, runtime_state)
                 .map_err(EmulationRunError::Present)?;
-            for event in presenter.drain_runtime_events() {
-                match event {
-                    RuntimeEvent::Reset => {
-                        emulator.reset();
-                        resets_triggered = resets_triggered.saturating_add(1);
-                    }
-                    RuntimeEvent::ReloadRom => {
-                        runtime_state.reload_requested = true;
-                        reloads_triggered = reloads_triggered.saturating_add(1);
-                    }
-                    RuntimeEvent::SaveState { slot } => {
-                        runtime_state
-                            .save_state_slots
-                            .insert(slot, emulator.clone());
-                    }
-                    RuntimeEvent::LoadState { slot } => {
-                        if let Some(saved) = runtime_state.save_state_slots.get(&slot) {
-                            *emulator = saved.clone();
-                            for button in JOYPAD_BUTTONS {
-                                emulator.set_button_pressed(
-                                    button,
-                                    runtime_state.pressed_buttons.contains(&button),
-                                );
-                            }
-                        }
-                    }
-                    RuntimeEvent::SetPaused(paused) => {
-                        runtime_state.paused = paused;
-                        if !paused {
-                            runtime_state.frame_steps_remaining = 0;
-                        }
-                    }
-                    RuntimeEvent::StepFrame => {
-                        if runtime_state.paused {
-                            runtime_state.frame_steps_remaining =
-                                runtime_state.frame_steps_remaining.saturating_add(1);
-                        }
-                    }
-                    RuntimeEvent::SetFastForward(enabled) => runtime_state.fast_forward = enabled,
-                }
-            }
-            if runtime_state.reload_requested {
-                return Ok(EmulationRunStats {
-                    frames_presented,
-                    iterations,
-                    resets_triggered,
-                    reloads_triggered,
-                });
-            }
-            for (button, pressed) in presenter.drain_input_events() {
-                if pressed {
-                    runtime_state.pressed_buttons.insert(button);
-                } else {
-                    runtime_state.pressed_buttons.remove(&button);
-                }
-                emulator.set_button_pressed(button, pressed);
-            }
-            if !presenter.is_open() {
-                return Ok(EmulationRunStats {
-                    frames_presented,
-                    iterations,
-                    resets_triggered,
-                    reloads_triggered,
-                });
+            let should_stop = outcome.should_stop();
+            stats.record_runtime_outcome(outcome);
+            if should_stop {
+                return Ok(stats);
             }
             if runtime_state.paused && runtime_state.frame_steps_remaining == 0 {
                 thread::sleep(PAUSED_POLL_SLEEP);
@@ -469,7 +438,7 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
             }
 
             if present_if_ready(emulator, presenter, &mut surface)? {
-                frames_presented += 1;
+                stats.frames_presented += 1;
                 if runtime_state.paused && runtime_state.frame_steps_remaining > 0 {
                     runtime_state.frame_steps_remaining -= 1;
                 }
@@ -488,16 +457,11 @@ pub fn run_emulation_loop_with_stats_and_state<P: FramePresenter>(
                 }
             }
             cycles_remaining -= chunk;
-            iterations += 1;
+            stats.iterations += 1;
         }
     }
 
-    Ok(EmulationRunStats {
-        frames_presented,
-        iterations,
-        resets_triggered,
-        reloads_triggered,
-    })
+    Ok(stats)
 }
 
 /// Backward-compatible convenience wrapper that returns only frame count.
@@ -521,9 +485,10 @@ pub fn run_emulation_loop<P: FramePresenter>(
 #[cfg(test)]
 mod tests {
     use super::{
-        run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeEvent, RuntimeSessionState,
+        run_emulation_loop_with_stats_and_state, FramePresenter, RuntimeController, RuntimeEvent,
+        RuntimeSessionState,
     };
-    use latchboy_core::Emulator;
+    use latchboy_core::{Emulator, JoypadButton};
     use std::convert::Infallible;
 
     struct RuntimeEventOnlyPresenter {
@@ -555,6 +520,83 @@ mod tests {
         fn present_frame(&mut self, _surface: &[u32]) -> Result<(), Self::Error> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn runtime_controller_applies_events_and_reports_outcome_counters() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+        let mut presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![
+                RuntimeEvent::Reset,
+                RuntimeEvent::SetPaused(true),
+                RuntimeEvent::StepFrame,
+                RuntimeEvent::SetFastForward(true),
+                RuntimeEvent::ReloadRom,
+            ],
+            input_events: Vec::new(),
+        };
+
+        let outcome =
+            RuntimeController::poll_and_apply(&mut presenter, &mut emulator, &mut runtime_state)
+                .expect("runtime controller should apply events");
+
+        assert_eq!(outcome.resets_triggered, 1);
+        assert_eq!(outcome.reloads_triggered, 1);
+        assert!(outcome.reload_requested);
+        assert!(outcome.should_stop());
+        assert!(runtime_state.paused);
+        assert_eq!(runtime_state.frame_steps_remaining, 1);
+        assert!(runtime_state.fast_forward);
+        assert!(runtime_state.reload_requested);
+    }
+
+    #[test]
+    fn runtime_controller_drains_input_and_synchronizes_pressed_buttons() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+        runtime_state.pressed_buttons.insert(JoypadButton::A);
+        let mut presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: Vec::new(),
+            input_events: vec![(JoypadButton::B, true), (JoypadButton::A, false)],
+        };
+
+        RuntimeController::poll_and_apply(&mut presenter, &mut emulator, &mut runtime_state)
+            .expect("runtime controller should drain input events");
+
+        assert!(runtime_state.pressed_buttons.contains(&JoypadButton::B));
+        assert!(!runtime_state.pressed_buttons.contains(&JoypadButton::A));
+        assert!(presenter.input_events.is_empty());
+    }
+
+    #[test]
+    fn runtime_controller_save_and_load_slots_restore_emulator_state() {
+        let mut emulator = Emulator::new();
+        let mut runtime_state = RuntimeSessionState::default();
+
+        emulator.step_cycles(1_024);
+        let expected = emulator.clone();
+        let mut save_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::SaveState { slot: 1 }],
+            input_events: Vec::new(),
+        };
+        RuntimeController::poll_and_apply(&mut save_presenter, &mut emulator, &mut runtime_state)
+            .expect("runtime controller should save state");
+
+        emulator.reset();
+
+        let mut load_presenter = RuntimeEventOnlyPresenter {
+            open: true,
+            events: vec![RuntimeEvent::LoadState { slot: 1 }],
+            input_events: Vec::new(),
+        };
+        RuntimeController::poll_and_apply(&mut load_presenter, &mut emulator, &mut runtime_state)
+            .expect("runtime controller should load state");
+
+        assert_eq!(emulator, expected);
     }
 
     #[test]
