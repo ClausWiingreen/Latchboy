@@ -11,12 +11,19 @@ This repository uses [Criterion](https://bheisler.github.io/criterion.rs/book/in
 
 Tip: for quick local iteration, run a single target:
 
+- `cargo bench -p latchboy-core --bench audio_callback_stability`
 - `cargo bench -p latchboy-core --bench cpu_hotspots`
 - `cargo bench -p latchboy-core --bench emulator_step_cycles`
 - `cargo bench -p latchboy-core --bench instruction_stepping`
 - `cargo bench -p latchboy-core --bench interrupt_heavy`
 - `cargo bench -p latchboy-core --bench ppu_scanline_throughput`
 - `cargo bench -p latchboy-desktop --bench framebuffer_blit`
+
+## Audio callback stability coverage
+
+Use `audio_callback_stability` as the focused APU output queue and audio-device callback profiling entry point. It simulates a steady 512-sample callback cadence while the APU produces mixed output for all tone/wave channels:
+
+- `audio_callback_stability_512_sample_cadence`: producer tick plus fixed-size callback pulls over 120 callbacks, including queue trimming/padding behavior.
 
 ## CPU hotspot coverage
 
