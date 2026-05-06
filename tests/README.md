@@ -13,6 +13,25 @@ cargo test -p latchboy-core --test headless_harness
 The harness currently validates that cycle stepping and reset behavior are reproducible,
 using a test-side hash of observable emulator state (`total_cycles`) for deterministic assertions.
 
+## Milestone 9 selected-suite baseline
+
+Milestone 9 hardening keeps selected official/community-suite automation tied to
+objective manifest coverage. The `external_rom_validation` test target includes
+`milestone9_required_suite_baseline_covers_selected_community_suites`, which
+requires required entries for the selected Blargg CPU/instruction-timing suites
+and Mooneye boot/timer/PPU suites. It also verifies that every required manifest
+entry has a non-`none` pass condition plus deterministic cycle, frame, and
+wall-time budgets.
+
+Run the baseline mapping guard with:
+
+```bash
+cargo test -p latchboy-core --test external_rom_validation milestone9_required_suite_baseline_covers_selected_community_suites
+```
+
+Fixture-backed pass/fail execution still uses `LATCHBOY_ROM_ROOT` and the
+milestone-specific external validation tests documented below.
+
 ## Snapshot-based rendering regression tests
 
 Milestone 9 adds deterministic PPU framebuffer snapshot tests that render synthetic,
