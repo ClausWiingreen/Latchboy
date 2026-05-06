@@ -396,7 +396,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Integrate Blargg and Mooneye test runs in CI.
   - [x] Snapshot-based rendering regression tests.
   - [x] Add an automated Milestone 9 selected-suite baseline guard requiring objective pass conditions and deterministic budgets for required Blargg/Mooneye manifest entries.
-- [ ] **Edge-case behavior fixes**
+- [x] **Edge-case behavior fixes**
   - [x] HALT bug nuances.
   - [x] STAT interrupt quirks (DMG STAT write glitch + source-line handoff coverage).
   - [x] Sprite priority corner cases.
@@ -409,6 +409,11 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 **Test ROM automation notes (2026-05-06)**
 - The Milestone 9 selected-suite baseline is now guarded by `milestone9_required_suite_baseline_covers_selected_community_suites`, which requires at least one required entry for Blargg CPU instructions, Blargg instruction timing, Mooneye boot, Mooneye timer, and Mooneye PPU suites.
 - The same guard requires every required manifest entry to use a non-`none` pass condition and deterministic cycle/frame/wall-time budgets, preserving objective pass-rate accounting for fixture-backed external validation runs.
+
+**Edge-case behavior notes (2026-05-06)**
+- HALT bug handling is covered by focused CPU regression tests for repeated opcode fetch behavior and EI/HALT return semantics.
+- STAT interrupt quirks now include the DMG STAT write glitch and source-line handoff coverage, with checks that writes do not retrigger while the STAT line is already high.
+- Sprite priority corner cases now cover DMG OAM ordering, BG-over-OBJ masking, transparent winner pixels, and the LCDC background-disable exception.
 
 **Performance profiling notes (2026-05-06)**
 - CPU hotspot profiling now has a dedicated Criterion target, `cpu_hotspots`, covering register ALU dispatch, CB-prefixed bit operations, and stack/control-flow-heavy loops.
