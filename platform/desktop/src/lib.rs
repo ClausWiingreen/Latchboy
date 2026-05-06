@@ -1,3 +1,4 @@
+pub mod debug_harness;
 pub mod savefile;
 
 use std::collections::{HashMap, HashSet};

@@ -1,9 +1,14 @@
-use std::fs;
 use std::path::PathBuf;
 
 use clap::Parser;
-use latchboy_core::{cartridge::Cartridge, Emulator};
-use latchboy_desktop::{write_rgb_surface_to_png, DMG_PALETTE_RGB};
+use latchboy_core::Emulator;
+use latchboy_desktop::{
+    debug_harness::{
+        ensure_output_dir, load_emulator, step_frames, write_rgb_surface_png, write_text_file,
+        DebugHarnessResult,
+    },
+    DMG_PALETTE_RGB,
+};
 
 const TILE_SIZE: usize = 8;
 const TILE_BYTES: usize = 16;
@@ -24,50 +29,24 @@ struct Args {
     frames: u64,
 }
 
-fn main() -> Result<(), String> {
+fn main() -> DebugHarnessResult<()> {
     let args = Args::parse();
-    let rom_bytes = fs::read(&args.rom_path).map_err(|error| {
-        format!(
-            "failed to read ROM '{}': {error:?}",
-            args.rom_path.display()
-        )
-    })?;
-    let cartridge = Cartridge::from_rom(rom_bytes).map_err(|error| {
-        format!(
-            "failed to parse ROM '{}': {error:?}",
-            args.rom_path.display()
-        )
-    })?;
+    let mut emulator = load_emulator(&args.rom_path)?;
+    step_frames(&mut emulator, args.frames, 1_024)?;
 
-    let mut emulator = Emulator::from_cartridge(cartridge);
-    let mut frames_seen = 0u64;
-    while frames_seen < args.frames {
-        emulator.step_cycles(1_024);
-        if emulator.take_frame_ready() {
-            frames_seen += 1;
-        }
-    }
-
-    fs::create_dir_all(&args.output_dir).map_err(|error| {
-        format!(
-            "failed to create output dir '{}': {error}",
-            args.output_dir.display()
-        )
-    })?;
+    ensure_output_dir(&args.output_dir)?;
 
     let atlas = build_tile_atlas(&emulator);
     let atlas_path = args.output_dir.join("tile-atlas.png");
-    write_rgb_surface_to_png(
+    write_rgb_surface_png(
         &atlas_path,
         &atlas,
         (ATLAS_COLUMNS * TILE_SIZE) as u32,
         (ATLAS_ROWS * TILE_SIZE) as u32,
-    )
-    .map_err(|error| format!("failed to write '{}': {error}", atlas_path.display()))?;
+    )?;
 
     let oam_path = args.output_dir.join("oam.txt");
-    fs::write(&oam_path, build_oam_dump(&emulator))
-        .map_err(|error| format!("failed to write '{}': {error}", oam_path.display()))?;
+    write_text_file(&oam_path, build_oam_dump(&emulator))?;
 
     println!("wrote {} and {}", atlas_path.display(), oam_path.display());
     Ok(())
