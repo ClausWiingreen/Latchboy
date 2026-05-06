@@ -255,14 +255,6 @@ impl PaletteRegister {
     }
 }
 
-/// Resolves a 2-bit DMG palette shade (0-3) from a palette register and logical color id.
-///
-/// DMG palette registers (`BGP`, `OBP0`, `OBP1`) encode four 2-bit shade selectors:
-/// - bits 1:0 map color id 0
-/// - bits 3:2 map color id 1
-/// - bits 5:4 map color id 2
-/// - bits 7:6 map color id 3
-
 #[cfg(test)]
 const LCDC_ENABLE: u8 = Lcdc::LCD_ENABLE.bits();
 #[cfg(test)]
@@ -300,6 +292,13 @@ const SPRITE_ATTRIBUTE_X_FLIP: u8 = SpriteAttributes::X_FLIP.bits();
 #[cfg(test)]
 const SPRITE_ATTRIBUTE_PALETTE: u8 = SpriteAttributes::DMG_PALETTE_1.bits();
 
+/// Resolves a 2-bit DMG palette shade (0-3) from a palette register and logical color id.
+///
+/// DMG palette registers (`BGP`, `OBP0`, `OBP1`) encode four 2-bit shade selectors:
+/// - bits 1:0 map color id 0
+/// - bits 3:2 map color id 1
+/// - bits 5:4 map color id 2
+/// - bits 7:6 map color id 3
 pub fn dmg_palette_shade(palette: impl Into<PaletteRegister>, color_id: u8) -> u8 {
     palette.into().shade(color_id)
 }
