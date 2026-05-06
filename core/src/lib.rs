@@ -5,6 +5,7 @@ pub mod cpu;
 pub mod frontend;
 pub mod input;
 pub mod interrupts;
+pub mod memory;
 pub mod observability;
 pub mod ppu;
 pub mod serial;
