@@ -398,7 +398,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Edge-case behavior fixes**
   - [x] HALT bug nuances.
   - [x] STAT interrupt quirks (DMG STAT write glitch + source-line handoff coverage).
-  - [ ] Sprite priority corner cases.
+  - [x] Sprite priority corner cases.
 - [ ] **Performance profiling**
   - [ ] CPU hotspots.
   - [ ] PPU scanline throughput.

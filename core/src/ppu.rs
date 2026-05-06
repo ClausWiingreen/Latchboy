@@ -542,7 +542,8 @@ impl Ppu {
         }
 
         candidate.and_then(|(_, _, pixel, attributes)| {
-            if (attributes & SPRITE_ATTRIBUTE_PRIORITY_BIT) != 0 && bg_color_id != 0 {
+            let bg_can_mask_obj = (self.lcdc & LCDC_BG_ENABLE_BIT) != 0 && bg_color_id != 0;
+            if (attributes & SPRITE_ATTRIBUTE_PRIORITY_BIT) != 0 && bg_can_mask_obj {
                 None
             } else {
                 Some(pixel)
@@ -1515,7 +1516,7 @@ mod tests {
     #[test]
     fn sprite_pixel_honors_priority_and_oam_ordering_rules() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_BG_ENABLE_BIT);
 
         ppu.write_oam(0xFE00, 16);
         ppu.write_oam(0xFE01, 8);
@@ -1596,7 +1597,7 @@ mod tests {
     #[test]
     fn sprite_pixel_does_not_leak_lower_priority_obj_behind_non_zero_bg() {
         let mut ppu = Ppu::default();
-        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT | LCDC_BG_ENABLE_BIT);
 
         // Higher-priority sprite in OAM order, masked by BG-over-OBJ when BG is non-zero.
         ppu.write_oam(0xFE00, 16);
@@ -1617,6 +1618,57 @@ mod tests {
         assert_eq!(ppu.sprite_pixel(0, 0, 2), None);
         assert_eq!(
             ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_allows_lower_priority_sprite_through_transparent_winner_pixel() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+
+        // Lower-X sprite has higher DMG OBJ priority, but its pixel at (0, 0) is transparent.
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x08);
+        ppu.write_oam(0xFE03, 0x00);
+        ppu.write_vram(0x8080, 0x00);
+        ppu.write_vram(0x8081, 0x00);
+
+        // Higher-X sprite still covers (0, 0) and should appear once the winner is transparent.
+        ppu.write_oam(0xFE04, 16);
+        ppu.write_oam(0xFE05, 7);
+        ppu.write_oam(0xFE06, 0x09);
+        ppu.write_oam(0xFE07, SPRITE_ATTRIBUTE_PALETTE_BIT);
+        ppu.write_vram(0x8090, 0b0100_0000);
+        ppu.write_vram(0x8091, 0x00);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: true
+            })
+        );
+    }
+
+    #[test]
+    fn sprite_pixel_ignores_bg_over_obj_priority_when_bg_layer_is_disabled() {
+        let mut ppu = Ppu::default();
+        ppu.write_register(LCDC_REGISTER, LCDC_SPRITE_ENABLE_BIT);
+
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x0A);
+        ppu.write_oam(0xFE03, SPRITE_ATTRIBUTE_PRIORITY_BIT);
+        ppu.write_vram(0x80A0, 0b1000_0000);
+        ppu.write_vram(0x80A1, 0x00);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 2),
             Some(SpritePixel {
                 color_id: 1,
                 use_obp1: false
