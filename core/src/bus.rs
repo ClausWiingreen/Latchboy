@@ -567,6 +567,18 @@ mod tests {
     }
 
     #[test]
+    fn apu_register_holes_read_ff_and_ignore_writes_through_bus() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        for address in [0xFF15, 0xFF1F] {
+            assert_eq!(bus.read8(address), 0xFF);
+            bus.write8(address, 0x5A);
+            assert_eq!(bus.read8(address), 0xFF);
+        }
+    }
+
+    #[test]
     fn no_boot_apu_defaults_do_not_trigger_startup_tone() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);

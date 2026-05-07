@@ -304,8 +304,15 @@ impl Apu {
         registers
     }
 
+    const fn is_unmapped_register_hole(address: u16) -> bool {
+        matches!(address, 0xFF15 | 0xFF1F)
+    }
+
     const fn register_index(address: u16) -> Option<usize> {
-        if address >= Self::REGISTER_START && address <= Self::REGISTER_END {
+        if address >= Self::REGISTER_START
+            && address <= Self::REGISTER_END
+            && !Self::is_unmapped_register_hole(address)
+        {
             Some((address - Self::REGISTER_START) as usize)
         } else {
             None
@@ -586,7 +593,9 @@ impl Apu {
             return true;
         }
 
-        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END) {
+        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END)
+            || Self::is_unmapped_register_hole(address)
+        {
             return false;
         }
 
@@ -624,6 +633,7 @@ impl Apu {
             } else {
                 self.nr52.read_with_channel_status(Nr52::empty())
             }),
+            address if Self::is_unmapped_register_hole(address) => None,
             Self::REGISTER_START..=Self::REGISTER_END => Some(match address {
                 0xFF24 => self.nr50.read_bits(),
                 0xFF25 => self.nr51.read_bits(),
@@ -656,7 +666,9 @@ impl Apu {
             return true;
         }
 
-        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END) {
+        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END)
+            || Self::is_unmapped_register_hole(address)
+        {
             return false;
         }
 
@@ -1133,6 +1145,17 @@ mod tests {
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| sample.abs() == 1_250));
+    }
+
+    #[test]
+    fn unmapped_apu_register_holes_are_not_readable_or_writable() {
+        let mut apu = Apu::new();
+
+        for address in [0xFF15, 0xFF1F] {
+            assert_eq!(apu.read_register(address), None);
+            assert!(!apu.write_register(address, 0x5A));
+            assert_eq!(apu.read_register(address), None);
+        }
     }
 
     #[test]
