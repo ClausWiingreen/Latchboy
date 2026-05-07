@@ -152,7 +152,7 @@ mod tests {
         rom[ROM_SIZE_OFFSET] = 0xFF;
         rom[RAM_SIZE_OFFSET] = 0xFF;
         rom[DESTINATION_OFFSET] = 0xFF;
-        rom[CGB_FLAG_OFFSET] = 0x40;
+        rom[CGB_FLAG_OFFSET] = 0x81;
         rom[HEADER_CHECKSUM_OFFSET] =
             compute_header_checksum(&rom).expect("checksum should compute");
 
@@ -173,7 +173,7 @@ mod tests {
             .any(|warning| matches!(warning, HeaderWarning::UnknownDestinationCode(0xFF))));
         assert!(warnings
             .iter()
-            .any(|warning| matches!(warning, HeaderWarning::UnknownCgbFlag(0x40))));
+            .any(|warning| matches!(warning, HeaderWarning::UnknownCgbFlag(0x81))));
     }
 
     #[test]
@@ -200,6 +200,23 @@ mod tests {
                 actual_size: CARTRIDGE_HEADER_SIZE - 1,
             }
         );
+    }
+
+    #[test]
+    fn legacy_title_byte_without_cgb_enable_bit_is_dmg_only() {
+        let mut rom = make_test_rom();
+        rom[TITLE_START..=TITLE_END_INCLUSIVE].fill(b'A');
+        rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&rom).expect("checksum should compute");
+
+        let header = CartridgeHeader::parse(&rom).expect("header should parse");
+
+        assert_eq!(header.title, "AAAAAAAAAAAAAAA");
+        assert_eq!(header.cgb_compatibility, CgbCompatibility::DmgOnly);
+        assert!(header
+            .warnings()
+            .iter()
+            .all(|warning| !matches!(warning, HeaderWarning::UnknownCgbFlag(_))));
     }
 
     #[test]

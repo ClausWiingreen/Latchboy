@@ -677,6 +677,48 @@ mod tests {
     }
 
     #[test]
+    fn cgb_boot_rom_can_select_dmg_compatibility_mode_for_dmg_cartridge() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0134..0x0138].copy_from_slice(b"DMGC");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+
+        let mut boot_rom = vec![0x00; 0x0900];
+        boot_rom[0x0000] = 0x3E; // LD A, d8
+        boot_rom[0x0001] = 0x04; // KEY0 DMG compatibility bit
+        boot_rom[0x0002] = 0xE0; // LDH (FF4C), A
+        boot_rom[0x0003] = 0x4C;
+        boot_rom[0x0004] = 0x3E; // LD A, d8
+        boot_rom[0x0005] = 0x01;
+        boot_rom[0x0006] = 0xE0; // LDH (FF50), A
+        boot_rom[0x0007] = 0x50;
+        let mut emulator = Emulator::from_cartridge_with_cgb_boot_rom(cartridge, boot_rom);
+
+        emulator.step_cycles(40);
+
+        assert!(!emulator.bus().boot_rom_enabled());
+        assert!(emulator.bus().cgb_hardware_enabled());
+        assert!(!emulator.bus().cgb_mode_enabled());
+        assert_eq!(
+            emulator
+                .bus()
+                .read8(crate::memory::CGB_SPEED_SWITCH_REGISTER),
+            0xFF
+        );
+        assert_eq!(
+            emulator.bus().read8(crate::memory::CGB_WRAM_BANK_REGISTER),
+            0xFF
+        );
+        assert_eq!(emulator.bus().read8(crate::ppu::VBK_REGISTER), 0xFF);
+        assert_eq!(emulator.bus().read8(crate::ppu::BCPS_REGISTER), 0xFF);
+    }
+
+    #[test]
     fn step_cycle_batching_is_deterministic_with_carry() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
         rom[0x0100] = 0x31; // LD SP, d16 (12 cycles)

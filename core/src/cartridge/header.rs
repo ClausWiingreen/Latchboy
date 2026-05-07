@@ -314,9 +314,9 @@ pub enum CgbCompatibility {
 impl CgbCompatibility {
     pub const fn from_flag(value: u8) -> Self {
         match value {
-            0x00 => Self::DmgOnly,
             0x80 => Self::CgbEnhanced,
             0xC0 => Self::CgbOnly,
+            other if (other & 0x80) == 0 => Self::DmgOnly,
             other => Self::Unknown(other),
         }
     }

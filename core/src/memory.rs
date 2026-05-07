@@ -27,6 +27,7 @@ pub const UNUSABLE_END: u16 = 0xFEFF;
 pub const IO_REGISTERS_START: u16 = 0xFF00;
 pub const IO_REGISTERS_END: u16 = 0xFF7F;
 pub const JOYP_REGISTER: u16 = 0xFF00;
+pub const CGB_MODE_SELECT_REGISTER: u16 = 0xFF4C;
 pub const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
 pub const CGB_SPEED_SWITCH_REGISTER: u16 = 0xFF4D;
 pub const CGB_WRAM_BANK_REGISTER: u16 = 0xFF70;
@@ -74,6 +75,7 @@ pub enum BusRoute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IoRoute {
     BootRomDisable,
+    CgbModeSelect,
     CgbSpeedSwitch,
     CgbWramBank,
     Joypad,
@@ -148,6 +150,8 @@ pub fn route_address(address: u16) -> BusRoute {
 pub fn route_io_address(address: u16) -> IoRoute {
     if address == BOOT_ROM_DISABLE_REGISTER {
         IoRoute::BootRomDisable
+    } else if address == CGB_MODE_SELECT_REGISTER {
+        IoRoute::CgbModeSelect
     } else if address == CGB_SPEED_SWITCH_REGISTER {
         IoRoute::CgbSpeedSwitch
     } else if address == CGB_WRAM_BANK_REGISTER {

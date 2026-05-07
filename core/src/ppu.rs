@@ -407,6 +407,13 @@ impl Ppu {
         self.cgb_mode_enabled
     }
 
+    pub fn set_cgb_mode_enabled(&mut self, enabled: bool) {
+        self.cgb_mode_enabled = enabled;
+        if !enabled {
+            self.selected_vram_bank = 0;
+        }
+    }
+
     pub const fn selected_vram_bank(&self) -> u8 {
         self.selected_vram_bank
     }

@@ -453,9 +453,10 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - The CGB `SVBK` (`FF70`) WRAM bank register now selects the switchable 4 KiB WRAM bank for `D000-DFFF` and its echo mirror, with register value `0` aliasing bank 1 and DMG mode remaining inert/read-as-unavailable.
 
 **CGB boot-flow notes (2026-05-07)**
-- Cartridge headers now parse the CGB compatibility flag (`0143`) as DMG-only, CGB-enhanced, CGB-only, or unknown, with unknown flag warnings.
+- Cartridge headers now parse the CGB compatibility flag (`0143`) as DMG-only, CGB-enhanced, CGB-only, or unknown, treating legacy title bytes without the CGB-enable bit as DMG-only and warning only on unknown CGB-enabled values.
 - CGB startup can now be selected explicitly through CGB no-boot and CGB boot-ROM emulator constructors; no-boot startup enables CGB bus surfaces and CGB CPU defaults while preserving existing DMG startup behavior.
 - Explicit CGB boot-ROM startup maps the split CGB boot window (`0000-00FF` and `0200-08FF`) until `FF50` disables boot ROM visibility, leaving cartridge ROM visible at `0100-01FF` during boot.
+- The CGB boot-ROM path now models KEY0 (`FF4C`) DMG-compatibility selection so DMG-only cartridges can lock back to the non-CGB register surface when the boot ROM unmaps itself.
 - Remaining CGB support still requires colorized rendering integration and fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**
