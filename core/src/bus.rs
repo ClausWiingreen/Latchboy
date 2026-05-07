@@ -78,6 +78,7 @@ pub struct Bus {
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
     oam_dma_cycles_remaining: u16,
+    cgb_mode_enabled: bool,
     cgb_double_speed: bool,
     cgb_prepare_speed_switch: bool,
     watch_io_enabled: Cell<bool>,
@@ -100,6 +101,7 @@ impl Hash for Bus {
         self.hram.hash(state);
         self.interrupt_enable.hash(state);
         self.oam_dma_cycles_remaining.hash(state);
+        self.cgb_mode_enabled.hash(state);
         self.cgb_double_speed.hash(state);
         self.cgb_prepare_speed_switch.hash(state);
         self.watch_io_enabled.get().hash(state);
@@ -150,11 +152,18 @@ impl Bus {
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
             oam_dma_cycles_remaining: 0,
+            cgb_mode_enabled: false,
             cgb_double_speed: false,
             cgb_prepare_speed_switch: false,
             watch_io_enabled: Cell::new(false),
             watch_io_events: RefCell::new(Vec::new()),
         }
+    }
+
+    pub fn new_cgb(cartridge: Cartridge) -> Self {
+        let mut bus = Self::new(cartridge);
+        bus.cgb_mode_enabled = true;
+        bus
     }
 
     pub fn with_boot_rom(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
@@ -326,6 +335,10 @@ impl Bus {
         }
     }
 
+    pub const fn cgb_mode_enabled(&self) -> bool {
+        self.cgb_mode_enabled
+    }
+
     pub const fn cgb_double_speed(&self) -> bool {
         self.cgb_double_speed
     }
@@ -339,7 +352,7 @@ impl Bus {
     }
 
     pub fn consume_cgb_speed_switch_request(&mut self) -> bool {
-        if !self.cgb_prepare_speed_switch {
+        if !self.cgb_mode_enabled || !self.cgb_prepare_speed_switch {
             return false;
         }
 
@@ -349,6 +362,10 @@ impl Bus {
     }
 
     fn read_key1(&self) -> u8 {
+        if !self.cgb_mode_enabled {
+            return 0xFF;
+        }
+
         KEY1_UNUSED_READ_MASK
             | if self.cgb_double_speed {
                 KEY1_CURRENT_SPEED
@@ -363,7 +380,9 @@ impl Bus {
     }
 
     fn write_key1(&mut self, value: u8) {
-        self.cgb_prepare_speed_switch = (value & KEY1_PREPARE_SPEED_SWITCH) != 0;
+        if self.cgb_mode_enabled {
+            self.cgb_prepare_speed_switch = (value & KEY1_PREPARE_SPEED_SWITCH) != 0;
+        }
     }
 
     const fn joypad_write_requested_interrupt(previous_p1: u8, current_p1: u8) -> bool {
@@ -706,9 +725,25 @@ mod tests {
     }
 
     #[test]
-    fn key1_register_tracks_cgb_speed_prepare_and_current_bits() {
+    fn key1_register_is_inert_in_dmg_mode() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);
+
+        assert!(!bus.cgb_mode_enabled());
+        assert_eq!(bus.read8(0xFF4D), 0xFF);
+
+        bus.write8(0xFF4D, 0x01);
+
+        assert_eq!(bus.read8(0xFF4D), 0xFF);
+        assert!(!bus.consume_cgb_speed_switch_request());
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.cgb_speed_divisor(), 1);
+    }
+
+    #[test]
+    fn key1_register_tracks_cgb_speed_prepare_and_current_bits() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new_cgb(cartridge);
 
         assert_eq!(bus.read8(0xFF4D), 0x7E);
         assert!(!bus.cgb_double_speed());
@@ -732,7 +767,7 @@ mod tests {
     #[test]
     fn cgb_double_speed_keeps_timer_on_cpu_clock() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
-        let mut bus = Bus::new(cartridge);
+        let mut bus = Bus::new_cgb(cartridge);
         bus.write8(0xFF04, 0x00);
         bus.write8(0xFF4D, 0x01);
         assert!(bus.consume_cgb_speed_switch_request());
@@ -1045,7 +1080,7 @@ mod tests {
     #[test]
     fn cgb_double_speed_keeps_oam_dma_blocking_on_cpu_clock() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
-        let mut bus = Bus::new(cartridge);
+        let mut bus = Bus::new_cgb(cartridge);
         bus.write8(0xC123, 0x42);
         bus.write8(0xFF4D, 0x01);
         assert!(bus.consume_cgb_speed_switch_request());
