@@ -425,8 +425,8 @@ impl Apu {
             ch1: Ch1 {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
-                amplitude: Self::CH1_DEFAULT_AMPLITUDE,
-                enabled: true,
+                amplitude: 0,
+                enabled: false,
                 sweep_period_steps: 0,
                 sweep_shift: 0,
                 sweep_negate: false,
@@ -455,7 +455,7 @@ impl Apu {
             },
             nr50: Nr50(0x77),
             nr51: Nr51::from_bits_retain(0xF3),
-            nr52: Nr52::from_bits_retain(0xF1),
+            nr52: Nr52::from_bits_retain(0xF0),
         }
     }
 
@@ -574,6 +574,41 @@ impl Apu {
 
         let scaled = (i32::from(mixed) * i32::from(volume + 1)) / 8;
         scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+    }
+
+    pub(crate) fn load_startup_register(&mut self, address: u16, value: u8) -> bool {
+        if let Some(index) = Self::wave_ram_index(address) {
+            self.wave_ram_bytes[index] = value;
+            let sample_index = index * 2;
+            self.ch3.wave_ram[sample_index] = value >> 4;
+            self.ch3.wave_ram[sample_index + 1] = value & 0x0F;
+            return true;
+        }
+
+        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END) {
+            return false;
+        }
+
+        self.store_register(address, value);
+        match address {
+            0xFF10 => self.write_ch1_sweep_register(Nr10::from(value)),
+            0xFF11 => self.ch1.duty = DutyCycle::from_duty_bits(value >> 6),
+            0xFF16 => self.ch2.duty = DutyCycle::from_duty_bits(value >> 6),
+            0xFF1C => self.ch3.output_level_shift = (value >> 5) & 0x03,
+            0xFF24 => self.nr50.write_bits(value),
+            0xFF25 => self.nr51.write_bits(value),
+            0xFF26 => {
+                self.nr52.write_power_bits(value);
+                self.store_register(address, self.nr52.read_bits() | Nr52::READ_RESERVED);
+                self.ch1.enabled = false;
+                self.ch2.enabled = false;
+                self.ch3.enabled = false;
+                self.ch4.enabled = false;
+            }
+            _ => {}
+        }
+
+        true
     }
 
     pub fn read_register(&self, address: u16) -> Option<u8> {
@@ -814,9 +849,13 @@ impl Apu {
     #[cfg(test)]
     fn set_ch1_amplitude(&mut self, amplitude: i16) {
         self.ch1.amplitude = amplitude;
+        self.ch1.enabled = amplitude != 0;
     }
 
     pub fn set_ch1_enabled(&mut self, enabled: bool) {
+        if enabled && self.ch1.amplitude == 0 {
+            self.ch1.amplitude = Self::CH1_DEFAULT_AMPLITUDE;
+        }
         self.ch1.enabled = enabled;
     }
 
@@ -1208,7 +1247,7 @@ mod tests {
         let apu = Apu::new();
         let nr52 = apu.read_register(0xFF26).unwrap_or(0);
         assert_eq!(nr52 & 0xF0, 0xF0);
-        assert_ne!(nr52 & 0x01, 0);
+        assert_eq!(nr52 & 0x0F, 0);
     }
 
     #[test]
