@@ -128,6 +128,11 @@ impl Emulator {
         }
     }
 
+    fn tick_bus_cycles_for_cpu_cycles(&mut self, cpu_cycles: u64) {
+        let bus_cycles = cpu_cycles / u64::from(self.bus.cgb_speed_divisor());
+        self.tick_bus_cycles(bus_cycles);
+    }
+
     /// Creates a new emulator with a minimal ROM-only cartridge.
     pub fn new() -> Self {
         Self::from_cartridge(default_rom_only_cartridge())
@@ -267,7 +272,7 @@ impl Emulator {
                             interrupt_enable: self.bus.interrupt_enable(),
                         },
                     ));
-                    self.tick_bus_cycles(halted_advance);
+                    self.tick_bus_cycles_for_cpu_cycles(halted_advance);
                     available += halted_advance;
                     if observer.should_stop() {
                         stopped_early = true;
@@ -297,7 +302,7 @@ impl Emulator {
             let operand1_before = self.cpu.last_step_operand1_fetch();
             let operand2_before = self.cpu.last_step_operand2_fetch();
             let watch_io_events = self.bus.take_watch_io_events();
-            self.tick_bus_cycles(u64::from(cycles_taken));
+            self.tick_bus_cycles_for_cpu_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
             if debug_step_boundaries {
                 debug!(

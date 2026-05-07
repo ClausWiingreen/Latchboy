@@ -14,6 +14,9 @@ use crate::ppu::{Ppu, DMA_REGISTER};
 use crate::serial::SerialPort;
 use crate::timer::Timer;
 const JOYPAD_INTERRUPT_MASK: u8 = 0x10;
+const KEY1_PREPARE_SPEED_SWITCH: u8 = 0x01;
+const KEY1_CURRENT_SPEED: u8 = 0x80;
+const KEY1_UNUSED_READ_MASK: u8 = 0x7E;
 const WATCHED_IO_ADDRESSES: [u16; 6] = [
     crate::ppu::LCDC_REGISTER,
     crate::ppu::STAT_REGISTER,
@@ -75,6 +78,8 @@ pub struct Bus {
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
     oam_dma_cycles_remaining: u16,
+    cgb_double_speed: bool,
+    cgb_prepare_speed_switch: bool,
     watch_io_enabled: Cell<bool>,
     watch_io_events: RefCell<Vec<BusWatchIoEvent>>,
 }
@@ -95,6 +100,8 @@ impl Hash for Bus {
         self.hram.hash(state);
         self.interrupt_enable.hash(state);
         self.oam_dma_cycles_remaining.hash(state);
+        self.cgb_double_speed.hash(state);
+        self.cgb_prepare_speed_switch.hash(state);
         self.watch_io_enabled.get().hash(state);
         self.watch_io_events.borrow().hash(state);
     }
@@ -143,6 +150,8 @@ impl Bus {
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
             oam_dma_cycles_remaining: 0,
+            cgb_double_speed: false,
+            cgb_prepare_speed_switch: false,
             watch_io_enabled: Cell::new(false),
             watch_io_events: RefCell::new(Vec::new()),
         }
@@ -185,6 +194,8 @@ impl Bus {
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
         self.oam_dma_cycles_remaining = 0;
+        self.cgb_double_speed = false;
+        self.cgb_prepare_speed_switch = false;
         self.watch_io_events.borrow_mut().clear();
     }
 
@@ -269,6 +280,7 @@ impl Bus {
     fn read8_io(&self, address: u16) -> u8 {
         match route_io_address(address) {
             IoRoute::BootRomDisable => self.boot_rom_disable_value,
+            IoRoute::CgbSpeedSwitch => self.read_key1(),
             IoRoute::Joypad => self.joypad.read8(address),
             IoRoute::Apu => self.apu.read8(address),
             IoRoute::Serial => self.serial.read8(address),
@@ -286,6 +298,7 @@ impl Bus {
                     self.boot_rom_enabled = false;
                 }
             }
+            IoRoute::CgbSpeedSwitch => self.write_key1(value),
             IoRoute::Joypad => {
                 let previous_p1 = self.joypad.read8(address);
                 self.joypad.write8(address, value);
@@ -311,6 +324,46 @@ impl Bus {
                 self.io_registers[(address - IO_REGISTERS_START) as usize] = value
             }
         }
+    }
+
+    pub const fn cgb_double_speed(&self) -> bool {
+        self.cgb_double_speed
+    }
+
+    pub const fn cgb_speed_divisor(&self) -> u32 {
+        if self.cgb_double_speed {
+            2
+        } else {
+            1
+        }
+    }
+
+    pub fn consume_cgb_speed_switch_request(&mut self) -> bool {
+        if !self.cgb_prepare_speed_switch {
+            return false;
+        }
+
+        self.cgb_prepare_speed_switch = false;
+        self.cgb_double_speed = !self.cgb_double_speed;
+        true
+    }
+
+    fn read_key1(&self) -> u8 {
+        KEY1_UNUSED_READ_MASK
+            | if self.cgb_double_speed {
+                KEY1_CURRENT_SPEED
+            } else {
+                0
+            }
+            | if self.cgb_prepare_speed_switch {
+                KEY1_PREPARE_SPEED_SWITCH
+            } else {
+                0
+            }
+    }
+
+    fn write_key1(&mut self, value: u8) {
+        self.cgb_prepare_speed_switch = (value & KEY1_PREPARE_SPEED_SWITCH) != 0;
     }
 
     const fn joypad_write_requested_interrupt(previous_p1: u8, current_p1: u8) -> bool {
@@ -607,6 +660,30 @@ mod tests {
         bus.tick(20_000);
         let muted = bus.pull_audio_samples(64);
         assert!(muted.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn key1_register_tracks_cgb_speed_prepare_and_current_bits() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        assert_eq!(bus.read8(0xFF4D), 0x7E);
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.cgb_speed_divisor(), 1);
+
+        bus.write8(0xFF4D, 0xFF);
+        assert_eq!(bus.read8(0xFF4D), 0x7F);
+
+        assert!(bus.consume_cgb_speed_switch_request());
+        assert!(bus.cgb_double_speed());
+        assert_eq!(bus.cgb_speed_divisor(), 2);
+        assert_eq!(bus.read8(0xFF4D), 0xFE);
+        assert!(!bus.consume_cgb_speed_switch_request());
+
+        bus.write8(0xFF4D, 0x01);
+        assert!(bus.consume_cgb_speed_switch_request());
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.read8(0xFF4D), 0x7E);
     }
 
     #[test]
