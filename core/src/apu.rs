@@ -368,6 +368,29 @@ impl Apu {
         (self.register(0xFF1A) & 0x80) != 0
     }
 
+    fn ch3_frequency_from_period(period: u16) -> u32 {
+        let denominator = 2048_u32.saturating_sub(u32::from(period)).max(1);
+        (65_536 / denominator).clamp(1, 20_000)
+    }
+
+    fn update_ch1_frequency_if_active(&mut self) {
+        if self.ch1.enabled {
+            self.ch1.frequency_hz = Self::square_frequency_from_period(self.ch1_period());
+        }
+    }
+
+    fn update_ch2_frequency_if_active(&mut self) {
+        if self.ch2.enabled {
+            self.ch2.frequency_hz = Self::square_frequency_from_period(self.ch2_period());
+        }
+    }
+
+    fn update_ch3_frequency_if_active(&mut self) {
+        if self.ch3.enabled {
+            self.ch3.frequency_hz = Self::ch3_frequency_from_period(self.ch3_period());
+        }
+    }
+
     fn retrigger_ch1(&mut self) {
         self.ch1.frequency_hz = Self::square_frequency_from_period(self.ch1_period());
         self.ch1.duty = DutyCycle::from_duty_bits(self.register(0xFF11) >> 6);
@@ -386,9 +409,7 @@ impl Apu {
     }
 
     fn retrigger_ch3(&mut self) {
-        let period = self.ch3_period();
-        let denominator = 2048_u32.saturating_sub(u32::from(period)).max(1);
-        self.ch3.frequency_hz = (65_536 / denominator).clamp(1, 20_000);
+        self.ch3.frequency_hz = Self::ch3_frequency_from_period(self.ch3_period());
         self.ch3.output_level_shift = (self.register(0xFF1C) >> 5) & 0x03;
         self.ch3.amplitude = Self::PCM_UNITS_PER_ENVELOPE_STEP * 8;
         self.ch3.enabled = self.ch3_dac_enabled();
@@ -686,7 +707,9 @@ impl Apu {
                     self.ch1.enabled = false;
                 }
             }
+            0xFF13 => self.update_ch1_frequency_if_active(),
             0xFF14 if (value & 0x80) != 0 => self.retrigger_ch1(),
+            0xFF14 => self.update_ch1_frequency_if_active(),
             0xFF16 => self.ch2.duty = DutyCycle::from_duty_bits(value >> 6),
             0xFF17 => {
                 self.ch2.amplitude = Self::amplitude_from_envelope(value);
@@ -694,10 +717,14 @@ impl Apu {
                     self.ch2.enabled = false;
                 }
             }
+            0xFF18 => self.update_ch2_frequency_if_active(),
             0xFF19 if (value & 0x80) != 0 => self.retrigger_ch2(),
+            0xFF19 => self.update_ch2_frequency_if_active(),
             0xFF1A if !self.ch3_dac_enabled() => self.ch3.enabled = false,
             0xFF1C => self.ch3.output_level_shift = (value >> 5) & 0x03,
+            0xFF1D => self.update_ch3_frequency_if_active(),
             0xFF1E if (value & 0x80) != 0 => self.retrigger_ch3(),
+            0xFF1E => self.update_ch3_frequency_if_active(),
             0xFF21 => {
                 self.ch4.amplitude = Self::amplitude_from_envelope(value);
                 if !Self::envelope_dac_enabled(value) {
@@ -1361,6 +1388,53 @@ mod tests {
         assert!(!samples.is_empty());
         assert!(samples.iter().all(|sample| *sample == 0));
         assert_eq!(apu.read_register(0xFF26).unwrap_or(0) & 0x01, 0);
+    }
+
+    #[test]
+    fn active_channel_period_writes_update_frequency_without_retrigger() {
+        let mut apu = Apu::new();
+
+        assert!(apu.write_register(0xFF12, 0xF0));
+        assert!(apu.write_register(0xFF13, 0x00));
+        assert!(apu.write_register(0xFF14, 0x80));
+        let ch1_initial = apu.ch1.frequency_hz;
+        assert!(apu.write_register(0xFF13, 0xFF));
+        assert_ne!(apu.ch1.frequency_hz, ch1_initial);
+        assert_eq!(
+            apu.ch1.frequency_hz,
+            Apu::square_frequency_from_period(0x00FF)
+        );
+        assert!(apu.write_register(0xFF14, 0x02));
+        assert_eq!(
+            apu.ch1.frequency_hz,
+            Apu::square_frequency_from_period(0x02FF)
+        );
+
+        assert!(apu.write_register(0xFF17, 0xF0));
+        assert!(apu.write_register(0xFF18, 0x00));
+        assert!(apu.write_register(0xFF19, 0x80));
+        let ch2_initial = apu.ch2.frequency_hz;
+        assert!(apu.write_register(0xFF18, 0x80));
+        assert_ne!(apu.ch2.frequency_hz, ch2_initial);
+        assert_eq!(
+            apu.ch2.frequency_hz,
+            Apu::square_frequency_from_period(0x0080)
+        );
+        assert!(apu.write_register(0xFF19, 0x03));
+        assert_eq!(
+            apu.ch2.frequency_hz,
+            Apu::square_frequency_from_period(0x0380)
+        );
+
+        assert!(apu.write_register(0xFF1A, 0x80));
+        assert!(apu.write_register(0xFF1D, 0x00));
+        assert!(apu.write_register(0xFF1E, 0x80));
+        let ch3_initial = apu.ch3.frequency_hz;
+        assert!(apu.write_register(0xFF1D, 0x40));
+        assert_ne!(apu.ch3.frequency_hz, ch3_initial);
+        assert_eq!(apu.ch3.frequency_hz, Apu::ch3_frequency_from_period(0x0040));
+        assert!(apu.write_register(0xFF1E, 0x04));
+        assert_eq!(apu.ch3.frequency_hz, Apu::ch3_frequency_from_period(0x0440));
     }
 
     #[test]
