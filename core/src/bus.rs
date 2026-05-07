@@ -411,11 +411,11 @@ impl Bus {
         self.tick_components(cpu_cycles, cpu_cycles / self.cgb_speed_divisor());
     }
 
-    fn tick_components(&mut self, timer_cycles: u32, video_audio_cycles: u32) {
-        if timer_cycles == video_audio_cycles {
-            self.tick_synchronized_components(timer_cycles);
+    fn tick_components(&mut self, cpu_clock_cycles: u32, video_audio_cycles: u32) {
+        if cpu_clock_cycles == video_audio_cycles {
+            self.tick_synchronized_components(cpu_clock_cycles);
         } else {
-            self.tick_timer_cycles(timer_cycles);
+            self.tick_cpu_clock_cycles(cpu_clock_cycles);
             self.tick_video_audio_cycles(video_audio_cycles);
         }
     }
@@ -439,8 +439,11 @@ impl Bus {
         }
     }
 
-    fn tick_timer_cycles(&mut self, cycles: u32) {
+    fn tick_cpu_clock_cycles(&mut self, cycles: u32) {
         for _ in 0..cycles {
+            if self.oam_dma_cycles_remaining != 0 {
+                self.oam_dma_cycles_remaining -= 1;
+            }
             let interrupt_flag_index =
                 (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
             self.timer
@@ -450,9 +453,6 @@ impl Bus {
 
     fn tick_video_audio_cycles(&mut self, cycles: u32) {
         for _ in 0..cycles {
-            if self.oam_dma_cycles_remaining != 0 {
-                self.oam_dma_cycles_remaining -= 1;
-            }
             let interrupt_flag_index =
                 (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
             self.ppu
@@ -1040,6 +1040,24 @@ mod tests {
         assert_eq!(bus.read8(0xC123), 0x42);
         bus.write8(0xC123, 0x99);
         assert_eq!(bus.read8(0xC123), 0x99);
+    }
+
+    #[test]
+    fn cgb_double_speed_keeps_oam_dma_blocking_on_cpu_clock() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(0xC123, 0x42);
+        bus.write8(0xFF4D, 0x01);
+        assert!(bus.consume_cgb_speed_switch_request());
+
+        bus.write8(DMA_REGISTER, 0xC0);
+
+        assert_eq!(bus.read8(0xC123), 0xFF);
+        bus.tick_for_cpu_cycles(639);
+        assert_eq!(bus.read8(0xC123), 0xFF);
+
+        bus.tick_for_cpu_cycles(1);
+        assert_eq!(bus.read8(0xC123), 0x42);
     }
 
     #[test]
