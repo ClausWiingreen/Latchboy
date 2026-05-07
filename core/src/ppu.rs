@@ -511,6 +511,10 @@ impl Ppu {
         !matches!(self.current_mode(), 0x02 | 0x03)
     }
 
+    fn cgb_palette_data_accessible(&self) -> bool {
+        self.current_mode() != 0x03
+    }
+
     pub fn may_request_interrupt(&self, interrupt_enable: u8) -> bool {
         if !self.lcdc.enabled() {
             return false;
@@ -627,7 +631,7 @@ impl Ppu {
                 }
             }
             BCPD_REGISTER => {
-                if self.cgb_mode_enabled {
+                if self.cgb_mode_enabled && self.cgb_palette_data_accessible() {
                     self.cgb_bg_palette_ram
                         [(self.bg_palette_index & CGB_PALETTE_INDEX_MASK) as usize]
                 } else {
@@ -642,7 +646,7 @@ impl Ppu {
                 }
             }
             OCPD_REGISTER => {
-                if self.cgb_mode_enabled {
+                if self.cgb_mode_enabled && self.cgb_palette_data_accessible() {
                     self.cgb_obj_palette_ram
                         [(self.obj_palette_index & CGB_PALETTE_INDEX_MASK) as usize]
                 } else {
@@ -724,7 +728,7 @@ impl Ppu {
                 }
             }
             BCPD_REGISTER => {
-                if self.cgb_mode_enabled {
+                if self.cgb_mode_enabled && self.cgb_palette_data_accessible() {
                     self.cgb_bg_palette_ram
                         [(self.bg_palette_index & CGB_PALETTE_INDEX_MASK) as usize] = value;
                     Self::increment_cgb_palette_index(&mut self.bg_palette_index);
@@ -737,7 +741,7 @@ impl Ppu {
                 }
             }
             OCPD_REGISTER => {
-                if self.cgb_mode_enabled {
+                if self.cgb_mode_enabled && self.cgb_palette_data_accessible() {
                     self.cgb_obj_palette_ram
                         [(self.obj_palette_index & CGB_PALETTE_INDEX_MASK) as usize] = value;
                     Self::increment_cgb_palette_index(&mut self.obj_palette_index);
@@ -2201,5 +2205,34 @@ mod tests {
         assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0x11));
         ppu.write_register(OCPS_REGISTER, 0x03);
         assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0x22));
+    }
+
+    #[test]
+    fn cgb_palette_data_ports_are_blocked_during_mode_3_without_index_increment() {
+        let mut ppu = Ppu::new_cgb();
+
+        ppu.write_register(BCPS_REGISTER, 0x80 | 0x05);
+        ppu.write_register(BCPD_REGISTER, 0x12);
+        ppu.write_register(BCPS_REGISTER, 0x80 | 0x05);
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
+
+        assert_eq!(ppu.read_register(BCPD_REGISTER), Some(0xFF));
+        ppu.write_register(BCPD_REGISTER, 0x34);
+        assert_eq!(ppu.read_register(BCPS_REGISTER), Some(0xC5));
+
+        ppu.stat.set_mode(PpuMode::HBlank);
+        assert_eq!(ppu.read_register(BCPD_REGISTER), Some(0x12));
+
+        ppu.write_register(OCPS_REGISTER, 0x80 | 0x07);
+        ppu.write_register(OCPD_REGISTER, 0x56);
+        ppu.write_register(OCPS_REGISTER, 0x80 | 0x07);
+        ppu.stat.set_mode(PpuMode::from_bits(0x03));
+
+        assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0xFF));
+        ppu.write_register(OCPD_REGISTER, 0x78);
+        assert_eq!(ppu.read_register(OCPS_REGISTER), Some(0xC7));
+
+        ppu.stat.set_mode(PpuMode::HBlank);
+        assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0x56));
     }
 }

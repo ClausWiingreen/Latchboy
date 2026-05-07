@@ -449,7 +449,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 **CGB palette + VRAM banking notes (2026-05-07)**
 - CGB-mode PPU state now exposes the `VBK` (`FF4F`) VRAM bank selector with two independent 8 KiB VRAM banks while DMG mode keeps the selector inert/read-as-unavailable.
-- CGB background/object palette index and data registers (`FF68`-`FF6B`) now store the full 64-byte palette RAM spaces and honor data-port auto-increment/wrap behavior.
+- CGB background/object palette index and data registers (`FF68`-`FF6B`) now store the full 64-byte palette RAM spaces, honor data-port auto-increment/wrap behavior, and block data-port access during PPU mode 3 without advancing the index.
 - Remaining CGB support still requires broader CGB-specific registers, CGB boot flow, colorized rendering integration, and fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**
