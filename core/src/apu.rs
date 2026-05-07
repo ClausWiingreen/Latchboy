@@ -272,6 +272,7 @@ impl Apu {
     const CH4_DEFAULT_FREQUENCY_HZ: u32 = 1_024;
     const CH1_DEFAULT_AMPLITUDE: i16 = 1_250;
     const CH2_DEFAULT_AMPLITUDE: i16 = 1_250;
+    const CH3_DEFAULT_AMPLITUDE: i16 = 1_250;
     const REGISTER_START: u16 = 0xFF10;
     const REGISTER_END: u16 = 0xFF26;
     const REGISTER_COUNT: usize = (Self::REGISTER_END - Self::REGISTER_START + 1) as usize;
@@ -385,7 +386,7 @@ impl Apu {
         self.ch3.amplitude = Self::PCM_UNITS_PER_ENVELOPE_STEP * 8;
         self.ch3.enabled = self.ch3_dac_enabled();
         self.ch3_phase_accumulator = 0;
-        self.ch3_wave_index = 0;
+        self.ch3_wave_index = 1;
     }
 
     fn retrigger_ch4(&mut self) {
@@ -728,7 +729,7 @@ impl Apu {
         self.ch2.enabled = false;
         self.ch3.frequency_hz = Self::CH3_DEFAULT_FREQUENCY_HZ;
         self.ch3.output_level_shift = 1;
-        self.ch3.amplitude = 1_250;
+        self.ch3.amplitude = Self::CH3_DEFAULT_AMPLITUDE;
         self.ch3.enabled = false;
         self.ch4.frequency_hz = Self::CH4_DEFAULT_FREQUENCY_HZ;
         self.ch4.amplitude = 0;
@@ -880,6 +881,9 @@ impl Apu {
         self.ch3.output_level_shift = output_level_shift;
     }
     pub fn set_ch3_enabled(&mut self, enabled: bool) {
+        if enabled && self.ch3.amplitude == 0 {
+            self.ch3.amplitude = Self::CH3_DEFAULT_AMPLITUDE;
+        }
         self.ch3.enabled = enabled;
     }
 
@@ -1299,7 +1303,7 @@ mod tests {
         assert_eq!(apu.ch2.amplitude, Apu::CH2_DEFAULT_AMPLITUDE);
         assert_eq!(apu.ch3.frequency_hz, Apu::CH3_DEFAULT_FREQUENCY_HZ);
         assert_eq!(apu.ch3.output_level_shift, 1);
-        assert_eq!(apu.ch3.amplitude, 1_250);
+        assert_eq!(apu.ch3.amplitude, Apu::CH3_DEFAULT_AMPLITUDE);
         assert_eq!(apu.ch4.frequency_hz, Apu::CH4_DEFAULT_FREQUENCY_HZ);
         assert_eq!(apu.ch4.amplitude, 0);
     }
@@ -1360,6 +1364,41 @@ mod tests {
         assert!(!high_samples.is_empty());
         assert_ne!(low_samples, high_samples);
         assert!(high_samples.iter().map(|s| s.abs()).max().unwrap_or(0) > 2_000);
+    }
+
+    #[test]
+    fn direct_ch3_enable_restores_default_amplitude() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(0);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_wave_ram([15; 32]);
+        apu.set_ch3_enabled(true);
+
+        let _ = apu.tick(400);
+        let samples = apu.drain_samples();
+
+        assert!(!samples.is_empty());
+        assert!(samples.iter().any(|sample| *sample != 0));
+    }
+
+    #[test]
+    fn mmio_triggered_ch3_starts_from_lower_ff30_nibble() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF30, 0x0F));
+        for address in 0xFF31..=0xFF3F {
+            assert!(apu.write_register(address, 0x00));
+        }
+        assert!(apu.write_register(0xFF25, 0x44));
+        assert!(apu.write_register(0xFF1A, 0x80));
+        assert!(apu.write_register(0xFF1C, 0x20));
+        assert!(apu.write_register(0xFF1D, 0x00));
+        assert!(apu.write_register(0xFF1E, 0x80));
+
+        let _ = apu.tick(88);
+        let samples = apu.drain_samples();
+
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0] > 0);
     }
 
     #[test]
