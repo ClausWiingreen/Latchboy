@@ -141,7 +141,7 @@ pub fn route_io_address(address: u16) -> IoRoute {
         IoRoute::BootRomDisable
     } else if address == JOYP_REGISTER {
         IoRoute::Joypad
-    } else if matches!(address, 0xFF24..=0xFF26) {
+    } else if matches!(address, 0xFF10..=0xFF26 | 0xFF30..=0xFF3F) {
         IoRoute::Apu
     } else if matches!(
         address,
