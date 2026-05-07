@@ -29,11 +29,14 @@ pub const IO_REGISTERS_END: u16 = 0xFF7F;
 pub const JOYP_REGISTER: u16 = 0xFF00;
 pub const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
 pub const CGB_SPEED_SWITCH_REGISTER: u16 = 0xFF4D;
+pub const CGB_WRAM_BANK_REGISTER: u16 = 0xFF70;
 pub const HRAM_START: u16 = 0xFF80;
 pub const HRAM_END: u16 = 0xFFFE;
 pub const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
 pub const BOOT_ROM_SIZE: usize = 0x100;
-pub const WRAM_SIZE: usize = 0x2000;
+pub const WRAM_BANK_SIZE: usize = 0x1000;
+pub const WRAM_BANK_COUNT: usize = 8;
+pub const WRAM_SIZE: usize = WRAM_BANK_SIZE * WRAM_BANK_COUNT;
 pub const IO_REGISTERS_SIZE: usize = 0x80;
 pub const HRAM_SIZE: usize = 0x7F;
 
@@ -69,6 +72,7 @@ pub enum BusRoute {
 pub enum IoRoute {
     BootRomDisable,
     CgbSpeedSwitch,
+    CgbWramBank,
     Joypad,
     Apu,
     Serial,
@@ -143,6 +147,8 @@ pub fn route_io_address(address: u16) -> IoRoute {
         IoRoute::BootRomDisable
     } else if address == CGB_SPEED_SWITCH_REGISTER {
         IoRoute::CgbSpeedSwitch
+    } else if address == CGB_WRAM_BANK_REGISTER {
+        IoRoute::CgbWramBank
     } else if address == JOYP_REGISTER {
         IoRoute::Joypad
     } else if matches!(address, 0xFF10..=0xFF26 | 0xFF30..=0xFF3F) {
