@@ -6,7 +6,7 @@ use crate::cartridge::Cartridge;
 use crate::input::{Joypad, JoypadButton};
 use crate::memory::{
     route_address, route_io_address, BusRoute, IoRoute, MemoryMappedDevice, BOOT_ROM_SIZE,
-    HRAM_END, HRAM_SIZE, HRAM_START, IO_REGISTERS_SIZE, IO_REGISTERS_START, WRAM_ECHO_START,
+    HRAM_END, HRAM_SIZE, HRAM_START, IO_REGISTERS_SIZE, IO_REGISTERS_START, WRAM_BANK_SIZE,
     WRAM_SIZE, WRAM_START,
 };
 use crate::observability::PpuSnapshot;
@@ -17,6 +17,8 @@ const JOYPAD_INTERRUPT_MASK: u8 = 0x10;
 const KEY1_PREPARE_SPEED_SWITCH: u8 = 0x01;
 const KEY1_CURRENT_SPEED: u8 = 0x80;
 const KEY1_UNUSED_READ_MASK: u8 = 0x7E;
+const SVBK_BANK_MASK: u8 = 0x07;
+const SVBK_UNUSED_READ_MASK: u8 = 0xF8;
 const WATCHED_IO_ADDRESSES: [u16; 6] = [
     crate::ppu::LCDC_REGISTER,
     crate::ppu::STAT_REGISTER,
@@ -81,6 +83,7 @@ pub struct Bus {
     cgb_mode_enabled: bool,
     cgb_double_speed: bool,
     cgb_prepare_speed_switch: bool,
+    cgb_selected_wram_bank: u8,
     watch_io_enabled: Cell<bool>,
     watch_io_events: RefCell<Vec<BusWatchIoEvent>>,
 }
@@ -104,6 +107,7 @@ impl Hash for Bus {
         self.cgb_mode_enabled.hash(state);
         self.cgb_double_speed.hash(state);
         self.cgb_prepare_speed_switch.hash(state);
+        self.cgb_selected_wram_bank.hash(state);
         self.watch_io_enabled.get().hash(state);
         self.watch_io_events.borrow().hash(state);
     }
@@ -155,6 +159,7 @@ impl Bus {
             cgb_mode_enabled: false,
             cgb_double_speed: false,
             cgb_prepare_speed_switch: false,
+            cgb_selected_wram_bank: 1,
             watch_io_enabled: Cell::new(false),
             watch_io_events: RefCell::new(Vec::new()),
         }
@@ -210,6 +215,7 @@ impl Bus {
         self.oam_dma_cycles_remaining = 0;
         self.cgb_double_speed = false;
         self.cgb_prepare_speed_switch = false;
+        self.cgb_selected_wram_bank = 1;
         self.watch_io_events.borrow_mut().clear();
     }
 
@@ -248,8 +254,8 @@ impl Bus {
                     self.ppu.read8(address)
                 }
             }
-            BusRoute::WorkRam => self.wram[(address - WRAM_START) as usize],
-            BusRoute::WorkRamEcho => self.wram[(address - WRAM_ECHO_START) as usize],
+            BusRoute::WorkRam => self.wram[self.wram_index(address)],
+            BusRoute::WorkRamEcho => self.wram[self.wram_index(address - 0x2000)],
             BusRoute::PpuOam => {
                 if dma_bypass == DmaBypass::Yes {
                     self.ppu.dma_read_oam(address)
@@ -270,12 +276,37 @@ impl Bus {
                 self.cartridge.write8(address, value);
             }
             BusRoute::PpuVram | BusRoute::PpuOam => self.ppu.write8(address, value),
-            BusRoute::WorkRam => self.wram[(address - WRAM_START) as usize] = value,
-            BusRoute::WorkRamEcho => self.wram[(address - WRAM_ECHO_START) as usize] = value,
+            BusRoute::WorkRam => {
+                let index = self.wram_index(address);
+                self.wram[index] = value;
+            }
+            BusRoute::WorkRamEcho => {
+                let index = self.wram_index(address - 0x2000);
+                self.wram[index] = value;
+            }
             BusRoute::Unusable => {}
             BusRoute::Io => self.write8_io(address, value),
             BusRoute::HighRam => self.hram[(address - HRAM_START) as usize] = value,
             BusRoute::InterruptEnable => self.interrupt_enable = value,
+        }
+    }
+
+    fn wram_index(&self, address: u16) -> usize {
+        debug_assert!((WRAM_START..=crate::memory::WRAM_END).contains(&address));
+
+        let offset = (address - WRAM_START) as usize;
+        if !self.cgb_mode_enabled || offset < WRAM_BANK_SIZE {
+            return offset;
+        }
+
+        (usize::from(self.active_cgb_wram_bank()) * WRAM_BANK_SIZE) + (offset - WRAM_BANK_SIZE)
+    }
+
+    const fn active_cgb_wram_bank(&self) -> u8 {
+        if self.cgb_selected_wram_bank == 0 {
+            1
+        } else {
+            self.cgb_selected_wram_bank
         }
     }
 
@@ -295,6 +326,7 @@ impl Bus {
         match route_io_address(address) {
             IoRoute::BootRomDisable => self.boot_rom_disable_value,
             IoRoute::CgbSpeedSwitch => self.read_key1(),
+            IoRoute::CgbWramBank => self.read_svbk(),
             IoRoute::Joypad => self.joypad.read8(address),
             IoRoute::Apu => self.apu.read8(address),
             IoRoute::Serial => self.serial.read8(address),
@@ -313,6 +345,7 @@ impl Bus {
                 }
             }
             IoRoute::CgbSpeedSwitch => self.write_key1(value),
+            IoRoute::CgbWramBank => self.write_svbk(value),
             IoRoute::Joypad => {
                 let previous_p1 = self.joypad.read8(address);
                 self.joypad.write8(address, value);
@@ -387,6 +420,20 @@ impl Bus {
     fn write_key1(&mut self, value: u8) {
         if self.cgb_mode_enabled {
             self.cgb_prepare_speed_switch = (value & KEY1_PREPARE_SPEED_SWITCH) != 0;
+        }
+    }
+
+    fn read_svbk(&self) -> u8 {
+        if self.cgb_mode_enabled {
+            SVBK_UNUSED_READ_MASK | self.cgb_selected_wram_bank
+        } else {
+            0xFF
+        }
+    }
+
+    fn write_svbk(&mut self, value: u8) {
+        if self.cgb_mode_enabled {
+            self.cgb_selected_wram_bank = value & SVBK_BANK_MASK;
         }
     }
 
@@ -743,6 +790,66 @@ mod tests {
         assert!(!bus.consume_cgb_speed_switch_request());
         assert!(!bus.cgb_double_speed());
         assert_eq!(bus.cgb_speed_divisor(), 1);
+    }
+
+    #[test]
+    fn svbk_is_inert_in_dmg_mode() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xFF);
+
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x03);
+        bus.write8(0xD000, 0x42);
+
+        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xFF);
+        assert_eq!(bus.read8(0xD000), 0x42);
+    }
+
+    #[test]
+    fn cgb_svbk_selects_independent_switchable_wram_banks() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new_cgb(cartridge);
+
+        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xF9);
+
+        bus.write8(0xC000, 0x11);
+        bus.write8(0xD000, 0x21);
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x02);
+        bus.write8(0xD000, 0x22);
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x07);
+        bus.write8(0xD000, 0x27);
+
+        assert_eq!(bus.read8(0xC000), 0x11);
+        assert_eq!(bus.read8(0xD000), 0x27);
+        assert_eq!(bus.read8(0xF000), 0x27);
+
+        bus.write8(0xF000, 0x37);
+        assert_eq!(bus.read8(0xD000), 0x37);
+
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x02);
+        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xFA);
+        assert_eq!(bus.read8(0xD000), 0x22);
+        assert_eq!(bus.read8(0xC000), 0x11);
+
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x01);
+        assert_eq!(bus.read8(0xD000), 0x21);
+    }
+
+    #[test]
+    fn cgb_svbk_zero_selects_bank_one_memory_alias() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new_cgb(cartridge);
+
+        bus.write8(0xD123, 0x5A);
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x00);
+
+        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xF8);
+        assert_eq!(bus.read8(0xD123), 0x5A);
+
+        bus.write8(0xD123, 0xA5);
+        bus.write8(crate::memory::CGB_WRAM_BANK_REGISTER, 0x01);
+        assert_eq!(bus.read8(0xD123), 0xA5);
     }
 
     #[test]
