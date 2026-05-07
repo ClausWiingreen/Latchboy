@@ -1,21 +1,18 @@
 use std::collections::VecDeque;
-use std::env;
-use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::{Parser, ValueEnum};
 use latchboy_core::{
-    cartridge::Cartridge,
     interrupts,
     observability::{
         CpuStepObservation, EmulatorEvent, EmulatorObserver, HaltedFastForwardObservation,
         WatchIoAccessType, WatchIoObservation,
     },
-    Emulator,
 };
+use latchboy_desktop::debug_harness::load_emulator;
 
 const DEFAULT_CYCLE_STEP: u32 = 1;
 const LOOP_WINDOW_MIN: usize = 2;
@@ -111,36 +108,79 @@ fn instruction_len(observation: &CpuStepObservation) -> u16 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum TraceFormat {
     Minimal,
     Normal,
     Full,
 }
 
-impl TraceFormat {
-    fn parse(value: &str) -> Result<Self, UsageError> {
-        match value {
-            "minimal" => Ok(Self::Minimal),
-            "normal" => Ok(Self::Normal),
-            "full" => Ok(Self::Full),
-            _ => Err(UsageError(format!(
-                "invalid --format value '{value}': expected one of: minimal, normal, full"
-            ))),
+#[derive(Debug, Parser)]
+#[command(name = "trace_rom")]
+struct TraceArgs {
+    /// ROM path.
+    rom_path: PathBuf,
+    /// Output trace path.
+    output_path: PathBuf,
+    #[arg(long, default_value_t = DEFAULT_CYCLE_STEP, value_parser = clap::value_parser!(u32).range(1..))]
+    cycle_step: u32,
+    #[arg(long)]
+    max_steps: Option<u64>,
+    #[arg(long)]
+    max_cycles: Option<u64>,
+    #[arg(long = "exit-on-jr-fe", action = clap::ArgAction::SetTrue, overrides_with = "no_exit_on_jr_fe")]
+    exit_on_jr_fe: bool,
+    #[arg(long = "no-exit-on-jr-fe", action = clap::ArgAction::SetTrue, overrides_with = "exit_on_jr_fe")]
+    no_exit_on_jr_fe: bool,
+    #[arg(long = "exit-on-unimplemented", action = clap::ArgAction::SetTrue, overrides_with = "no_exit_on_unimplemented")]
+    exit_on_unimplemented: bool,
+    #[arg(long = "no-exit-on-unimplemented", action = clap::ArgAction::SetTrue, overrides_with = "exit_on_unimplemented")]
+    no_exit_on_unimplemented: bool,
+    #[arg(long)]
+    watch_io: bool,
+    #[arg(long, value_enum, default_value_t = TraceFormat::Normal)]
+    format: TraceFormat,
+    #[arg(long, conflicts_with = "no_summarize_waits")]
+    summarize_waits: bool,
+    #[arg(long = "no-summarize-waits", conflicts_with = "summarize_waits")]
+    no_summarize_waits: bool,
+    #[arg(long, value_parser = parse_u16_hex_arg)]
+    breakpoint_pc: Option<u16>,
+    #[arg(long, value_parser = parse_u16_hex_arg)]
+    inspect_mem: Vec<u16>,
+}
+
+impl TraceArgs {
+    fn into_config(self) -> CliConfig {
+        let summarize_waits_override = if self.summarize_waits {
+            Some(true)
+        } else if self.no_summarize_waits {
+            Some(false)
+        } else {
+            None
+        };
+        let summarize_waits = summarize_waits_override.unwrap_or(match self.format {
+            TraceFormat::Full => false,
+            TraceFormat::Minimal | TraceFormat::Normal => true,
+        });
+
+        CliConfig {
+            rom_path: self.rom_path,
+            output_path: self.output_path,
+            cycle_step: self.cycle_step,
+            max_steps: self.max_steps,
+            max_cycles: self.max_cycles,
+            exit_on_jr_fe: self.exit_on_jr_fe || !self.no_exit_on_jr_fe,
+            exit_on_unimplemented: self.exit_on_unimplemented || !self.no_exit_on_unimplemented,
+            watch_io: self.watch_io,
+            format: self.format,
+            summarize_waits,
+            summarize_waits_overridden: summarize_waits_override.is_some(),
+            breakpoint_pc: self.breakpoint_pc,
+            inspect_mem: self.inspect_mem,
         }
     }
 }
-
-#[derive(Debug)]
-struct UsageError(String);
-
-impl fmt::Display for UsageError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Error for UsageError {}
 
 #[derive(Debug)]
 struct CliConfig {
@@ -157,11 +197,6 @@ struct CliConfig {
     summarize_waits_overridden: bool,
     breakpoint_pc: Option<u16>,
     inspect_mem: Vec<u16>,
-}
-
-enum CliParseResult {
-    Help,
-    Config(CliConfig),
 }
 
 #[derive(Debug)]
@@ -454,164 +489,13 @@ impl<'a> EmulatorObserver for TraceCollector<'a> {
     }
 }
 
-fn parse_u64(value: &str, name: &str) -> Result<u64, UsageError> {
-    value.parse::<u64>().map_err(|_| {
-        UsageError(format!(
-            "invalid --{name} value '{value}': expected integer"
-        ))
-    })
-}
-
-fn parse_u32(value: &str, name: &str) -> Result<u32, UsageError> {
-    value.parse::<u32>().map_err(|_| {
-        UsageError(format!(
-            "invalid --{name} value '{value}': expected integer"
-        ))
-    })
-}
-
-fn parse_u16_hex(value: &str, name: &str) -> Result<u16, UsageError> {
+fn parse_u16_hex_arg(value: &str) -> Result<u16, String> {
     let trimmed = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
         .unwrap_or(value);
-    u16::from_str_radix(trimmed, 16).map_err(|_| {
-        UsageError(format!(
-            "invalid --{name} value '{value}': expected 16-bit hex (example: 0150 or 0x0150)"
-        ))
-    })
-}
-
-fn parse_cli() -> Result<CliParseResult, UsageError> {
-    let mut args = env::args().skip(1).collect::<Vec<_>>();
-    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        return Ok(CliParseResult::Help);
-    }
-    if args.len() < 2 {
-        return Err(UsageError(
-            "missing ROM path and/or output trace path".to_string(),
-        ));
-    }
-    let rom_path = PathBuf::from(args.remove(0));
-    let output_path = PathBuf::from(args.remove(0));
-    let mut args = args.into_iter();
-
-    let mut cycle_step = DEFAULT_CYCLE_STEP;
-    let mut max_steps = None;
-    let mut max_cycles = None;
-    let mut exit_on_jr_fe = true;
-    let mut exit_on_unimplemented = true;
-    let mut watch_io = false;
-    let mut format = TraceFormat::Normal;
-    let mut summarize_waits_override = None;
-    let mut breakpoint_pc = None;
-    let mut inspect_mem = Vec::new();
-
-    while let Some(flag) = args.next() {
-        match flag.as_str() {
-            "--cycle-step" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| UsageError("missing value for --cycle-step".to_string()))?;
-                cycle_step = parse_u32(&value, "cycle-step")?;
-                if cycle_step == 0 {
-                    return Err(UsageError(
-                        "--cycle-step must be greater than zero".to_string(),
-                    ));
-                }
-            }
-            "--max-steps" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| UsageError("missing value for --max-steps".to_string()))?;
-                max_steps = Some(parse_u64(&value, "max-steps")?);
-            }
-            "--max-cycles" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| UsageError("missing value for --max-cycles".to_string()))?;
-                max_cycles = Some(parse_u64(&value, "max-cycles")?);
-            }
-            "--exit-on-jr-fe" => exit_on_jr_fe = true,
-            "--no-exit-on-jr-fe" => exit_on_jr_fe = false,
-            "--exit-on-unimplemented" => exit_on_unimplemented = true,
-            "--no-exit-on-unimplemented" => exit_on_unimplemented = false,
-            "--watch-io" => watch_io = true,
-            "--summarize-waits" => summarize_waits_override = Some(true),
-            "--no-summarize-waits" => summarize_waits_override = Some(false),
-            "--format" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| UsageError("missing value for --format".to_string()))?;
-                format = TraceFormat::parse(&value)?;
-            }
-            "--breakpoint-pc" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| UsageError("missing value for --breakpoint-pc".to_string()))?;
-                breakpoint_pc = Some(parse_u16_hex(&value, "breakpoint-pc")?);
-            }
-            "--inspect-mem" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| UsageError("missing value for --inspect-mem".to_string()))?;
-                inspect_mem.push(parse_u16_hex(&value, "inspect-mem")?);
-            }
-            "-h" | "--help" => {
-                return Ok(CliParseResult::Help);
-            }
-            _ => {
-                return Err(UsageError(format!(
-                    "unrecognized argument '{flag}'\n{}",
-                    usage()
-                )));
-            }
-        }
-    }
-
-    let summarize_waits = summarize_waits_override.unwrap_or(match format {
-        TraceFormat::Full => false,
-        TraceFormat::Minimal | TraceFormat::Normal => true,
-    });
-    let summarize_waits_overridden = summarize_waits_override.is_some();
-
-    Ok(CliParseResult::Config(CliConfig {
-        rom_path,
-        output_path,
-        cycle_step,
-        max_steps,
-        max_cycles,
-        exit_on_jr_fe,
-        exit_on_unimplemented,
-        watch_io,
-        format,
-        summarize_waits,
-        summarize_waits_overridden,
-        breakpoint_pc,
-        inspect_mem,
-    }))
-}
-
-fn usage() -> String {
-    "usage: trace_rom <path-to-rom.gb> <trace-output.txt> [--max-steps N] [--max-cycles N] [--cycle-step N] [--watch-io] [--format minimal|normal|full] [--breakpoint-pc 0150] [--inspect-mem C000] [--summarize-waits|--no-summarize-waits] [--exit-on-jr-fe|--no-exit-on-jr-fe] [--exit-on-unimplemented|--no-exit-on-unimplemented]\n\
---summarize-waits aggregates canonical LY polling loops (FF44 + conditional backward jump) into one semantic event.\n\
---inspect-mem prints final memory values for each provided 16-bit hex address.\n\
-Default: on for minimal/normal format, off for full format."
-        .to_string()
-}
-
-fn load_emulator(rom_path: &PathBuf) -> Result<Emulator, String> {
-    let rom_data = fs::read(rom_path)
-        .map_err(|error| format!("failed to read ROM '{}': {error}", rom_path.display()))?;
-
-    let cartridge = Cartridge::from_rom(rom_data).map_err(|error| {
-        format!(
-            "failed to parse cartridge from ROM '{}': {error:?}",
-            rom_path.display()
-        )
-    })?;
-
-    Ok(Emulator::from_cartridge(cartridge))
+    u16::from_str_radix(trimmed, 16)
+        .map_err(|_| format!("invalid 16-bit hex value '{value}' (example: 0150 or 0x0150)"))
 }
 
 fn format_cpu_step_line(
@@ -851,18 +735,7 @@ fn cycle_batch_target(config: &CliConfig, steps: u64, total_cycles: u64) -> u32 
 }
 
 fn main() -> ExitCode {
-    let config = match parse_cli() {
-        Ok(CliParseResult::Help) => {
-            println!("{}", usage());
-            return ExitCode::SUCCESS;
-        }
-        Ok(CliParseResult::Config(config)) => config,
-        Err(error) => {
-            eprintln!("error: {error}");
-            eprintln!("{}", usage());
-            return ExitCode::FAILURE;
-        }
-    };
+    let config = TraceArgs::parse().into_config();
 
     let mut emulator = match load_emulator(&config.rom_path) {
         Ok(emulator) => emulator,
@@ -1157,6 +1030,56 @@ mod tests {
             },
             unimplemented_opcode: None,
         }
+    }
+
+    #[test]
+    fn cli_accepts_legacy_positive_trace_exit_flags() {
+        let config = TraceArgs::try_parse_from([
+            "trace_rom",
+            "rom.gb",
+            "trace.txt",
+            "--exit-on-jr-fe",
+            "--exit-on-unimplemented",
+        ])
+        .expect("positive exit flags should remain accepted")
+        .into_config();
+
+        assert!(config.exit_on_jr_fe);
+        assert!(config.exit_on_unimplemented);
+    }
+
+    #[test]
+    fn cli_accepts_negative_trace_exit_flags() {
+        let config = TraceArgs::try_parse_from([
+            "trace_rom",
+            "rom.gb",
+            "trace.txt",
+            "--no-exit-on-jr-fe",
+            "--no-exit-on-unimplemented",
+        ])
+        .expect("negative exit flags should remain accepted")
+        .into_config();
+
+        assert!(!config.exit_on_jr_fe);
+        assert!(!config.exit_on_unimplemented);
+    }
+
+    #[test]
+    fn cli_trace_exit_flags_use_last_occurrence() {
+        let config = TraceArgs::try_parse_from([
+            "trace_rom",
+            "rom.gb",
+            "trace.txt",
+            "--no-exit-on-jr-fe",
+            "--exit-on-jr-fe",
+            "--exit-on-unimplemented",
+            "--no-exit-on-unimplemented",
+        ])
+        .expect("opposite exit flags should override each other")
+        .into_config();
+
+        assert!(config.exit_on_jr_fe);
+        assert!(!config.exit_on_unimplemented);
     }
 
     #[test]

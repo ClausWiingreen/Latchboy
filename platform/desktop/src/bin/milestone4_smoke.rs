@@ -1,13 +1,16 @@
 use std::env;
-use std::error::Error;
-use std::fs;
 use std::path::PathBuf;
 use std::process::{self, Command};
 use std::time::Instant;
 
 use clap::{Parser, ValueEnum};
-use latchboy_core::{cartridge::Cartridge, Emulator};
-use latchboy_desktop::{run_emulation_loop, DesktopResult, FramePresenter, RuntimeSessionState};
+use latchboy_desktop::{
+    debug_harness::{
+        ensure_output_dir, load_emulator, write_json_summary, write_text_file, DebugHarnessError,
+        DebugHarnessResult,
+    },
+    run_emulation_loop, DesktopResult, FramePresenter, RuntimeSessionState,
+};
 use serde::Serialize;
 use tracing::{debug, info, info_span};
 use tracing_subscriber::{fmt, EnvFilter};
@@ -503,24 +506,32 @@ fn parse_args() -> Result<CliConfig, String> {
     })
 }
 
-fn git_commit_sha() -> Result<String, Box<dyn Error>> {
+fn git_commit_sha() -> DebugHarnessResult<String> {
     let output = Command::new("git")
         .args(["rev-parse", "--short=12", "HEAD"])
         .output()
-        .map_err(|error| format!("failed to execute git rev-parse: {error}"))?;
+        .map_err(|source| DebugHarnessError::CommandIo {
+            command: "git rev-parse --short=12 HEAD".to_owned(),
+            source,
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(format!("git rev-parse --short=12 HEAD failed: {stderr}").into());
+        return Err(DebugHarnessError::CommandFailed {
+            command: "git rev-parse --short=12 HEAD".to_owned(),
+            message: stderr,
+        });
     }
 
     let sha = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let valid_sha = !sha.is_empty() && sha.chars().all(|ch| ch.is_ascii_hexdigit());
     if !valid_sha {
-        return Err(format!(
-            "git rev-parse returned non-hex commit SHA '{sha}', cannot emit schema-compatible run.json"
-        )
-        .into());
+        return Err(DebugHarnessError::CommandFailed {
+            command: "git rev-parse --short=12 HEAD".to_owned(),
+            message: format!(
+                "returned non-hex commit SHA '{sha}', cannot emit schema-compatible run.json"
+            ),
+        });
     }
 
     Ok(sha.to_ascii_lowercase())
@@ -572,10 +583,10 @@ fn title_signal_matches(config: &CliConfig, presenter: &SmokePresenter) -> Resul
     }
 }
 
-fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), Box<dyn Error>> {
+fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> DebugHarnessResult<()> {
     let _artifact_span =
         info_span!("artifact_write", output_dir = %config.output_dir.display()).entered();
-    fs::create_dir_all(&config.output_dir)?;
+    ensure_output_dir(&config.output_dir)?;
 
     let commit_sha = git_commit_sha()?;
     let title_id_value = config.title_id.as_deref().unwrap_or("unscoped-local-run");
@@ -586,10 +597,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         frame_limit: config.frame_limit,
         wall_time_limit_ms: config.wall_time_limit_ms,
     };
-    fs::write(
-        config.output_dir.join("run.json"),
-        serde_json::to_string_pretty(&run_json)?,
-    )?;
+    write_json_summary(config.output_dir.join("run.json"), &run_json)?;
     debug!(path = %config.output_dir.join("run.json").display(), "artifact written");
 
     let checkpoint_frame_index = config
@@ -665,10 +673,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         checkpoint_frame_index,
         pass_fail_reason,
     };
-    fs::write(
-        config.output_dir.join("summary.json"),
-        serde_json::to_string_pretty(&summary_json)?,
-    )?;
+    write_json_summary(config.output_dir.join("summary.json"), &summary_json)?;
     debug!(path = %config.output_dir.join("summary.json").display(), "artifact written");
 
     let hashes = if presenter.sampled_hashes.is_empty() {
@@ -699,9 +704,9 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         sample_stride: config.hash_sample_stride,
         hashes,
     };
-    fs::write(
+    write_json_summary(
         config.output_dir.join("hash_window.json"),
-        serde_json::to_string_pretty(&hash_window_json)?,
+        &hash_window_json,
     )?;
     debug!(path = %config.output_dir.join("hash_window.json").display(), "artifact written");
 
@@ -709,9 +714,9 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         start_frame: config.checkpoint_start_frame,
         frame_count: config.checkpoint_frame_count,
     };
-    fs::write(
+    write_json_summary(
         config.output_dir.join("pass_window.json"),
-        serde_json::to_string_pretty(&pass_window_json)?,
+        &pass_window_json,
     )?;
     debug!(path = %config.output_dir.join("pass_window.json").display(), "artifact written");
 
@@ -722,9 +727,9 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         pass_window: pass_window_json,
         copyrighted_assets_committed: false,
     };
-    fs::write(
+    write_json_summary(
         config.output_dir.join("title-evidence.json"),
-        serde_json::to_string_pretty(&title_evidence_json)?,
+        &title_evidence_json,
     )?;
     debug!(path = %config.output_dir.join("title-evidence.json").display(), "artifact written");
 
@@ -742,7 +747,7 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
         config.title_signal_frame,
         config.title_signal_hash
     );
-    fs::write(config.output_dir.join("runner.log"), runner_log)?;
+    write_text_file(config.output_dir.join("runner.log"), runner_log)?;
     debug!(path = %config.output_dir.join("runner.log").display(), "artifact written");
 
     println!(
@@ -753,29 +758,13 @@ fn write_outputs(config: &CliConfig, presenter: &SmokePresenter) -> Result<(), B
     Ok(())
 }
 
-fn run(config: &CliConfig) -> Result<SmokePresenter, Box<dyn Error>> {
+fn run(config: &CliConfig) -> DebugHarnessResult<SmokePresenter> {
     let _run_span = info_span!("smoke_run", rom = %config.rom_path.display()).entered();
     info!("smoke run starting");
     let _rom_span = info_span!("rom_load").entered();
-    let rom_bytes = fs::read(&config.rom_path).map_err(|error| {
-        format!(
-            "failed to read ROM '{}': {error}",
-            config.rom_path.as_path().display()
-        )
-    })?;
-    info!(rom_size = rom_bytes.len(), "rom loaded");
+    let mut emulator = load_emulator(&config.rom_path)?;
+    info!("rom loaded and cartridge parsed");
     drop(_rom_span);
-    let _cart_span = info_span!("cartridge_parse").entered();
-    let cartridge = Cartridge::from_rom(rom_bytes).map_err(|error| {
-        format!(
-            "failed to parse cartridge from ROM '{}': {error:?}",
-            config.rom_path.as_path().display()
-        )
-    })?;
-    info!("cartridge parsed");
-    drop(_cart_span);
-
-    let mut emulator = Emulator::from_cartridge(cartridge);
     let mut presenter = SmokePresenter::new(config);
 
     let _frame_loop_span = info_span!("frame_loop").entered();
@@ -789,8 +778,7 @@ fn run(config: &CliConfig) -> Result<SmokePresenter, Box<dyn Error>> {
         None,
         &mut runtime_state,
         None,
-    )
-    .map_err(|error| format!("emulation loop aborted: {error}"))?;
+    )?;
     info!(
         frames_presented = presenter.frames_presented,
         "frame loop ended"
