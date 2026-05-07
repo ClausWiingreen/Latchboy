@@ -162,6 +162,8 @@ pub struct Apu {
     ch3_wave_index: u8,
     ch4_phase_accumulator: u32,
     ch4_lfsr: u16,
+    registers: [u8; Self::REGISTER_COUNT],
+    wave_ram_bytes: [u8; Self::WAVE_RAM_BYTE_COUNT],
     ch1: Ch1,
     ch2: Ch2,
     ch3: Ch3,
@@ -270,6 +272,166 @@ impl Apu {
     const CH4_DEFAULT_FREQUENCY_HZ: u32 = 1_024;
     const CH1_DEFAULT_AMPLITUDE: i16 = 1_250;
     const CH2_DEFAULT_AMPLITUDE: i16 = 1_250;
+    const CH3_DEFAULT_AMPLITUDE: i16 = 1_250;
+    const REGISTER_START: u16 = 0xFF10;
+    const REGISTER_END: u16 = 0xFF26;
+    const REGISTER_COUNT: usize = (Self::REGISTER_END - Self::REGISTER_START + 1) as usize;
+    const WAVE_RAM_START: u16 = 0xFF30;
+    const WAVE_RAM_END: u16 = 0xFF3F;
+    const WAVE_RAM_BYTE_COUNT: usize = (Self::WAVE_RAM_END - Self::WAVE_RAM_START + 1) as usize;
+    const PCM_UNITS_PER_ENVELOPE_STEP: i16 = 180;
+
+    const fn initial_registers() -> [u8; Self::REGISTER_COUNT] {
+        let mut registers = [0; Self::REGISTER_COUNT];
+        registers[(0xFF10 - Self::REGISTER_START) as usize] = 0x80;
+        registers[(0xFF11 - Self::REGISTER_START) as usize] = 0xBF;
+        registers[(0xFF12 - Self::REGISTER_START) as usize] = 0xF3;
+        registers[(0xFF14 - Self::REGISTER_START) as usize] = 0xBF;
+        registers[(0xFF16 - Self::REGISTER_START) as usize] = 0x3F;
+        registers[(0xFF17 - Self::REGISTER_START) as usize] = 0x00;
+        registers[(0xFF19 - Self::REGISTER_START) as usize] = 0xBF;
+        registers[(0xFF1A - Self::REGISTER_START) as usize] = 0x7F;
+        registers[(0xFF1B - Self::REGISTER_START) as usize] = 0xFF;
+        registers[(0xFF1C - Self::REGISTER_START) as usize] = 0x9F;
+        registers[(0xFF1E - Self::REGISTER_START) as usize] = 0xBF;
+        registers[(0xFF20 - Self::REGISTER_START) as usize] = 0xFF;
+        registers[(0xFF21 - Self::REGISTER_START) as usize] = 0x00;
+        registers[(0xFF22 - Self::REGISTER_START) as usize] = 0x00;
+        registers[(0xFF23 - Self::REGISTER_START) as usize] = 0xBF;
+        registers[(0xFF24 - Self::REGISTER_START) as usize] = 0x77;
+        registers[(0xFF25 - Self::REGISTER_START) as usize] = 0xF3;
+        registers[(0xFF26 - Self::REGISTER_START) as usize] = 0xF0;
+        registers
+    }
+
+    const fn is_unmapped_register_hole(address: u16) -> bool {
+        matches!(address, 0xFF15 | 0xFF1F)
+    }
+
+    const fn register_index(address: u16) -> Option<usize> {
+        if address >= Self::REGISTER_START
+            && address <= Self::REGISTER_END
+            && !Self::is_unmapped_register_hole(address)
+        {
+            Some((address - Self::REGISTER_START) as usize)
+        } else {
+            None
+        }
+    }
+
+    const fn wave_ram_index(address: u16) -> Option<usize> {
+        if address >= Self::WAVE_RAM_START && address <= Self::WAVE_RAM_END {
+            Some((address - Self::WAVE_RAM_START) as usize)
+        } else {
+            None
+        }
+    }
+
+    fn store_register(&mut self, address: u16, value: u8) {
+        if let Some(index) = Self::register_index(address) {
+            self.registers[index] = value;
+        }
+    }
+
+    fn register(&self, address: u16) -> u8 {
+        Self::register_index(address)
+            .and_then(|index| self.registers.get(index).copied())
+            .unwrap_or(0xFF)
+    }
+
+    fn square_frequency_from_period(period: u16) -> u32 {
+        let denominator = 2048_u32.saturating_sub(u32::from(period)).max(1);
+        (131_072 / denominator).clamp(1, 20_000)
+    }
+
+    fn ch1_period(&self) -> u16 {
+        u16::from(self.register(0xFF13)) | (u16::from(self.register(0xFF14) & 0x07) << 8)
+    }
+
+    fn ch2_period(&self) -> u16 {
+        u16::from(self.register(0xFF18)) | (u16::from(self.register(0xFF19) & 0x07) << 8)
+    }
+
+    fn ch3_period(&self) -> u16 {
+        u16::from(self.register(0xFF1D)) | (u16::from(self.register(0xFF1E) & 0x07) << 8)
+    }
+
+    fn amplitude_from_envelope(value: u8) -> i16 {
+        i16::from(value >> 4) * Self::PCM_UNITS_PER_ENVELOPE_STEP
+    }
+
+    fn envelope_dac_enabled(value: u8) -> bool {
+        (value & 0xF8) != 0
+    }
+
+    fn ch3_dac_enabled(&self) -> bool {
+        (self.register(0xFF1A) & 0x80) != 0
+    }
+
+    fn ch3_frequency_from_period(period: u16) -> u32 {
+        let denominator = 2048_u32.saturating_sub(u32::from(period)).max(1);
+        (65_536 / denominator).clamp(1, 20_000)
+    }
+
+    fn update_ch1_frequency_if_active(&mut self) {
+        if self.ch1.enabled {
+            self.ch1.frequency_hz = Self::square_frequency_from_period(self.ch1_period());
+        }
+    }
+
+    fn update_ch2_frequency_if_active(&mut self) {
+        if self.ch2.enabled {
+            self.ch2.frequency_hz = Self::square_frequency_from_period(self.ch2_period());
+        }
+    }
+
+    fn update_ch3_frequency_if_active(&mut self) {
+        if self.ch3.enabled {
+            self.ch3.frequency_hz = Self::ch3_frequency_from_period(self.ch3_period());
+        }
+    }
+
+    fn retrigger_ch1(&mut self) {
+        self.ch1.frequency_hz = Self::square_frequency_from_period(self.ch1_period());
+        self.ch1.duty = DutyCycle::from_duty_bits(self.register(0xFF11) >> 6);
+        self.ch1.amplitude = Self::amplitude_from_envelope(self.register(0xFF12));
+        self.ch1.enabled = Self::envelope_dac_enabled(self.register(0xFF12));
+        self.ch1_phase_accumulator = 0;
+        self.ch1.sweep_tick_counter = 0;
+    }
+
+    fn retrigger_ch2(&mut self) {
+        self.ch2.frequency_hz = Self::square_frequency_from_period(self.ch2_period());
+        self.ch2.duty = DutyCycle::from_duty_bits(self.register(0xFF16) >> 6);
+        self.ch2.amplitude = Self::amplitude_from_envelope(self.register(0xFF17));
+        self.ch2.enabled = Self::envelope_dac_enabled(self.register(0xFF17));
+        self.ch2_phase_accumulator = 0;
+    }
+
+    fn retrigger_ch3(&mut self) {
+        self.ch3.frequency_hz = Self::ch3_frequency_from_period(self.ch3_period());
+        self.ch3.output_level_shift = (self.register(0xFF1C) >> 5) & 0x03;
+        self.ch3.amplitude = Self::PCM_UNITS_PER_ENVELOPE_STEP * 8;
+        self.ch3.enabled = self.ch3_dac_enabled();
+        self.ch3_phase_accumulator = 0;
+        self.ch3_wave_index = 1;
+    }
+
+    fn retrigger_ch4(&mut self) {
+        let nr22 = self.register(0xFF22);
+        let divisor_code = u32::from(nr22 & 0x07);
+        let divisor = if divisor_code == 0 {
+            8
+        } else {
+            divisor_code * 16
+        };
+        let shift = u32::from((nr22 >> 4) & 0x0F);
+        self.ch4.frequency_hz = (524_288_u32 / divisor / (1_u32 << shift.min(15))).clamp(1, 20_000);
+        self.ch4.amplitude = Self::amplitude_from_envelope(self.register(0xFF21));
+        self.ch4.enabled = Self::envelope_dac_enabled(self.register(0xFF21));
+        self.ch4_phase_accumulator = 0;
+        self.ch4_lfsr = 0x7FFF;
+    }
 
     #[must_use]
     pub const fn new() -> Self {
@@ -284,11 +446,16 @@ impl Apu {
             ch3_wave_index: 0,
             ch4_phase_accumulator: 0,
             ch4_lfsr: 0x7FFF,
+            registers: Self::initial_registers(),
+            wave_ram_bytes: [
+                0x02, 0x46, 0x8A, 0xCE, 0xFD, 0xB9, 0x75, 0x31, 0x02, 0x46, 0x8A, 0xCE, 0xFD, 0xB9,
+                0x75, 0x31,
+            ],
             ch1: Ch1 {
                 frequency_hz: Self::CH1_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
-                amplitude: Self::CH1_DEFAULT_AMPLITUDE,
-                enabled: true,
+                amplitude: 0,
+                enabled: false,
                 sweep_period_steps: 0,
                 sweep_shift: 0,
                 sweep_negate: false,
@@ -297,13 +464,13 @@ impl Apu {
             ch2: Ch2 {
                 frequency_hz: Self::CH2_DEFAULT_FREQUENCY_HZ,
                 duty: DutyCycle::from_duty_bits(0b10),
-                amplitude: Self::CH2_DEFAULT_AMPLITUDE,
+                amplitude: 0,
                 enabled: false,
             },
             ch3: Ch3 {
                 frequency_hz: Self::CH3_DEFAULT_FREQUENCY_HZ,
                 output_level_shift: 1,
-                amplitude: 1_250,
+                amplitude: 0,
                 enabled: false,
                 wave_ram: [
                     0, 2, 4, 6, 8, 10, 12, 14, 15, 13, 11, 9, 7, 5, 3, 1, 0, 2, 4, 6, 8, 10, 12,
@@ -317,7 +484,7 @@ impl Apu {
             },
             nr50: Nr50(0x77),
             nr51: Nr51::from_bits_retain(0xF3),
-            nr52: Nr52::from_bits_retain(0xF1),
+            nr52: Nr52::from_bits_retain(0xF0),
         }
     }
 
@@ -407,18 +574,30 @@ impl Apu {
 
     fn mix_stereo_side(&self, is_left: bool, ch1: i16, ch2: i16, ch3: i16, ch4: i16) -> i16 {
         let mut mixed = 0_i16;
-        if self.nr51.routes_channel(is_left, 0) {
+        if self.nr51.routes_channel(is_left, 0) && ch1 != 0 {
             mixed = mixed.saturating_add(ch1);
         }
-        if self.nr51.routes_channel(is_left, 1) {
+        if self.nr51.routes_channel(is_left, 1) && ch2 != 0 {
             mixed = mixed.saturating_add(ch2);
         }
-        if self.nr51.routes_channel(is_left, 2) {
+        if self.nr51.routes_channel(is_left, 2) && ch3 != 0 {
             mixed = mixed.saturating_add(ch3);
         }
-        if self.nr51.routes_channel(is_left, 3) {
+        if self.nr51.routes_channel(is_left, 3) && ch4 != 0 {
             mixed = mixed.saturating_add(ch4);
         }
+
+        let active_channels = [
+            self.nr51.routes_channel(is_left, 0) && ch1 != 0,
+            self.nr51.routes_channel(is_left, 1) && ch2 != 0,
+            self.nr51.routes_channel(is_left, 2) && ch3 != 0,
+            self.nr51.routes_channel(is_left, 3) && ch4 != 0,
+        ]
+        .into_iter()
+        .filter(|active| *active)
+        .count()
+        .max(1);
+        mixed = (i32::from(mixed) / active_channels as i32) as i16;
 
         let volume = self.nr50.output_volume(is_left);
 
@@ -426,48 +605,139 @@ impl Apu {
         scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
     }
 
-    pub fn read_register(&self, address: u16) -> Option<u8> {
+    pub(crate) fn load_startup_register(&mut self, address: u16, value: u8) -> bool {
+        if let Some(index) = Self::wave_ram_index(address) {
+            self.wave_ram_bytes[index] = value;
+            let sample_index = index * 2;
+            self.ch3.wave_ram[sample_index] = value >> 4;
+            self.ch3.wave_ram[sample_index + 1] = value & 0x0F;
+            return true;
+        }
+
+        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END)
+            || Self::is_unmapped_register_hole(address)
+        {
+            return false;
+        }
+
+        self.store_register(address, value);
         match address {
-            0xFF24 => Some(self.nr50.read_bits()),
-            0xFF25 => Some(self.nr51.read_bits()),
+            0xFF10 => self.write_ch1_sweep_register(Nr10::from(value)),
+            0xFF11 => self.ch1.duty = DutyCycle::from_duty_bits(value >> 6),
+            0xFF16 => self.ch2.duty = DutyCycle::from_duty_bits(value >> 6),
+            0xFF1C => self.ch3.output_level_shift = (value >> 5) & 0x03,
+            0xFF24 => self.nr50.write_bits(value),
+            0xFF25 => self.nr51.write_bits(value),
+            0xFF26 => {
+                self.nr52.write_power_bits(value);
+                self.store_register(address, self.nr52.read_bits() | Nr52::READ_RESERVED);
+                self.ch1.enabled = false;
+                self.ch2.enabled = false;
+                self.ch3.enabled = false;
+                self.ch4.enabled = false;
+            }
+            _ => {}
+        }
+
+        true
+    }
+
+    pub fn read_register(&self, address: u16) -> Option<u8> {
+        if let Some(index) = Self::wave_ram_index(address) {
+            return Some(self.wave_ram_bytes[index]);
+        }
+
+        match address {
             0xFF26 => Some(if self.apu_power_enabled() {
                 self.nr52
                     .read_with_channel_status(self.channel_status_flags())
             } else {
                 self.nr52.read_with_channel_status(Nr52::empty())
             }),
+            address if Self::is_unmapped_register_hole(address) => None,
+            Self::REGISTER_START..=Self::REGISTER_END => Some(match address {
+                0xFF24 => self.nr50.read_bits(),
+                0xFF25 => self.nr51.read_bits(),
+                _ => self.register(address),
+            }),
             _ => None,
         }
     }
 
     pub fn write_register(&mut self, address: u16, value: u8) -> bool {
-        match address {
-            0xFF24 => {
-                if self.apu_power_enabled() {
-                    self.nr50.write_bits(value);
-                }
-                true
-            }
-            0xFF25 => {
-                if self.apu_power_enabled() {
-                    self.nr51.write_bits(value);
-                }
-                true
-            }
-            0xFF26 => {
-                let was_powered = self.apu_power_enabled();
-                self.nr52.write_power_bits(value);
-                if !was_powered && self.apu_power_enabled() {
-                    self.frame_step = 0;
-                    self.t_cycle_counter = 0;
-                }
-                if was_powered && !self.apu_power_enabled() {
-                    self.power_off_reset();
-                }
-                true
-            }
-            _ => false,
+        if let Some(index) = Self::wave_ram_index(address) {
+            self.wave_ram_bytes[index] = value;
+            let sample_index = index * 2;
+            self.ch3.wave_ram[sample_index] = value >> 4;
+            self.ch3.wave_ram[sample_index + 1] = value & 0x0F;
+            return true;
         }
+
+        if address == 0xFF26 {
+            let was_powered = self.apu_power_enabled();
+            self.nr52.write_power_bits(value);
+            self.store_register(address, self.nr52.read_bits() | Nr52::READ_RESERVED);
+            if !was_powered && self.apu_power_enabled() {
+                self.frame_step = 0;
+                self.t_cycle_counter = 0;
+            }
+            if was_powered && !self.apu_power_enabled() {
+                self.power_off_reset();
+            }
+            return true;
+        }
+
+        if !matches!(address, Self::REGISTER_START..=Self::REGISTER_END)
+            || Self::is_unmapped_register_hole(address)
+        {
+            return false;
+        }
+
+        if !self.apu_power_enabled() {
+            return true;
+        }
+
+        self.store_register(address, value);
+        match address {
+            0xFF10 => self.write_ch1_sweep_register(Nr10::from(value)),
+            0xFF11 => self.ch1.duty = DutyCycle::from_duty_bits(value >> 6),
+            0xFF12 => {
+                self.ch1.amplitude = Self::amplitude_from_envelope(value);
+                if !Self::envelope_dac_enabled(value) {
+                    self.ch1.enabled = false;
+                }
+            }
+            0xFF13 => self.update_ch1_frequency_if_active(),
+            0xFF14 if (value & 0x80) != 0 => self.retrigger_ch1(),
+            0xFF14 => self.update_ch1_frequency_if_active(),
+            0xFF16 => self.ch2.duty = DutyCycle::from_duty_bits(value >> 6),
+            0xFF17 => {
+                self.ch2.amplitude = Self::amplitude_from_envelope(value);
+                if !Self::envelope_dac_enabled(value) {
+                    self.ch2.enabled = false;
+                }
+            }
+            0xFF18 => self.update_ch2_frequency_if_active(),
+            0xFF19 if (value & 0x80) != 0 => self.retrigger_ch2(),
+            0xFF19 => self.update_ch2_frequency_if_active(),
+            0xFF1A if !self.ch3_dac_enabled() => self.ch3.enabled = false,
+            0xFF1C => self.ch3.output_level_shift = (value >> 5) & 0x03,
+            0xFF1D => self.update_ch3_frequency_if_active(),
+            0xFF1E if (value & 0x80) != 0 => self.retrigger_ch3(),
+            0xFF1E => self.update_ch3_frequency_if_active(),
+            0xFF21 => {
+                self.ch4.amplitude = Self::amplitude_from_envelope(value);
+                if !Self::envelope_dac_enabled(value) {
+                    self.ch4.enabled = false;
+                }
+            }
+            0xFF23 if (value & 0x80) != 0 => self.retrigger_ch4(),
+            0xFF24 => self.nr50.write_bits(value),
+            0xFF25 => self.nr51.write_bits(value),
+            _ => {}
+        }
+
+        true
     }
 
     const fn apu_power_enabled(&self) -> bool {
@@ -484,6 +754,8 @@ impl Apu {
     }
 
     fn power_off_reset(&mut self) {
+        self.registers = [0; Self::REGISTER_COUNT];
+        self.store_register(0xFF26, Nr52::READ_RESERVED);
         self.nr50.write_bits(0);
         self.nr51.write_bits(0);
         self.ch1.frequency_hz = Self::CH1_DEFAULT_FREQUENCY_HZ;
@@ -496,7 +768,7 @@ impl Apu {
         self.ch2.enabled = false;
         self.ch3.frequency_hz = Self::CH3_DEFAULT_FREQUENCY_HZ;
         self.ch3.output_level_shift = 1;
-        self.ch3.amplitude = 1_250;
+        self.ch3.amplitude = Self::CH3_DEFAULT_AMPLITUDE;
         self.ch3.enabled = false;
         self.ch4.frequency_hz = Self::CH4_DEFAULT_FREQUENCY_HZ;
         self.ch4.amplitude = 0;
@@ -617,9 +889,13 @@ impl Apu {
     #[cfg(test)]
     fn set_ch1_amplitude(&mut self, amplitude: i16) {
         self.ch1.amplitude = amplitude;
+        self.ch1.enabled = amplitude != 0;
     }
 
     pub fn set_ch1_enabled(&mut self, enabled: bool) {
+        if enabled && self.ch1.amplitude == 0 {
+            self.ch1.amplitude = Self::CH1_DEFAULT_AMPLITUDE;
+        }
         self.ch1.enabled = enabled;
     }
 
@@ -628,6 +904,9 @@ impl Apu {
         self.ch2.frequency_hz = frequency_hz;
     }
     pub fn set_ch2_enabled(&mut self, enabled: bool) {
+        if enabled && self.ch2.amplitude == 0 {
+            self.ch2.amplitude = Self::CH2_DEFAULT_AMPLITUDE;
+        }
         self.ch2.enabled = enabled;
     }
 
@@ -641,6 +920,9 @@ impl Apu {
         self.ch3.output_level_shift = output_level_shift;
     }
     pub fn set_ch3_enabled(&mut self, enabled: bool) {
+        if enabled && self.ch3.amplitude == 0 {
+            self.ch3.amplitude = Self::CH3_DEFAULT_AMPLITUDE;
+        }
         self.ch3.enabled = enabled;
     }
 
@@ -893,6 +1175,17 @@ mod tests {
     }
 
     #[test]
+    fn unmapped_apu_register_holes_are_not_readable_or_writable() {
+        let mut apu = Apu::new();
+
+        for address in [0xFF15, 0xFF1F] {
+            assert_eq!(apu.read_register(address), None);
+            assert!(!apu.write_register(address, 0x5A));
+            assert_eq!(apu.read_register(address), None);
+        }
+    }
+
+    #[test]
     fn nr52_master_enable_mutes_all_output_when_disabled() {
         let mut apu = Apu::new();
         assert!(apu.write_register(0xFF26, 0x00));
@@ -1008,7 +1301,7 @@ mod tests {
         let apu = Apu::new();
         let nr52 = apu.read_register(0xFF26).unwrap_or(0);
         assert_eq!(nr52 & 0xF0, 0xF0);
-        assert_ne!(nr52 & 0x01, 0);
+        assert_eq!(nr52 & 0x0F, 0);
     }
 
     #[test]
@@ -1060,7 +1353,7 @@ mod tests {
         assert_eq!(apu.ch2.amplitude, Apu::CH2_DEFAULT_AMPLITUDE);
         assert_eq!(apu.ch3.frequency_hz, Apu::CH3_DEFAULT_FREQUENCY_HZ);
         assert_eq!(apu.ch3.output_level_shift, 1);
-        assert_eq!(apu.ch3.amplitude, 1_250);
+        assert_eq!(apu.ch3.amplitude, Apu::CH3_DEFAULT_AMPLITUDE);
         assert_eq!(apu.ch4.frequency_hz, Apu::CH4_DEFAULT_FREQUENCY_HZ);
         assert_eq!(apu.ch4.amplitude, 0);
     }
@@ -1081,5 +1374,145 @@ mod tests {
         let samples = apu.drain_samples();
         assert!(!samples.is_empty());
         assert!(samples.iter().any(|sample| *sample != 0));
+    }
+
+    #[test]
+    fn nr12_zero_disables_ch1_instead_of_falling_back_to_default_tone() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF25, 0x11));
+        assert!(apu.write_register(0xFF12, 0x00));
+        assert!(apu.write_register(0xFF14, 0x80));
+
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| *sample == 0));
+        assert_eq!(apu.read_register(0xFF26).unwrap_or(0) & 0x01, 0);
+    }
+
+    #[test]
+    fn active_channel_period_writes_update_frequency_without_retrigger() {
+        let mut apu = Apu::new();
+
+        assert!(apu.write_register(0xFF12, 0xF0));
+        assert!(apu.write_register(0xFF13, 0x00));
+        assert!(apu.write_register(0xFF14, 0x80));
+        let ch1_initial = apu.ch1.frequency_hz;
+        assert!(apu.write_register(0xFF13, 0xFF));
+        assert_ne!(apu.ch1.frequency_hz, ch1_initial);
+        assert_eq!(
+            apu.ch1.frequency_hz,
+            Apu::square_frequency_from_period(0x00FF)
+        );
+        assert!(apu.write_register(0xFF14, 0x02));
+        assert_eq!(
+            apu.ch1.frequency_hz,
+            Apu::square_frequency_from_period(0x02FF)
+        );
+
+        assert!(apu.write_register(0xFF17, 0xF0));
+        assert!(apu.write_register(0xFF18, 0x00));
+        assert!(apu.write_register(0xFF19, 0x80));
+        let ch2_initial = apu.ch2.frequency_hz;
+        assert!(apu.write_register(0xFF18, 0x80));
+        assert_ne!(apu.ch2.frequency_hz, ch2_initial);
+        assert_eq!(
+            apu.ch2.frequency_hz,
+            Apu::square_frequency_from_period(0x0080)
+        );
+        assert!(apu.write_register(0xFF19, 0x03));
+        assert_eq!(
+            apu.ch2.frequency_hz,
+            Apu::square_frequency_from_period(0x0380)
+        );
+
+        assert!(apu.write_register(0xFF1A, 0x80));
+        assert!(apu.write_register(0xFF1D, 0x00));
+        assert!(apu.write_register(0xFF1E, 0x80));
+        let ch3_initial = apu.ch3.frequency_hz;
+        assert!(apu.write_register(0xFF1D, 0x40));
+        assert_ne!(apu.ch3.frequency_hz, ch3_initial);
+        assert_eq!(apu.ch3.frequency_hz, Apu::ch3_frequency_from_period(0x0040));
+        assert!(apu.write_register(0xFF1E, 0x04));
+        assert_eq!(apu.ch3.frequency_hz, Apu::ch3_frequency_from_period(0x0440));
+    }
+
+    #[test]
+    fn ch2_trigger_uses_mmio_frequency_and_envelope_registers() {
+        let mut low = Apu::new();
+        assert!(low.write_register(0xFF25, 0x22));
+        assert!(low.write_register(0xFF16, 0x80));
+        assert!(low.write_register(0xFF17, 0xF0));
+        assert!(low.write_register(0xFF18, 0x00));
+        assert!(low.write_register(0xFF19, 0x80));
+        let _ = low.tick(4_194);
+        let low_samples = low.drain_samples();
+
+        let mut high = Apu::new();
+        assert!(high.write_register(0xFF25, 0x22));
+        assert!(high.write_register(0xFF16, 0x80));
+        assert!(high.write_register(0xFF17, 0xF0));
+        assert!(high.write_register(0xFF18, 0xFF));
+        assert!(high.write_register(0xFF19, 0x87));
+        let _ = high.tick(4_194);
+        let high_samples = high.drain_samples();
+
+        assert!(!low_samples.is_empty());
+        assert!(!high_samples.is_empty());
+        assert_ne!(low_samples, high_samples);
+        assert!(high_samples.iter().map(|s| s.abs()).max().unwrap_or(0) > 2_000);
+    }
+
+    #[test]
+    fn direct_ch3_enable_restores_default_amplitude() {
+        let mut apu = Apu::new();
+        apu.set_ch1_amplitude(0);
+        apu.ch2.amplitude = 0;
+        apu.set_ch3_wave_ram([15; 32]);
+        apu.set_ch3_enabled(true);
+
+        let _ = apu.tick(400);
+        let samples = apu.drain_samples();
+
+        assert!(!samples.is_empty());
+        assert!(samples.iter().any(|sample| *sample != 0));
+    }
+
+    #[test]
+    fn mmio_triggered_ch3_starts_from_lower_ff30_nibble() {
+        let mut apu = Apu::new();
+        assert!(apu.write_register(0xFF30, 0x0F));
+        for address in 0xFF31..=0xFF3F {
+            assert!(apu.write_register(address, 0x00));
+        }
+        assert!(apu.write_register(0xFF25, 0x44));
+        assert!(apu.write_register(0xFF1A, 0x80));
+        assert!(apu.write_register(0xFF1C, 0x20));
+        assert!(apu.write_register(0xFF1D, 0x00));
+        assert!(apu.write_register(0xFF1E, 0x80));
+
+        let _ = apu.tick(88);
+        let samples = apu.drain_samples();
+
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0] > 0);
+    }
+
+    #[test]
+    fn wave_ram_writes_feed_ch3_samples() {
+        let mut apu = Apu::new();
+        for address in 0xFF30..=0xFF3F {
+            assert!(apu.write_register(address, 0xFF));
+        }
+        assert!(apu.write_register(0xFF25, 0x44));
+        assert!(apu.write_register(0xFF1A, 0x80));
+        assert!(apu.write_register(0xFF1C, 0x20));
+        assert!(apu.write_register(0xFF1D, 0xFF));
+        assert!(apu.write_register(0xFF1E, 0x87));
+
+        let _ = apu.tick(4_194);
+        let samples = apu.drain_samples();
+        assert!(!samples.is_empty());
+        assert!(samples.iter().all(|sample| *sample > 0));
     }
 }

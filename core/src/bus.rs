@@ -190,7 +190,11 @@ impl Bus {
 
     pub fn apply_dmg_no_boot_defaults(&mut self) {
         for (address, value) in NO_BOOT_DEFAULTS {
-            self.write8(*address, *value);
+            if route_io_address(*address) == IoRoute::Apu {
+                let _ = self.apu.load_startup_register(*address, *value);
+            } else {
+                self.write8(*address, *value);
+            }
         }
     }
 
@@ -563,10 +567,37 @@ mod tests {
     }
 
     #[test]
+    fn apu_register_holes_read_ff_and_ignore_writes_through_bus() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        for address in [0xFF15, 0xFF1F] {
+            assert_eq!(bus.read8(address), 0xFF);
+            bus.write8(address, 0x5A);
+            assert_eq!(bus.read8(address), 0xFF);
+        }
+    }
+
+    #[test]
+    fn no_boot_apu_defaults_do_not_trigger_startup_tone() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        bus.apply_dmg_no_boot_defaults();
+        bus.tick(20_000);
+        let samples = bus.pull_audio_samples(64);
+
+        assert!(samples.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
     fn apu_power_off_via_mmio_silences_generated_samples() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);
 
+        bus.write8(0xFF25, 0x11);
+        bus.write8(0xFF12, 0xF0);
+        bus.write8(0xFF14, 0x80);
         bus.tick(20_000);
         let audible = bus.pull_audio_samples(64);
         assert!(audible.iter().any(|sample| *sample != 0));
