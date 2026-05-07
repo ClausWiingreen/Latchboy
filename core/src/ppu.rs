@@ -12,11 +12,23 @@ pub const OBP0_REGISTER: u16 = 0xFF48;
 pub const OBP1_REGISTER: u16 = 0xFF49;
 pub const WY_REGISTER: u16 = 0xFF4A;
 pub const WX_REGISTER: u16 = 0xFF4B;
+pub const VBK_REGISTER: u16 = 0xFF4F;
+pub const BCPS_REGISTER: u16 = 0xFF68;
+pub const BCPD_REGISTER: u16 = 0xFF69;
+pub const OCPS_REGISTER: u16 = 0xFF6A;
+pub const OCPD_REGISTER: u16 = 0xFF6B;
 
 const VRAM_START: u16 = 0x8000;
 const OAM_START: u16 = 0xFE00;
 
-const VRAM_SIZE: usize = 0x2000;
+const VRAM_BANK_SIZE: usize = 0x2000;
+const VRAM_BANK_COUNT: usize = 2;
+const VRAM_SIZE: usize = VRAM_BANK_SIZE * VRAM_BANK_COUNT;
+const CGB_PALETTE_RAM_SIZE: usize = 0x40;
+const CGB_PALETTE_INDEX_MASK: u8 = 0x3F;
+const CGB_PALETTE_AUTO_INCREMENT: u8 = 0x80;
+const CGB_PALETTE_INDEX_READ_MASK: u8 = 0x40;
+const CGB_VBK_READ_MASK: u8 = 0xFE;
 const OAM_SIZE: usize = 0xA0;
 const OAM_ENTRY_SIZE: usize = 4;
 const OAM_SPRITE_COUNT: usize = OAM_SIZE / OAM_ENTRY_SIZE;
@@ -312,6 +324,12 @@ pub struct SpritePixel {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ppu {
     vram: [u8; VRAM_SIZE],
+    selected_vram_bank: u8,
+    cgb_mode_enabled: bool,
+    bg_palette_index: u8,
+    obj_palette_index: u8,
+    cgb_bg_palette_ram: [u8; CGB_PALETTE_RAM_SIZE],
+    cgb_obj_palette_ram: [u8; CGB_PALETTE_RAM_SIZE],
     oam: [u8; OAM_SIZE],
     lcdc: Lcdc,
     stat: Stat,
@@ -348,6 +366,12 @@ impl Default for Ppu {
     fn default() -> Self {
         Self {
             vram: [0; VRAM_SIZE],
+            selected_vram_bank: 0,
+            cgb_mode_enabled: false,
+            bg_palette_index: 0,
+            obj_palette_index: 0,
+            cgb_bg_palette_ram: [0; CGB_PALETTE_RAM_SIZE],
+            cgb_obj_palette_ram: [0; CGB_PALETTE_RAM_SIZE],
             oam: [0; OAM_SIZE],
             lcdc: Lcdc::empty(),
             stat: Stat::default(),
@@ -372,6 +396,21 @@ impl Default for Ppu {
 }
 
 impl Ppu {
+    pub fn new_cgb() -> Self {
+        Self {
+            cgb_mode_enabled: true,
+            ..Self::default()
+        }
+    }
+
+    pub const fn cgb_mode_enabled(&self) -> bool {
+        self.cgb_mode_enabled
+    }
+
+    pub const fn selected_vram_bank(&self) -> u8 {
+        self.selected_vram_bank
+    }
+
     pub const fn scanline_dot(&self) -> u16 {
         self.scanline_dot
     }
@@ -501,11 +540,13 @@ impl Ppu {
             return 0xFF;
         }
 
-        self.vram[(address - VRAM_START) as usize]
+        let offset = self.selected_vram_offset(address);
+        self.vram[offset]
     }
 
     pub fn dma_read_vram(&self, address: u16) -> u8 {
-        self.vram[(address - VRAM_START) as usize]
+        let offset = self.selected_vram_offset(address);
+        self.vram[offset]
     }
 
     pub fn write_vram(&mut self, address: u16, value: u8) {
@@ -513,7 +554,8 @@ impl Ppu {
             return;
         }
 
-        self.vram[(address - VRAM_START) as usize] = value;
+        let offset = self.selected_vram_offset(address);
+        self.vram[offset] = value;
     }
 
     pub fn read_oam(&self, address: u16) -> u8 {
@@ -540,6 +582,22 @@ impl Ppu {
         self.oam[offset as usize] = value;
     }
 
+    fn selected_vram_offset(&self, address: u16) -> usize {
+        usize::from(self.selected_vram_bank) * VRAM_BANK_SIZE + (address - VRAM_START) as usize
+    }
+
+    fn read_cgb_palette_index(index: u8) -> u8 {
+        CGB_PALETTE_INDEX_READ_MASK
+            | (index & (CGB_PALETTE_AUTO_INCREMENT | CGB_PALETTE_INDEX_MASK))
+    }
+
+    fn increment_cgb_palette_index(index: &mut u8) {
+        if (*index & CGB_PALETTE_AUTO_INCREMENT) != 0 {
+            *index =
+                CGB_PALETTE_AUTO_INCREMENT | ((*index).wrapping_add(1) & CGB_PALETTE_INDEX_MASK);
+        }
+    }
+
     pub fn read_register(&self, address: u16) -> Option<u8> {
         let value = match address {
             LCDC_REGISTER => self.lcdc.read_bits(),
@@ -554,6 +612,43 @@ impl Ppu {
             OBP1_REGISTER => self.obp1.read_bits(),
             WY_REGISTER => self.wy,
             WX_REGISTER => self.wx,
+            VBK_REGISTER => {
+                if self.cgb_mode_enabled {
+                    CGB_VBK_READ_MASK | self.selected_vram_bank
+                } else {
+                    0xFF
+                }
+            }
+            BCPS_REGISTER => {
+                if self.cgb_mode_enabled {
+                    Self::read_cgb_palette_index(self.bg_palette_index)
+                } else {
+                    0xFF
+                }
+            }
+            BCPD_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.cgb_bg_palette_ram
+                        [(self.bg_palette_index & CGB_PALETTE_INDEX_MASK) as usize]
+                } else {
+                    0xFF
+                }
+            }
+            OCPS_REGISTER => {
+                if self.cgb_mode_enabled {
+                    Self::read_cgb_palette_index(self.obj_palette_index)
+                } else {
+                    0xFF
+                }
+            }
+            OCPD_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.cgb_obj_palette_ram
+                        [(self.obj_palette_index & CGB_PALETTE_INDEX_MASK) as usize]
+                } else {
+                    0xFF
+                }
+            }
             _ => return None,
         };
 
@@ -617,6 +712,37 @@ impl Ppu {
             OBP1_REGISTER => self.obp1.write_bits(value),
             WY_REGISTER => self.wy = value,
             WX_REGISTER => self.wx = value,
+            VBK_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.selected_vram_bank = value & 0x01;
+                }
+            }
+            BCPS_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.bg_palette_index =
+                        value & (CGB_PALETTE_AUTO_INCREMENT | CGB_PALETTE_INDEX_MASK);
+                }
+            }
+            BCPD_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.cgb_bg_palette_ram
+                        [(self.bg_palette_index & CGB_PALETTE_INDEX_MASK) as usize] = value;
+                    Self::increment_cgb_palette_index(&mut self.bg_palette_index);
+                }
+            }
+            OCPS_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.obj_palette_index =
+                        value & (CGB_PALETTE_AUTO_INCREMENT | CGB_PALETTE_INDEX_MASK);
+                }
+            }
+            OCPD_REGISTER => {
+                if self.cgb_mode_enabled {
+                    self.cgb_obj_palette_ram
+                        [(self.obj_palette_index & CGB_PALETTE_INDEX_MASK) as usize] = value;
+                    Self::increment_cgb_palette_index(&mut self.obj_palette_index);
+                }
+            }
             _ => return false,
         }
 
@@ -2015,5 +2141,65 @@ mod tests {
 
         ppu.write_register(LCDC_REGISTER, LCDC_ENABLE);
         assert_eq!(ppu.composited_pixel_shade(0, 0), 0);
+    }
+
+    #[test]
+    fn cgb_vbk_selects_independent_vram_banks() {
+        let mut ppu = Ppu::new_cgb();
+
+        ppu.write_vram(0x8000, 0x12);
+        assert_eq!(ppu.read_vram(0x8000), 0x12);
+
+        assert!(ppu.write_register(VBK_REGISTER, 0x01));
+        assert_eq!(ppu.read_register(VBK_REGISTER), Some(0xFF));
+        assert_eq!(ppu.selected_vram_bank(), 1);
+        assert_eq!(ppu.read_vram(0x8000), 0x00);
+
+        ppu.write_vram(0x8000, 0x34);
+        assert_eq!(ppu.read_vram(0x8000), 0x34);
+
+        ppu.write_register(VBK_REGISTER, 0x00);
+        assert_eq!(ppu.selected_vram_bank(), 0);
+        assert_eq!(ppu.read_vram(0x8000), 0x12);
+    }
+
+    #[test]
+    fn dmg_mode_ignores_cgb_vbk_and_palette_register_writes() {
+        let mut ppu = Ppu::default();
+
+        assert_eq!(ppu.read_register(VBK_REGISTER), Some(0xFF));
+        ppu.write_register(VBK_REGISTER, 0x01);
+        ppu.write_register(BCPS_REGISTER, 0x80);
+        ppu.write_register(BCPD_REGISTER, 0x56);
+        ppu.write_register(OCPS_REGISTER, 0x80);
+        ppu.write_register(OCPD_REGISTER, 0x78);
+
+        assert_eq!(ppu.selected_vram_bank(), 0);
+        assert_eq!(ppu.read_register(BCPS_REGISTER), Some(0xFF));
+        assert_eq!(ppu.read_register(BCPD_REGISTER), Some(0xFF));
+        assert_eq!(ppu.read_register(OCPS_REGISTER), Some(0xFF));
+        assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0xFF));
+    }
+
+    #[test]
+    fn cgb_palette_data_ports_store_bytes_and_auto_increment_indices() {
+        let mut ppu = Ppu::new_cgb();
+
+        ppu.write_register(BCPS_REGISTER, 0x80 | 0x3F);
+        ppu.write_register(BCPD_REGISTER, 0xAA);
+        assert_eq!(ppu.read_register(BCPS_REGISTER), Some(0xC0));
+
+        ppu.write_register(BCPS_REGISTER, 0x3F);
+        assert_eq!(ppu.read_register(BCPD_REGISTER), Some(0xAA));
+
+        ppu.write_register(OCPS_REGISTER, 0x80 | 0x02);
+        ppu.write_register(OCPD_REGISTER, 0x11);
+        ppu.write_register(OCPD_REGISTER, 0x22);
+        assert_eq!(ppu.read_register(OCPS_REGISTER), Some(0xC4));
+
+        ppu.write_register(OCPS_REGISTER, 0x02);
+        assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0x11));
+        ppu.write_register(OCPS_REGISTER, 0x03);
+        assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0x22));
     }
 }

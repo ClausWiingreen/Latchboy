@@ -433,7 +433,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 
 - [ ] **Game Boy Color (CGB) support**
   - [x] Double-speed mode.
-  - [ ] CGB palettes and VRAM banking.
+  - [x] CGB palettes and VRAM banking.
   - [ ] CGB-specific registers and boot flow.
 - [ ] **Link cable emulation**
   - [ ] Local loopback.
@@ -446,7 +446,11 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - KEY1 (`FF4D`) now exposes the CGB prepare/current-speed bits in CGB mode while remaining inert for DMG-mode execution.
 - Executing `STOP 00` while KEY1 bit 0 is prepared toggles normal/double speed and resumes execution instead of entering the stopped state.
 - Emulator CPU-cycle advancement now keeps timer/DIV and OAM DMA CPU blocking on the CPU clock while scaling video/audio device ticks by the active CGB speed divisor, preserving existing DMG behavior at normal speed.
-- Remaining CGB support still requires palettes, VRAM banking, CGB registers, boot flow, and fixture-backed compatibility gates before claiming CGB boot/title support.
+
+**CGB palette + VRAM banking notes (2026-05-07)**
+- CGB-mode PPU state now exposes the `VBK` (`FF4F`) VRAM bank selector with two independent 8 KiB VRAM banks while DMG mode keeps the selector inert/read-as-unavailable.
+- CGB background/object palette index and data registers (`FF68`-`FF6B`) now store the full 64-byte palette RAM spaces and honor data-port auto-increment/wrap behavior.
+- Remaining CGB support still requires broader CGB-specific registers, CGB boot flow, colorized rendering integration, and fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**
 - CGB boot and basic title compatibility (if in scope).
