@@ -382,7 +382,7 @@ impl Cpu {
             }
             Instruction::Stop => {
                 let _ = self.fetch_operand8(metadata.operand8.expect("STOP padding operand"), bus);
-                self.halted = true;
+                self.halted = !bus.consume_cgb_speed_switch_request();
                 self.halted_by_unimplemented_opcode = false;
                 metadata.cycles.for_branch(false)
             }
@@ -1126,6 +1126,20 @@ mod tests {
         Bus::new(cartridge)
     }
 
+    fn make_cgb_bus_with_program(program: &[u8]) -> Bus {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[..program.len()].copy_from_slice(program);
+        rom[0x0134..0x0138].copy_from_slice(b"CPUT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] = compute_header_checksum(&rom).expect("header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        Bus::new_cgb(cartridge)
+    }
+
     fn run_program(cpu: &mut Cpu, bus: &mut Bus, steps: usize) {
         for _ in 0..steps {
             cpu.step(bus);
@@ -1641,6 +1655,43 @@ mod tests {
         assert_eq!(cpu.step(&mut bus), 12);
         assert_eq!(cpu.registers.f & CpuFlags::ZERO, CpuFlags::empty());
         assert_eq!(cpu.registers.f & CpuFlags::HALF_CARRY, CpuFlags::HALF_CARRY);
+    }
+
+    #[test]
+    fn stop_ignores_key1_prepare_and_halts_in_dmg_mode() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_bus_with_program(&[
+            0x10, 0x00, // STOP 00 must remain a stop in DMG mode
+            0x00,
+        ]);
+        bus.write8(0xFF4D, 0x01);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+
+        assert!(cpu.halted());
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.read8(0xFF4D), 0xFF);
+        assert_eq!(cpu.pc(), 0x0002);
+    }
+
+    #[test]
+    fn stop_with_key1_prepare_toggles_cgb_double_speed_without_halting() {
+        let mut cpu = Cpu::new();
+        let mut bus = make_cgb_bus_with_program(&[
+            0x10, 0x00, // STOP 00 consumes the pending KEY1 speed switch
+            0x00, // NOP proves execution can continue after the switch
+        ]);
+        bus.write8(0xFF4D, 0x01);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+
+        assert!(!cpu.halted());
+        assert!(bus.cgb_double_speed());
+        assert_eq!(bus.read8(0xFF4D), 0xFE);
+        assert_eq!(cpu.pc(), 0x0002);
+
+        assert_eq!(cpu.step(&mut bus), 4);
+        assert_eq!(cpu.pc(), 0x0003);
     }
 
     #[test]

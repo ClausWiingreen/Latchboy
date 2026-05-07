@@ -28,6 +28,7 @@ pub const IO_REGISTERS_START: u16 = 0xFF00;
 pub const IO_REGISTERS_END: u16 = 0xFF7F;
 pub const JOYP_REGISTER: u16 = 0xFF00;
 pub const BOOT_ROM_DISABLE_REGISTER: u16 = 0xFF50;
+pub const CGB_SPEED_SWITCH_REGISTER: u16 = 0xFF4D;
 pub const HRAM_START: u16 = 0xFF80;
 pub const HRAM_END: u16 = 0xFFFE;
 pub const INTERRUPT_ENABLE_REGISTER: u16 = 0xFFFF;
@@ -67,6 +68,7 @@ pub enum BusRoute {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IoRoute {
     BootRomDisable,
+    CgbSpeedSwitch,
     Joypad,
     Apu,
     Serial,
@@ -139,6 +141,8 @@ pub fn route_address(address: u16) -> BusRoute {
 pub fn route_io_address(address: u16) -> IoRoute {
     if address == BOOT_ROM_DISABLE_REGISTER {
         IoRoute::BootRomDisable
+    } else if address == CGB_SPEED_SWITCH_REGISTER {
+        IoRoute::CgbSpeedSwitch
     } else if address == JOYP_REGISTER {
         IoRoute::Joypad
     } else if matches!(address, 0xFF10..=0xFF26 | 0xFF30..=0xFF3F) {

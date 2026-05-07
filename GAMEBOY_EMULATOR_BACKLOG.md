@@ -432,7 +432,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 ## Milestone 10 — Optional Extensions
 
 - [ ] **Game Boy Color (CGB) support**
-  - [ ] Double-speed mode.
+  - [x] Double-speed mode.
   - [ ] CGB palettes and VRAM banking.
   - [ ] CGB-specific registers and boot flow.
 - [ ] **Link cable emulation**
@@ -441,6 +441,12 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Additional platforms**
   - [ ] WebAssembly build.
   - [ ] Mobile frontend.
+
+**Double-speed mode notes (2026-05-07)**
+- KEY1 (`FF4D`) now exposes the CGB prepare/current-speed bits in CGB mode while remaining inert for DMG-mode execution.
+- Executing `STOP 00` while KEY1 bit 0 is prepared toggles normal/double speed and resumes execution instead of entering the stopped state.
+- Emulator CPU-cycle advancement now keeps timer/DIV and OAM DMA CPU blocking on the CPU clock while scaling video/audio device ticks by the active CGB speed divisor, preserving existing DMG behavior at normal speed.
+- Remaining CGB support still requires palettes, VRAM banking, CGB registers, boot flow, and fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**
 - CGB boot and basic title compatibility (if in scope).

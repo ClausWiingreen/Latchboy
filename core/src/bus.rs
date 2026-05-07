@@ -14,6 +14,9 @@ use crate::ppu::{Ppu, DMA_REGISTER};
 use crate::serial::SerialPort;
 use crate::timer::Timer;
 const JOYPAD_INTERRUPT_MASK: u8 = 0x10;
+const KEY1_PREPARE_SPEED_SWITCH: u8 = 0x01;
+const KEY1_CURRENT_SPEED: u8 = 0x80;
+const KEY1_UNUSED_READ_MASK: u8 = 0x7E;
 const WATCHED_IO_ADDRESSES: [u16; 6] = [
     crate::ppu::LCDC_REGISTER,
     crate::ppu::STAT_REGISTER,
@@ -75,6 +78,9 @@ pub struct Bus {
     hram: [u8; HRAM_SIZE],
     interrupt_enable: u8,
     oam_dma_cycles_remaining: u16,
+    cgb_mode_enabled: bool,
+    cgb_double_speed: bool,
+    cgb_prepare_speed_switch: bool,
     watch_io_enabled: Cell<bool>,
     watch_io_events: RefCell<Vec<BusWatchIoEvent>>,
 }
@@ -95,6 +101,9 @@ impl Hash for Bus {
         self.hram.hash(state);
         self.interrupt_enable.hash(state);
         self.oam_dma_cycles_remaining.hash(state);
+        self.cgb_mode_enabled.hash(state);
+        self.cgb_double_speed.hash(state);
+        self.cgb_prepare_speed_switch.hash(state);
         self.watch_io_enabled.get().hash(state);
         self.watch_io_events.borrow().hash(state);
     }
@@ -143,9 +152,18 @@ impl Bus {
             hram: [0; HRAM_SIZE],
             interrupt_enable: 0,
             oam_dma_cycles_remaining: 0,
+            cgb_mode_enabled: false,
+            cgb_double_speed: false,
+            cgb_prepare_speed_switch: false,
             watch_io_enabled: Cell::new(false),
             watch_io_events: RefCell::new(Vec::new()),
         }
+    }
+
+    pub fn new_cgb(cartridge: Cartridge) -> Self {
+        let mut bus = Self::new(cartridge);
+        bus.cgb_mode_enabled = true;
+        bus
     }
 
     pub fn with_boot_rom(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
@@ -185,6 +203,8 @@ impl Bus {
         self.hram = [0; HRAM_SIZE];
         self.interrupt_enable = 0;
         self.oam_dma_cycles_remaining = 0;
+        self.cgb_double_speed = false;
+        self.cgb_prepare_speed_switch = false;
         self.watch_io_events.borrow_mut().clear();
     }
 
@@ -269,6 +289,7 @@ impl Bus {
     fn read8_io(&self, address: u16) -> u8 {
         match route_io_address(address) {
             IoRoute::BootRomDisable => self.boot_rom_disable_value,
+            IoRoute::CgbSpeedSwitch => self.read_key1(),
             IoRoute::Joypad => self.joypad.read8(address),
             IoRoute::Apu => self.apu.read8(address),
             IoRoute::Serial => self.serial.read8(address),
@@ -286,6 +307,7 @@ impl Bus {
                     self.boot_rom_enabled = false;
                 }
             }
+            IoRoute::CgbSpeedSwitch => self.write_key1(value),
             IoRoute::Joypad => {
                 let previous_p1 = self.joypad.read8(address);
                 self.joypad.write8(address, value);
@@ -310,6 +332,56 @@ impl Bus {
             IoRoute::GenericIo => {
                 self.io_registers[(address - IO_REGISTERS_START) as usize] = value
             }
+        }
+    }
+
+    pub const fn cgb_mode_enabled(&self) -> bool {
+        self.cgb_mode_enabled
+    }
+
+    pub const fn cgb_double_speed(&self) -> bool {
+        self.cgb_double_speed
+    }
+
+    pub const fn cgb_speed_divisor(&self) -> u32 {
+        if self.cgb_double_speed {
+            2
+        } else {
+            1
+        }
+    }
+
+    pub fn consume_cgb_speed_switch_request(&mut self) -> bool {
+        if !self.cgb_mode_enabled || !self.cgb_prepare_speed_switch {
+            return false;
+        }
+
+        self.cgb_prepare_speed_switch = false;
+        self.cgb_double_speed = !self.cgb_double_speed;
+        true
+    }
+
+    fn read_key1(&self) -> u8 {
+        if !self.cgb_mode_enabled {
+            return 0xFF;
+        }
+
+        KEY1_UNUSED_READ_MASK
+            | if self.cgb_double_speed {
+                KEY1_CURRENT_SPEED
+            } else {
+                0
+            }
+            | if self.cgb_prepare_speed_switch {
+                KEY1_PREPARE_SPEED_SWITCH
+            } else {
+                0
+            }
+    }
+
+    fn write_key1(&mut self, value: u8) {
+        if self.cgb_mode_enabled {
+            self.cgb_prepare_speed_switch = (value & KEY1_PREPARE_SPEED_SWITCH) != 0;
         }
     }
 
@@ -351,6 +423,23 @@ impl Bus {
     }
 
     pub fn tick(&mut self, cycles: u32) {
+        self.tick_components(cycles, cycles);
+    }
+
+    pub(crate) fn tick_for_cpu_cycles(&mut self, cpu_cycles: u32) {
+        self.tick_components(cpu_cycles, cpu_cycles / self.cgb_speed_divisor());
+    }
+
+    fn tick_components(&mut self, cpu_clock_cycles: u32, video_audio_cycles: u32) {
+        if cpu_clock_cycles == video_audio_cycles {
+            self.tick_synchronized_components(cpu_clock_cycles);
+        } else {
+            self.tick_cpu_clock_cycles(cpu_clock_cycles);
+            self.tick_video_audio_cycles(video_audio_cycles);
+        }
+    }
+
+    fn tick_synchronized_components(&mut self, cycles: u32) {
         for _ in 0..cycles {
             if self.oam_dma_cycles_remaining != 0 {
                 self.oam_dma_cycles_remaining -= 1;
@@ -360,6 +449,32 @@ impl Bus {
             self.ppu
                 .tick(1, &mut self.io_registers[interrupt_flag_index]);
             self.timer
+                .tick(1, &mut self.io_registers[interrupt_flag_index]);
+            MemoryMappedDevice::tick(
+                &mut self.apu,
+                1,
+                &mut self.io_registers[interrupt_flag_index],
+            );
+        }
+    }
+
+    fn tick_cpu_clock_cycles(&mut self, cycles: u32) {
+        for _ in 0..cycles {
+            if self.oam_dma_cycles_remaining != 0 {
+                self.oam_dma_cycles_remaining -= 1;
+            }
+            let interrupt_flag_index =
+                (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.timer
+                .tick(1, &mut self.io_registers[interrupt_flag_index]);
+        }
+    }
+
+    fn tick_video_audio_cycles(&mut self, cycles: u32) {
+        for _ in 0..cycles {
+            let interrupt_flag_index =
+                (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.ppu
                 .tick(1, &mut self.io_registers[interrupt_flag_index]);
             MemoryMappedDevice::tick(
                 &mut self.apu,
@@ -607,6 +722,59 @@ mod tests {
         bus.tick(20_000);
         let muted = bus.pull_audio_samples(64);
         assert!(muted.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
+    fn key1_register_is_inert_in_dmg_mode() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+
+        assert!(!bus.cgb_mode_enabled());
+        assert_eq!(bus.read8(0xFF4D), 0xFF);
+
+        bus.write8(0xFF4D, 0x01);
+
+        assert_eq!(bus.read8(0xFF4D), 0xFF);
+        assert!(!bus.consume_cgb_speed_switch_request());
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.cgb_speed_divisor(), 1);
+    }
+
+    #[test]
+    fn key1_register_tracks_cgb_speed_prepare_and_current_bits() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new_cgb(cartridge);
+
+        assert_eq!(bus.read8(0xFF4D), 0x7E);
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.cgb_speed_divisor(), 1);
+
+        bus.write8(0xFF4D, 0xFF);
+        assert_eq!(bus.read8(0xFF4D), 0x7F);
+
+        assert!(bus.consume_cgb_speed_switch_request());
+        assert!(bus.cgb_double_speed());
+        assert_eq!(bus.cgb_speed_divisor(), 2);
+        assert_eq!(bus.read8(0xFF4D), 0xFE);
+        assert!(!bus.consume_cgb_speed_switch_request());
+
+        bus.write8(0xFF4D, 0x01);
+        assert!(bus.consume_cgb_speed_switch_request());
+        assert!(!bus.cgb_double_speed());
+        assert_eq!(bus.read8(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn cgb_double_speed_keeps_timer_on_cpu_clock() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new_cgb(cartridge);
+        bus.write8(0xFF04, 0x00);
+        bus.write8(0xFF4D, 0x01);
+        assert!(bus.consume_cgb_speed_switch_request());
+
+        bus.tick_for_cpu_cycles(512);
+
+        assert_eq!(bus.read8(0xFF04), 0x02);
     }
 
     #[test]
@@ -907,6 +1075,24 @@ mod tests {
         assert_eq!(bus.read8(0xC123), 0x42);
         bus.write8(0xC123, 0x99);
         assert_eq!(bus.read8(0xC123), 0x99);
+    }
+
+    #[test]
+    fn cgb_double_speed_keeps_oam_dma_blocking_on_cpu_clock() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new_cgb(cartridge);
+        bus.write8(0xC123, 0x42);
+        bus.write8(0xFF4D, 0x01);
+        assert!(bus.consume_cgb_speed_switch_request());
+
+        bus.write8(DMA_REGISTER, 0xC0);
+
+        assert_eq!(bus.read8(0xC123), 0xFF);
+        bus.tick_for_cpu_cycles(639);
+        assert_eq!(bus.read8(0xC123), 0xFF);
+
+        bus.tick_for_cpu_cycles(1);
+        assert_eq!(bus.read8(0xC123), 0x42);
     }
 
     #[test]

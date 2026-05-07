@@ -120,11 +120,11 @@ impl Emulator {
         cycles.min(u64::from(u32::MAX)) as u32
     }
 
-    fn tick_bus_cycles(&mut self, mut cycles: u64) {
-        while cycles != 0 {
-            let chunk = Self::next_tick_chunk_size(cycles);
-            self.bus.tick(chunk);
-            cycles -= u64::from(chunk);
+    fn tick_bus_cycles_for_cpu_cycles(&mut self, mut cpu_cycles: u64) {
+        while cpu_cycles != 0 {
+            let chunk = Self::next_tick_chunk_size(cpu_cycles);
+            self.bus.tick_for_cpu_cycles(chunk);
+            cpu_cycles -= u64::from(chunk);
         }
     }
 
@@ -267,7 +267,7 @@ impl Emulator {
                             interrupt_enable: self.bus.interrupt_enable(),
                         },
                     ));
-                    self.tick_bus_cycles(halted_advance);
+                    self.tick_bus_cycles_for_cpu_cycles(halted_advance);
                     available += halted_advance;
                     if observer.should_stop() {
                         stopped_early = true;
@@ -297,7 +297,7 @@ impl Emulator {
             let operand1_before = self.cpu.last_step_operand1_fetch();
             let operand2_before = self.cpu.last_step_operand2_fetch();
             let watch_io_events = self.bus.take_watch_io_events();
-            self.tick_bus_cycles(u64::from(cycles_taken));
+            self.tick_bus_cycles_for_cpu_cycles(u64::from(cycles_taken));
             available += cycles_taken as u64;
             if debug_step_boundaries {
                 debug!(
