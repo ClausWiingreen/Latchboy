@@ -5,6 +5,7 @@ use super::CartridgeError;
 pub const CARTRIDGE_HEADER_SIZE: usize = 0x150;
 pub const TITLE_START: usize = 0x0134;
 pub const TITLE_END_INCLUSIVE: usize = 0x0142;
+pub const CGB_FLAG_OFFSET: usize = 0x0143;
 pub const HEADER_CHECKSUM_START: usize = 0x0134;
 pub const HEADER_CHECKSUM_END_INCLUSIVE: usize = 0x014C;
 pub const CARTRIDGE_TYPE_OFFSET: usize = 0x0147;
@@ -20,6 +21,7 @@ pub enum HeaderWarning {
     UnknownRomSizeCode(u8),
     UnknownRamSizeCode(u8),
     UnknownDestinationCode(u8),
+    UnknownCgbFlag(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -302,6 +304,38 @@ impl RamSize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CgbCompatibility {
+    DmgOnly,
+    CgbEnhanced,
+    CgbOnly,
+    Unknown(u8),
+}
+
+impl CgbCompatibility {
+    pub const fn from_flag(value: u8) -> Self {
+        match value {
+            0x00 => Self::DmgOnly,
+            0x80 => Self::CgbEnhanced,
+            0xC0 => Self::CgbOnly,
+            other => Self::Unknown(other),
+        }
+    }
+
+    pub const fn flag(self) -> u8 {
+        match self {
+            Self::DmgOnly => 0x00,
+            Self::CgbEnhanced => 0x80,
+            Self::CgbOnly => 0xC0,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    pub const fn supports_cgb(self) -> bool {
+        matches!(self, Self::CgbEnhanced | Self::CgbOnly)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DestinationCode {
     Japanese,
     NonJapanese,
@@ -345,6 +379,7 @@ pub struct CartridgeHeader {
     pub cartridge_type: CartridgeType,
     pub rom_size: RomSize,
     pub ram_size: RamSize,
+    pub cgb_compatibility: CgbCompatibility,
     pub destination_code: DestinationCode,
     pub header_checksum: u8,
     pub computed_header_checksum: u8,
@@ -370,6 +405,7 @@ impl CartridgeHeader {
             cartridge_type: CartridgeType::from_code(rom[CARTRIDGE_TYPE_OFFSET]),
             rom_size: RomSize::from_code(rom[ROM_SIZE_OFFSET]),
             ram_size: RamSize::from_code(rom[RAM_SIZE_OFFSET]),
+            cgb_compatibility: CgbCompatibility::from_flag(rom[CGB_FLAG_OFFSET]),
             destination_code: DestinationCode::from_code(rom[DESTINATION_OFFSET]),
             header_checksum,
             computed_header_checksum,
@@ -397,6 +433,9 @@ impl CartridgeHeader {
         }
         if let DestinationCode::Unknown(code) = self.destination_code {
             warnings.push(HeaderWarning::UnknownDestinationCode(code));
+        }
+        if let CgbCompatibility::Unknown(flag) = self.cgb_compatibility {
+            warnings.push(HeaderWarning::UnknownCgbFlag(flag));
         }
         warnings
     }

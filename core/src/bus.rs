@@ -5,9 +5,9 @@ use crate::apu::Apu;
 use crate::cartridge::Cartridge;
 use crate::input::{Joypad, JoypadButton};
 use crate::memory::{
-    route_address, route_io_address, BusRoute, IoRoute, MemoryMappedDevice, BOOT_ROM_SIZE,
-    HRAM_END, HRAM_SIZE, HRAM_START, IO_REGISTERS_SIZE, IO_REGISTERS_START, WRAM_BANK_SIZE,
-    WRAM_SIZE, WRAM_START,
+    route_address, route_io_address, BusRoute, IoRoute, MemoryMappedDevice, CGB_BOOT_ROM_BANK0_END,
+    CGB_BOOT_ROM_BANK1_END, CGB_BOOT_ROM_BANK1_START, DMG_BOOT_ROM_SIZE, HRAM_END, HRAM_SIZE,
+    HRAM_START, IO_REGISTERS_SIZE, IO_REGISTERS_START, WRAM_BANK_SIZE, WRAM_SIZE, WRAM_START,
 };
 use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
@@ -179,6 +179,13 @@ impl Bus {
         bus
     }
 
+    pub fn with_cgb_boot_rom(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
+        let mut bus = Self::new_cgb(cartridge);
+        bus.boot_rom = Some(boot_rom);
+        bus.boot_rom_enabled = true;
+        bus
+    }
+
     pub const fn boot_rom_enabled(&self) -> bool {
         self.boot_rom_enabled
     }
@@ -311,14 +318,29 @@ impl Bus {
     }
 
     fn read_boot_rom_or_cartridge(&self, address: u16) -> u8 {
-        if self.boot_rom_enabled && address < BOOT_ROM_SIZE as u16 {
-            self.boot_rom
-                .as_ref()
-                .and_then(|rom| rom.get(address as usize))
-                .copied()
-                .unwrap_or(0xFF)
-        } else {
-            self.cartridge.read8(address)
+        if self.boot_rom_enabled {
+            if let Some(index) = self.boot_rom_index(address) {
+                return self
+                    .boot_rom
+                    .as_ref()
+                    .and_then(|rom| rom.get(index))
+                    .copied()
+                    .unwrap_or(0xFF);
+            }
+        }
+
+        self.cartridge.read8(address)
+    }
+
+    fn boot_rom_index(&self, address: u16) -> Option<usize> {
+        if !self.cgb_mode_enabled {
+            return (address < DMG_BOOT_ROM_SIZE as u16).then_some(address as usize);
+        }
+
+        match address {
+            0x0000..=CGB_BOOT_ROM_BANK0_END => Some(address as usize),
+            CGB_BOOT_ROM_BANK1_START..=CGB_BOOT_ROM_BANK1_END => Some(address as usize),
+            _ => None,
         }
     }
 
@@ -666,6 +688,40 @@ mod tests {
     }
 
     #[test]
+    fn cgb_boot_rom_maps_split_boot_ranges_until_ff50_disable() {
+        let mut rom = make_rom(CartridgeType::RomOnly, RamSize::None);
+        rom[0x0000] = 0x11;
+        rom[0x00FF] = 0x22;
+        rom[0x0100] = 0x33;
+        rom[0x0200] = 0x44;
+        rom[0x08FF] = 0x55;
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut boot_rom = vec![0xFF; 0x0900];
+        boot_rom[0x0000] = 0xA1;
+        boot_rom[0x00FF] = 0xA2;
+        boot_rom[0x0100] = 0xA3;
+        boot_rom[0x0200] = 0xA4;
+        boot_rom[0x08FF] = 0xA5;
+        let mut bus = Bus::with_cgb_boot_rom(cartridge, boot_rom);
+
+        assert!(bus.cgb_mode_enabled());
+        assert!(bus.boot_rom_enabled());
+        assert_eq!(bus.read8(0x0000), 0xA1);
+        assert_eq!(bus.read8(0x00FF), 0xA2);
+        assert_eq!(bus.read8(0x0100), 0x33);
+        assert_eq!(bus.read8(0x0200), 0xA4);
+        assert_eq!(bus.read8(0x08FF), 0xA5);
+
+        bus.write8(crate::memory::BOOT_ROM_DISABLE_REGISTER, 0x01);
+
+        assert!(!bus.boot_rom_enabled());
+        assert_eq!(bus.read8(0x0000), 0x11);
+        assert_eq!(bus.read8(0x00FF), 0x22);
+        assert_eq!(bus.read8(0x0200), 0x44);
+        assert_eq!(bus.read8(0x08FF), 0x55);
+    }
+
+    #[test]
     fn bus_routes_reads_and_writes_across_internal_ranges() {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new(cartridge);
@@ -932,7 +988,7 @@ mod tests {
         cartridge_rom[0] = 0x99;
         let cartridge = Cartridge::from_rom(cartridge_rom).expect("test rom should parse");
 
-        let mut bus = Bus::with_boot_rom(cartridge, vec![0x42; BOOT_ROM_SIZE]);
+        let mut bus = Bus::with_boot_rom(cartridge, vec![0x42; DMG_BOOT_ROM_SIZE]);
         assert_eq!(bus.read8(0x0000), 0x42);
 
         bus.write8(0xFF50, 0x01);
@@ -950,7 +1006,7 @@ mod tests {
         cartridge_rom[0] = 0x99;
         let cartridge = Cartridge::from_rom(cartridge_rom).expect("test rom should parse");
 
-        let mut bus = Bus::with_boot_rom(cartridge, vec![0x42; BOOT_ROM_SIZE]);
+        let mut bus = Bus::with_boot_rom(cartridge, vec![0x42; DMG_BOOT_ROM_SIZE]);
         bus.write8(0xFF50, 0x01);
         assert!(!bus.boot_rom_enabled());
 

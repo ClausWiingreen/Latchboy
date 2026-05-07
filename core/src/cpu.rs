@@ -180,6 +180,31 @@ impl Cpu {
         }
     }
 
+    pub const fn new_cgb_no_boot() -> Self {
+        Self {
+            registers: Registers {
+                a: 0x11,
+                f: CpuFlags::from_bits_retain(0x80),
+                b: 0x00,
+                c: 0x00,
+                d: 0xFF,
+                e: 0x56,
+                h: 0x00,
+                l: 0x0D,
+            },
+            pc: 0x0100,
+            sp: 0xFFFE,
+            halted: false,
+            halted_by_unimplemented_opcode: false,
+            ime: false,
+            ime_enable_pending: false,
+            halt_bug_active: false,
+            last_unimplemented_opcode: None,
+            last_step_fetch_bytes: [0; 3],
+            last_step_fetch_count: 0,
+        }
+    }
+
     pub const fn registers(&self) -> &Registers {
         &self.registers
     }

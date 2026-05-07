@@ -3,15 +3,15 @@ mod mapper;
 pub mod save_data;
 
 pub use header::{
-    compute_header_checksum, CartridgeHeader, CartridgeType, DestinationCode, HeaderWarning,
-    RamSize, RomSize,
+    compute_header_checksum, CartridgeHeader, CartridgeType, CgbCompatibility, DestinationCode,
+    HeaderWarning, RamSize, RomSize,
 };
 pub use save_data::SaveDataError;
 
 #[cfg(test)]
 use header::{
-    CARTRIDGE_HEADER_SIZE, CARTRIDGE_TYPE_OFFSET, DESTINATION_OFFSET, HEADER_CHECKSUM_OFFSET,
-    RAM_SIZE_OFFSET, ROM_SIZE_OFFSET, TITLE_END_INCLUSIVE, TITLE_START,
+    CARTRIDGE_HEADER_SIZE, CARTRIDGE_TYPE_OFFSET, CGB_FLAG_OFFSET, DESTINATION_OFFSET,
+    HEADER_CHECKSUM_OFFSET, RAM_SIZE_OFFSET, ROM_SIZE_OFFSET, TITLE_END_INCLUSIVE, TITLE_START,
 };
 use mapper::Mapper;
 
@@ -126,6 +126,7 @@ mod tests {
         assert_eq!(header.cartridge_type, CartridgeType::RomOnly);
         assert_eq!(header.rom_size, RomSize::Banks2);
         assert_eq!(header.ram_size, RamSize::None);
+        assert_eq!(header.cgb_compatibility, CgbCompatibility::DmgOnly);
         assert_eq!(header.destination_code, DestinationCode::Japanese);
         assert!(header.has_valid_header_checksum());
         assert!(header.warnings().is_empty());
@@ -151,6 +152,7 @@ mod tests {
         rom[ROM_SIZE_OFFSET] = 0xFF;
         rom[RAM_SIZE_OFFSET] = 0xFF;
         rom[DESTINATION_OFFSET] = 0xFF;
+        rom[CGB_FLAG_OFFSET] = 0x40;
         rom[HEADER_CHECKSUM_OFFSET] =
             compute_header_checksum(&rom).expect("checksum should compute");
 
@@ -169,6 +171,9 @@ mod tests {
         assert!(warnings
             .iter()
             .any(|warning| matches!(warning, HeaderWarning::UnknownDestinationCode(0xFF))));
+        assert!(warnings
+            .iter()
+            .any(|warning| matches!(warning, HeaderWarning::UnknownCgbFlag(0x40))));
     }
 
     #[test]
@@ -201,13 +206,33 @@ mod tests {
     fn parse_does_not_include_cgb_flag_in_title() {
         let mut rom = make_test_rom();
         rom[TITLE_START..=TITLE_END_INCLUSIVE].fill(b'A');
-        rom[TITLE_END_INCLUSIVE + 1] = 0x80;
+        rom[CGB_FLAG_OFFSET] = 0x80;
         rom[HEADER_CHECKSUM_OFFSET] =
             compute_header_checksum(&rom).expect("checksum should compute");
 
         let header = CartridgeHeader::parse(&rom).expect("header should parse");
 
         assert_eq!(header.title, "AAAAAAAAAAAAAAA");
+        assert_eq!(header.cgb_compatibility, CgbCompatibility::CgbEnhanced);
+    }
+
+    #[test]
+    fn parse_distinguishes_cgb_enhanced_and_cgb_only_flags() {
+        let mut enhanced_rom = make_test_rom();
+        enhanced_rom[CGB_FLAG_OFFSET] = CgbCompatibility::CgbEnhanced.flag();
+        enhanced_rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&enhanced_rom).expect("checksum should compute");
+        let enhanced = CartridgeHeader::parse(&enhanced_rom).expect("header should parse");
+        assert_eq!(enhanced.cgb_compatibility, CgbCompatibility::CgbEnhanced);
+        assert!(enhanced.cgb_compatibility.supports_cgb());
+
+        let mut cgb_only_rom = make_test_rom();
+        cgb_only_rom[CGB_FLAG_OFFSET] = CgbCompatibility::CgbOnly.flag();
+        cgb_only_rom[HEADER_CHECKSUM_OFFSET] =
+            compute_header_checksum(&cgb_only_rom).expect("checksum should compute");
+        let cgb_only = CartridgeHeader::parse(&cgb_only_rom).expect("header should parse");
+        assert_eq!(cgb_only.cgb_compatibility, CgbCompatibility::CgbOnly);
+        assert!(cgb_only.cgb_compatibility.supports_cgb());
     }
 
     #[test]

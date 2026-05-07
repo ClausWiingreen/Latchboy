@@ -434,7 +434,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - [ ] **Game Boy Color (CGB) support**
   - [x] Double-speed mode.
   - [x] CGB palettes and VRAM banking.
-  - [ ] CGB-specific registers and boot flow.
+  - [x] CGB-specific registers and boot flow.
 - [ ] **Link cable emulation**
   - [ ] Local loopback.
   - [ ] Networked peer mode.
@@ -451,7 +451,12 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - CGB-mode PPU state now exposes the `VBK` (`FF4F`) VRAM bank selector with two independent 8 KiB VRAM banks while DMG mode keeps the selector inert/read-as-unavailable.
 - CGB background/object palette index and data registers (`FF68`-`FF6B`) now store the full 64-byte palette RAM spaces, honor data-port auto-increment/wrap behavior, and block data-port access during PPU mode 3 without advancing the index.
 - The CGB `SVBK` (`FF70`) WRAM bank register now selects the switchable 4 KiB WRAM bank for `D000-DFFF` and its echo mirror, with register value `0` aliasing bank 1 and DMG mode remaining inert/read-as-unavailable.
-- Remaining CGB support still requires broader CGB-specific registers, CGB boot flow, colorized rendering integration, and fixture-backed compatibility gates before claiming CGB boot/title support.
+
+**CGB boot-flow notes (2026-05-07)**
+- Cartridge headers now parse the CGB compatibility flag (`0143`) as DMG-only, CGB-enhanced, CGB-only, or unknown, with unknown flag warnings.
+- CGB startup can now be selected explicitly through CGB no-boot and CGB boot-ROM emulator constructors; no-boot startup enables CGB bus surfaces and CGB CPU defaults while preserving existing DMG startup behavior.
+- Explicit CGB boot-ROM startup maps the split CGB boot window (`0000-00FF` and `0200-08FF`) until `FF50` disables boot ROM visibility, leaving cartridge ROM visible at `0100-01FF` during boot.
+- Remaining CGB support still requires colorized rendering integration and fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**
 - CGB boot and basic title compatibility (if in scope).
