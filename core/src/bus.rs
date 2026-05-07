@@ -404,6 +404,23 @@ impl Bus {
     }
 
     pub fn tick(&mut self, cycles: u32) {
+        self.tick_components(cycles, cycles);
+    }
+
+    pub(crate) fn tick_for_cpu_cycles(&mut self, cpu_cycles: u32) {
+        self.tick_components(cpu_cycles, cpu_cycles / self.cgb_speed_divisor());
+    }
+
+    fn tick_components(&mut self, timer_cycles: u32, video_audio_cycles: u32) {
+        if timer_cycles == video_audio_cycles {
+            self.tick_synchronized_components(timer_cycles);
+        } else {
+            self.tick_timer_cycles(timer_cycles);
+            self.tick_video_audio_cycles(video_audio_cycles);
+        }
+    }
+
+    fn tick_synchronized_components(&mut self, cycles: u32) {
         for _ in 0..cycles {
             if self.oam_dma_cycles_remaining != 0 {
                 self.oam_dma_cycles_remaining -= 1;
@@ -413,6 +430,32 @@ impl Bus {
             self.ppu
                 .tick(1, &mut self.io_registers[interrupt_flag_index]);
             self.timer
+                .tick(1, &mut self.io_registers[interrupt_flag_index]);
+            MemoryMappedDevice::tick(
+                &mut self.apu,
+                1,
+                &mut self.io_registers[interrupt_flag_index],
+            );
+        }
+    }
+
+    fn tick_timer_cycles(&mut self, cycles: u32) {
+        for _ in 0..cycles {
+            let interrupt_flag_index =
+                (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.timer
+                .tick(1, &mut self.io_registers[interrupt_flag_index]);
+        }
+    }
+
+    fn tick_video_audio_cycles(&mut self, cycles: u32) {
+        for _ in 0..cycles {
+            if self.oam_dma_cycles_remaining != 0 {
+                self.oam_dma_cycles_remaining -= 1;
+            }
+            let interrupt_flag_index =
+                (crate::interrupts::FLAG_REGISTER - IO_REGISTERS_START) as usize;
+            self.ppu
                 .tick(1, &mut self.io_registers[interrupt_flag_index]);
             MemoryMappedDevice::tick(
                 &mut self.apu,
@@ -684,6 +727,19 @@ mod tests {
         assert!(bus.consume_cgb_speed_switch_request());
         assert!(!bus.cgb_double_speed());
         assert_eq!(bus.read8(0xFF4D), 0x7E);
+    }
+
+    #[test]
+    fn cgb_double_speed_keeps_timer_on_cpu_clock() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.write8(0xFF04, 0x00);
+        bus.write8(0xFF4D, 0x01);
+        assert!(bus.consume_cgb_speed_switch_request());
+
+        bus.tick_for_cpu_cycles(512);
+
+        assert_eq!(bus.read8(0xFF04), 0x02);
     }
 
     #[test]

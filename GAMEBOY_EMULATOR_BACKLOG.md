@@ -445,7 +445,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 **Double-speed mode notes (2026-05-07)**
 - KEY1 (`FF4D`) now exposes the CGB prepare/current-speed bits with unused bits reading high.
 - Executing `STOP 00` while KEY1 bit 0 is prepared toggles normal/double speed and resumes execution instead of entering the stopped state.
-- Emulator bus ticking now scales CPU-cycle-driven device advancement by the active CGB speed divisor, preserving existing DMG behavior at normal speed.
+- Emulator CPU-cycle advancement now keeps timer/DIV on the CPU clock while scaling video/audio device ticks by the active CGB speed divisor, preserving existing DMG behavior at normal speed.
 - Remaining CGB support still requires palettes, VRAM banking, CGB registers, boot flow, and fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**

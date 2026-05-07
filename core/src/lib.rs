@@ -120,17 +120,12 @@ impl Emulator {
         cycles.min(u64::from(u32::MAX)) as u32
     }
 
-    fn tick_bus_cycles(&mut self, mut cycles: u64) {
-        while cycles != 0 {
-            let chunk = Self::next_tick_chunk_size(cycles);
-            self.bus.tick(chunk);
-            cycles -= u64::from(chunk);
+    fn tick_bus_cycles_for_cpu_cycles(&mut self, mut cpu_cycles: u64) {
+        while cpu_cycles != 0 {
+            let chunk = Self::next_tick_chunk_size(cpu_cycles);
+            self.bus.tick_for_cpu_cycles(chunk);
+            cpu_cycles -= u64::from(chunk);
         }
-    }
-
-    fn tick_bus_cycles_for_cpu_cycles(&mut self, cpu_cycles: u64) {
-        let bus_cycles = cpu_cycles / u64::from(self.bus.cgb_speed_divisor());
-        self.tick_bus_cycles(bus_cycles);
     }
 
     /// Creates a new emulator with a minimal ROM-only cartridge.
