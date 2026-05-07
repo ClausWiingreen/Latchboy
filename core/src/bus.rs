@@ -159,7 +159,7 @@ impl Bus {
             cgb_mode_enabled: false,
             cgb_double_speed: false,
             cgb_prepare_speed_switch: false,
-            cgb_selected_wram_bank: 1,
+            cgb_selected_wram_bank: 0,
             watch_io_enabled: Cell::new(false),
             watch_io_events: RefCell::new(Vec::new()),
         }
@@ -215,7 +215,7 @@ impl Bus {
         self.oam_dma_cycles_remaining = 0;
         self.cgb_double_speed = false;
         self.cgb_prepare_speed_switch = false;
-        self.cgb_selected_wram_bank = 1;
+        self.cgb_selected_wram_bank = 0;
         self.watch_io_events.borrow_mut().clear();
     }
 
@@ -811,7 +811,7 @@ mod tests {
         let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
         let mut bus = Bus::new_cgb(cartridge);
 
-        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xF9);
+        assert_eq!(bus.read8(crate::memory::CGB_WRAM_BANK_REGISTER), 0xF8);
 
         bus.write8(0xC000, 0x11);
         bus.write8(0xD000, 0x21);
