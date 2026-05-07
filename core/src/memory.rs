@@ -171,6 +171,11 @@ pub fn route_io_address(address: u16) -> IoRoute {
             | crate::ppu::OBP1_REGISTER
             | crate::ppu::WY_REGISTER
             | crate::ppu::WX_REGISTER
+            | crate::ppu::VBK_REGISTER
+            | crate::ppu::BCPS_REGISTER
+            | crate::ppu::BCPD_REGISTER
+            | crate::ppu::OCPS_REGISTER
+            | crate::ppu::OCPD_REGISTER
     ) {
         IoRoute::Ppu
     } else {

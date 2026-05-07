@@ -163,6 +163,7 @@ impl Bus {
     pub fn new_cgb(cartridge: Cartridge) -> Self {
         let mut bus = Self::new(cartridge);
         bus.cgb_mode_enabled = true;
+        bus.ppu = Ppu::new_cgb();
         bus
     }
 
@@ -193,7 +194,11 @@ impl Bus {
 
         self.boot_rom_enabled = self.boot_rom.is_some();
         self.boot_rom_disable_value = 0;
-        self.ppu = Ppu::default();
+        self.ppu = if self.cgb_mode_enabled {
+            Ppu::new_cgb()
+        } else {
+            Ppu::default()
+        };
         self.wram = [0; WRAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
         self.joypad = Joypad::default();
@@ -738,6 +743,34 @@ mod tests {
         assert!(!bus.consume_cgb_speed_switch_request());
         assert!(!bus.cgb_double_speed());
         assert_eq!(bus.cgb_speed_divisor(), 1);
+    }
+
+    #[test]
+    fn cgb_ppu_registers_are_routed_and_dmg_mode_reads_as_unavailable() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut dmg_bus = Bus::new(cartridge.clone());
+        let mut cgb_bus = Bus::new_cgb(cartridge);
+
+        dmg_bus.write8(crate::ppu::VBK_REGISTER, 0x01);
+        dmg_bus.write8(crate::ppu::BCPS_REGISTER, 0x80);
+        dmg_bus.write8(crate::ppu::BCPD_REGISTER, 0x55);
+        assert_eq!(dmg_bus.read8(crate::ppu::VBK_REGISTER), 0xFF);
+        assert_eq!(dmg_bus.read8(crate::ppu::BCPS_REGISTER), 0xFF);
+        assert_eq!(dmg_bus.read8(crate::ppu::BCPD_REGISTER), 0xFF);
+
+        cgb_bus.write8(0x8000, 0x12);
+        cgb_bus.write8(crate::ppu::VBK_REGISTER, 0x01);
+        cgb_bus.write8(0x8000, 0x34);
+        assert_eq!(cgb_bus.read8(crate::ppu::VBK_REGISTER), 0xFF);
+        assert_eq!(cgb_bus.read8(0x8000), 0x34);
+        cgb_bus.write8(crate::ppu::VBK_REGISTER, 0x00);
+        assert_eq!(cgb_bus.read8(0x8000), 0x12);
+
+        cgb_bus.write8(crate::ppu::BCPS_REGISTER, 0x80);
+        cgb_bus.write8(crate::ppu::BCPD_REGISTER, 0x77);
+        assert_eq!(cgb_bus.read8(crate::ppu::BCPS_REGISTER), 0xC1);
+        cgb_bus.write8(crate::ppu::BCPS_REGISTER, 0x00);
+        assert_eq!(cgb_bus.read8(crate::ppu::BCPD_REGISTER), 0x77);
     }
 
     #[test]
