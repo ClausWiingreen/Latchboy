@@ -193,7 +193,7 @@ pass_condition = "mooneye_registers"
 [[roms]]
 id = "mooneye-acceptance-boot-regs-cgb-m10-baseline"
 suite = "mooneye_acceptance_cgb_boot"
-path = "mooneye/acceptance/boot_regs-cgb.gb"
+path = "mooneye/misc/boot_regs-cgb.gb"
 milestone = 10
 required = true
 cycle_limit = 8_000_000
