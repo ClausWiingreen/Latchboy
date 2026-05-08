@@ -454,6 +454,20 @@ impl Emulator {
         self.bus.framebuffer_pixels()
     }
 
+    /// Returns the PPU-owned color framebuffer for the most recently rendered frame data.
+    ///
+    /// Pixel layout is row-major (`index = y * 160 + x`). Pixel format is RGB555 stored
+    /// in the low 15 bits of each `u16`. DMG mode maps effective grayscale shades into
+    /// RGB555; CGB mode resolves pixels through CGB palette RAM.
+    pub fn color_framebuffer_pixels(&self) -> &[u16] {
+        self.bus.color_framebuffer_pixels()
+    }
+
+    /// Returns whether the active bus exposes CGB-mode hardware behavior.
+    pub const fn cgb_mode_enabled(&self) -> bool {
+        self.bus.cgb_mode_enabled()
+    }
+
     /// Returns total cycles executed by this emulator instance.
     pub const fn total_cycles(&self) -> u64 {
         self.total_cycles

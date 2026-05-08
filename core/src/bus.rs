@@ -658,6 +658,14 @@ impl Bus {
         self.ppu.framebuffer_pixels()
     }
 
+    /// Returns the latest completed/partially-rendered PPU color framebuffer snapshot view.
+    ///
+    /// Pixels are row-major RGB555 values. In DMG mode this is derived from the effective
+    /// grayscale palette; in CGB mode it is resolved from CGB palette RAM.
+    pub fn color_framebuffer_pixels(&self) -> &[u16] {
+        self.ppu.color_framebuffer_pixels()
+    }
+
     /// Returns the loaded cartridge backing this bus.
     pub const fn cartridge(&self) -> &Cartridge {
         &self.cartridge
