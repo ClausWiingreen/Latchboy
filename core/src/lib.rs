@@ -980,6 +980,30 @@ mod tests {
     }
 
     #[test]
+    fn reset_preserves_serial_local_loopback_mode() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"RSLP");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+        emulator.set_serial_connection_mode(SerialConnectionMode::LocalLoopback);
+
+        emulator.reset();
+        emulator.bus.write8(crate::serial::SB_REGISTER, b'R');
+        emulator.bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(emulator.bus.read8(crate::serial::SB_REGISTER), b'R');
+        assert_eq!(emulator.take_serial_transfer_log(), vec![b'R']);
+    }
+
+    #[test]
     fn reset_preserves_loaded_cartridge_program() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
         rom[0x0100] = 0x3E; // LD A, d8

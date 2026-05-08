@@ -226,10 +226,12 @@ impl Bus {
         } else {
             Ppu::default()
         };
+        let serial_connection_mode = self.serial.connection_mode();
         self.wram = [0; WRAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
         self.joypad = Joypad::default();
         self.serial = SerialPort::default();
+        self.serial.set_connection_mode(serial_connection_mode);
         self.timer = Timer::default();
         self.apu = Apu::default();
         self.hram = [0; HRAM_SIZE];
@@ -852,6 +854,24 @@ mod tests {
         assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'L');
         assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
         assert_eq!(bus.take_serial_transfer_log(), vec![b'L']);
+    }
+
+    #[test]
+    fn reset_preserves_serial_connection_mode() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.set_serial_connection_mode(crate::serial::SerialConnectionMode::LocalLoopback);
+
+        bus.write8(crate::serial::SB_REGISTER, b'R');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'R');
+
+        bus.reset();
+        bus.write8(crate::serial::SB_REGISTER, b'S');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'S');
+        assert_eq!(bus.take_serial_transfer_log(), vec![b'S']);
     }
 
     #[test]
