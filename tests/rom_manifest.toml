@@ -185,3 +185,31 @@ cycle_limit = 8_000_000
 frame_limit = 180
 wall_time_limit_ms = 8_000
 pass_condition = "mooneye_registers"
+
+# Required baseline registration for Milestone 10 CGB compatibility closure mapping.
+# These cases exercise CGB startup/register expectations under the external
+# validation flow when a fixture tree is provided.
+
+[[roms]]
+id = "mooneye-acceptance-boot-regs-cgb-m10-baseline"
+suite = "mooneye_acceptance_cgb_boot"
+path = "mooneye/misc/boot_regs-cgb.gb"
+milestone = 10
+required = true
+cycle_limit = 8_000_000
+frame_limit = 180
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+hardware = "cgb"
+
+[[roms]]
+id = "mooneye-acceptance-bits-mem-oam-cgb-m10-baseline"
+suite = "mooneye_acceptance_cgb_memory"
+path = "mooneye/acceptance/bits/mem_oam.gb"
+milestone = 10
+required = false # Deferred: broad CGB memory/PPU fixture coverage remains non-blocking until the boot baseline is fixture-proven.
+cycle_limit = 12_000_000
+frame_limit = 240
+wall_time_limit_ms = 8_000
+pass_condition = "mooneye_registers"
+hardware = "cgb"

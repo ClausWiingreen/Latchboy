@@ -39,6 +39,19 @@ struct RomEntry {
     frame_limit: u64,
     wall_time_limit_ms: u64,
     pass_condition: PassCondition,
+    #[serde(default)]
+    hardware: HardwareMode,
+}
+
+#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
+enum HardwareMode {
+    #[default]
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "dmg")]
+    Dmg,
+    #[serde(rename = "cgb")]
+    Cgb,
 }
 
 #[derive(Debug, Deserialize, Default, Clone, Copy)]
@@ -105,8 +118,8 @@ fn parse_manifest(manifest_path: &Path) -> RomManifest {
             rom.id
         );
         assert!(
-            (2..=5).contains(&rom.milestone),
-            "{} milestone must be between 2 and 5",
+            (2..=10).contains(&rom.milestone),
+            "{} milestone must be between 2 and 10",
             rom.id
         );
     }
@@ -196,7 +209,7 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
     let frame_cycles = rom.frame_limit.saturating_mul(CYCLES_PER_FRAME as u64);
     let cycle_budget = rom.cycle_limit.min(frame_cycles);
 
-    let mut emulator = Emulator::from_cartridge(cartridge.clone());
+    let mut emulator = emulator_from_cartridge(cartridge.clone(), rom.hardware);
     let start = Instant::now();
 
     let mut executed_cycles = 0u64;
@@ -206,8 +219,12 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
         executed_cycles += u64::from(step);
 
         if let Some(opcode) = emulator.cpu().last_unimplemented_opcode() {
-            let trace =
-                collect_recent_trace(cartridge.clone(), executed_cycles, TRACE_EVENTS_ON_FAILURE);
+            let trace = collect_recent_trace(
+                cartridge.clone(),
+                rom.hardware,
+                executed_cycles,
+                TRACE_EVENTS_ON_FAILURE,
+            );
             return Err(format!(
                 "encountered unimplemented opcode 0x{opcode:02X} after {executed_cycles} cycles\nrecent execution trace:\n{}",
                 format_trace(&trace)
@@ -238,6 +255,7 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
             PassCheck::Failed => {
                 let trace = collect_recent_trace(
                     cartridge.clone(),
+                    rom.hardware,
                     executed_cycles,
                     TRACE_EVENTS_ON_FAILURE,
                 );
@@ -251,7 +269,12 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
         }
     }
 
-    let trace = collect_recent_trace(cartridge, executed_cycles, TRACE_EVENTS_ON_FAILURE);
+    let trace = collect_recent_trace(
+        cartridge,
+        rom.hardware,
+        executed_cycles,
+        TRACE_EVENTS_ON_FAILURE,
+    );
     Err(format!(
         "ROM did not satisfy pass_condition {:?} within {} cycles (frame_limit {}, wall_time_limit_ms {})\nrecent execution trace:\n{}",
         rom.pass_condition,
@@ -262,8 +285,27 @@ fn run_rom(rom_root: &Path, rom: &RomEntry) -> Result<RomRunResult, String> {
     ))
 }
 
-fn collect_recent_trace(cartridge: Cartridge, cycles: u64, capacity: usize) -> TraceBuffer {
-    let mut emulator = Emulator::from_cartridge(cartridge);
+fn emulator_from_cartridge(cartridge: Cartridge, hardware: HardwareMode) -> Emulator {
+    let use_cgb = match hardware {
+        HardwareMode::Auto => cartridge.header.cgb_compatibility.supports_cgb(),
+        HardwareMode::Dmg => false,
+        HardwareMode::Cgb => true,
+    };
+
+    if use_cgb {
+        Emulator::from_cartridge_cgb(cartridge)
+    } else {
+        Emulator::from_cartridge(cartridge)
+    }
+}
+
+fn collect_recent_trace(
+    cartridge: Cartridge,
+    hardware: HardwareMode,
+    cycles: u64,
+    capacity: usize,
+) -> TraceBuffer {
+    let mut emulator = emulator_from_cartridge(cartridge, hardware);
     let mut trace = TraceBuffer::new(capacity);
     let mut executed_cycles = 0u64;
 
@@ -347,7 +389,7 @@ fn required_manifest_entries_are_covered_by_milestone_gate_tests() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
     let manifest = parse_manifest(&manifest_path);
 
-    let covered_milestones = [2u8, 3, 4, 5];
+    let covered_milestones = [2u8, 3, 4, 5, 10];
     for rom in manifest.roms.iter().filter(|rom| rom.required) {
         assert!(
             covered_milestones.contains(&rom.milestone),
@@ -530,6 +572,37 @@ fn rom_manifest_registers_required_milestone_5_suite_entries() {
 
     for rom in &manifest.roms {
         if rom.required && rom.milestone == 5 {
+            assert!(
+                !is_noop_pass_condition(rom.pass_condition),
+                "{} is required for milestone {} and must not use pass_condition = \"none\"",
+                rom.id,
+                rom.milestone
+            );
+        }
+    }
+}
+
+#[test]
+fn rom_manifest_registers_required_milestone_10_cgb_suite_entries() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    assert!(
+        manifest.roms.iter().any(|rom| {
+            rom.required && rom.milestone == 10 && rom.suite == "mooneye_acceptance_cgb_boot"
+        }),
+        "manifest must include at least one required milestone 10 CGB boot ROM entry"
+    );
+
+    assert!(
+        manifest.roms.iter().any(|rom| {
+            !rom.required && rom.milestone == 10 && rom.suite == "mooneye_acceptance_cgb_memory"
+        }),
+        "manifest must include at least one deferred milestone 10 CGB memory/PPU ROM entry"
+    );
+
+    for rom in &manifest.roms {
+        if rom.required && rom.milestone == 10 {
             assert!(
                 !is_noop_pass_condition(rom.pass_condition),
                 "{} is required for milestone {} and must not use pass_condition = \"none\"",
@@ -784,6 +857,7 @@ pass_condition = "blargg_mem" # suite signal
     assert_eq!(rom.cycle_limit, 20_000_000);
     assert_eq!(rom.frame_limit, 300);
     assert_eq!(rom.wall_time_limit_ms, 8_000);
+    assert_eq!(rom.hardware, HardwareMode::Auto);
 }
 
 #[test]
@@ -1063,6 +1137,64 @@ fn required_milestone_5_roms_pass_under_external_validation_flow() {
     assert!(
         failures.is_empty(),
         "required milestone 5 ROM validation failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn required_milestone_10_cgb_roms_pass_under_external_validation_flow() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROM_MANIFEST_PATH);
+    let manifest = parse_manifest(&manifest_path);
+
+    let Some(rom_root) = rom_root_from_env() else {
+        eprintln!(
+            "skipping required CGB ROM run: set {ROM_ROOT_ENV} to execute external ROM validation"
+        );
+        return;
+    };
+
+    assert!(
+        rom_root.is_dir(),
+        "{ROM_ROOT_ENV} must point to a directory, got {}",
+        rom_root.display()
+    );
+
+    let required_m10_roms: Vec<&RomEntry> = manifest
+        .roms
+        .iter()
+        .filter(|rom| rom.required && rom.milestone == 10)
+        .collect();
+
+    assert!(
+        !required_m10_roms.is_empty(),
+        "manifest must define required milestone 10 CGB ROM cases"
+    );
+
+    for rom in &required_m10_roms {
+        assert!(
+            !is_noop_pass_condition(rom.pass_condition),
+            "{} is required for milestone {} and must not use pass_condition = \"none\"",
+            rom.id,
+            rom.milestone
+        );
+    }
+
+    let mut failures = Vec::new();
+    let mut executed_required_roms = 0usize;
+    for rom in required_m10_roms {
+        executed_required_roms += 1;
+        if let Err(error) = run_rom(&rom_root, rom) {
+            failures.push(format!("{} ({}): {error:?}", rom.id, rom.path));
+        }
+    }
+
+    assert!(
+        executed_required_roms > 0,
+        "required milestone 10 CGB ROM execution must include at least one ROM"
+    );
+    assert!(
+        failures.is_empty(),
+        "required milestone 10 CGB ROM validation failures:\n{}",
         failures.join("\n")
     );
 }
