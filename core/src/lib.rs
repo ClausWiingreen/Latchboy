@@ -256,6 +256,16 @@ impl Emulator {
         self.bus.take_serial_transfer_log()
     }
 
+    /// Queues one byte received from a networked serial peer.
+    pub fn enqueue_serial_peer_byte(&mut self, value: u8) {
+        self.bus.enqueue_serial_peer_byte(value);
+    }
+
+    /// Queues bytes received from a networked serial peer in FIFO order.
+    pub fn enqueue_serial_peer_bytes(&mut self, values: impl IntoIterator<Item = u8>) {
+        self.bus.enqueue_serial_peer_bytes(values);
+    }
+
     /// Advances execution by at least `cycles` machine cycles and emits detailed execution events.
     pub fn step_cycles_with_observer<O: EmulatorObserver>(
         &mut self,
@@ -991,6 +1001,30 @@ mod tests {
 
         assert_eq!(emulator.bus.read8(crate::serial::SB_REGISTER), b'E');
         assert_eq!(emulator.take_serial_transfer_log(), vec![b'E']);
+    }
+
+    #[test]
+    fn serial_networked_peer_is_exposed_via_emulator_api() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"SNWK");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+        emulator.set_serial_connection_mode(SerialConnectionMode::NetworkedPeer);
+        emulator.enqueue_serial_peer_byte(b'N');
+
+        emulator.bus.write8(crate::serial::SB_REGISTER, b'T');
+        emulator.bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(emulator.bus.read8(crate::serial::SB_REGISTER), b'N');
+        assert_eq!(emulator.take_serial_transfer_log(), vec![b'T']);
     }
 
     #[test]

@@ -701,6 +701,14 @@ impl Bus {
         self.serial.take_transfer_log()
     }
 
+    pub fn enqueue_serial_peer_byte(&mut self, value: u8) {
+        self.serial.enqueue_peer_received_byte(value);
+    }
+
+    pub fn enqueue_serial_peer_bytes(&mut self, values: impl IntoIterator<Item = u8>) {
+        self.serial.enqueue_peer_received_bytes(values);
+    }
+
     pub fn pull_audio_samples(&mut self, requested_samples: usize) -> Vec<i16> {
         self.apu.pull_output_samples(requested_samples)
     }
@@ -862,6 +870,29 @@ mod tests {
         assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'L');
         assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
         assert_eq!(bus.take_serial_transfer_log(), vec![b'L']);
+    }
+
+    #[test]
+    fn serial_networked_peer_consumes_queued_receive_bytes() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.set_serial_connection_mode(crate::serial::SerialConnectionMode::NetworkedPeer);
+        bus.enqueue_serial_peer_bytes([b'A', b'B']);
+
+        bus.write8(crate::serial::SB_REGISTER, b'1');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'A');
+
+        bus.write8(crate::serial::SB_REGISTER, b'2');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'B');
+
+        bus.write8(crate::serial::SB_REGISTER, b'3');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), 0xFF);
+
+        assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
+        assert_eq!(bus.take_serial_transfer_log(), vec![b'1', b'2', b'3']);
     }
 
     #[test]
