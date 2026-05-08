@@ -435,6 +435,7 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] Double-speed mode.
   - [x] CGB palettes and VRAM banking.
   - [x] CGB-specific registers and boot flow.
+  - [x] Colorized rendering integration.
 - [ ] **Link cable emulation**
   - [x] Local loopback.
   - [ ] Networked peer mode.
@@ -461,7 +462,8 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
 - CGB startup can now be selected explicitly through CGB no-boot and CGB boot-ROM emulator constructors; no-boot startup enables CGB bus surfaces and CGB CPU defaults while preserving existing DMG startup behavior.
 - Explicit CGB boot-ROM startup maps the split CGB boot window (`0000-00FF` and `0200-08FF`) until `FF50` disables boot ROM visibility, leaving cartridge ROM visible at `0100-01FF` during boot.
 - The CGB boot-ROM path now models KEY0 (`FF4C`) DMG-compatibility selection so DMG-only cartridges can lock back to the non-CGB register surface when the boot ROM unmaps itself.
-- Remaining CGB support still requires colorized rendering integration and fixture-backed compatibility gates before claiming CGB boot/title support.
+- CGB colorized rendering now resolves background/window tile attributes, sprite VRAM-bank/palette attributes, and CGB palette RAM into a row-major RGB555 framebuffer for frontend presentation.
+- Remaining CGB support still requires fixture-backed compatibility gates before claiming CGB boot/title support.
 
 **Acceptance criteria**
 - CGB boot and basic title compatibility (if in scope).

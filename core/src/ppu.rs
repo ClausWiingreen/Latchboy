@@ -44,6 +44,15 @@ pub const FRAMEBUFFER_WIDTH: usize = 160;
 pub const FRAMEBUFFER_HEIGHT: usize = 144;
 pub const FRAMEBUFFER_LEN: usize = FRAMEBUFFER_WIDTH * FRAMEBUFFER_HEIGHT;
 
+const CGB_RGB555_WHITE: u16 = 0x7FFF;
+const CGB_BG_ATTR_PALETTE_MASK: u8 = 0x07;
+const CGB_BG_ATTR_VRAM_BANK: u8 = 0x08;
+const CGB_BG_ATTR_X_FLIP: u8 = 0x20;
+const CGB_BG_ATTR_Y_FLIP: u8 = 0x40;
+const CGB_BG_ATTR_PRIORITY: u8 = 0x80;
+const CGB_OBJ_ATTR_PALETTE_MASK: u8 = 0x07;
+const CGB_OBJ_ATTR_VRAM_BANK: u8 = 0x08;
+
 const INTERRUPT_VBLANK_BIT: u8 = 0x01;
 const INTERRUPT_STAT_BIT: u8 = 0x02;
 const INTERRUPT_ENABLE_VBLANK_BIT: u8 = 0x01;
@@ -319,6 +328,14 @@ pub fn dmg_palette_shade(palette: impl Into<PaletteRegister>, color_id: u8) -> u
 pub struct SpritePixel {
     pub color_id: u8,
     pub use_obp1: bool,
+    pub cgb_palette: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BackgroundPixel {
+    color_id: u8,
+    cgb_palette: u8,
+    cgb_priority: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -347,7 +364,7 @@ pub struct Ppu {
     lcd_enable_delay_dots: u8,
     stat_irq_line_high: bool,
     stat_irq_pending: bool,
-    /// Most recently rendered DMG frame in row-major order (`y * 160 + x`).
+    /// Most recently rendered DMG-compatible shade frame in row-major order (`y * 160 + x`).
     ///
     /// Pixel format is a DMG shade index per byte:
     /// - `0` = white
@@ -359,6 +376,11 @@ pub struct Ppu {
     /// read-only views through [`Self::framebuffer`] / [`Self::framebuffer_pixels`] and
     /// should snapshot/copy if they need to retain frame data beyond a mutable emulator tick.
     framebuffer: [u8; FRAMEBUFFER_LEN],
+    /// Most recently rendered color frame in row-major order using RGB555 pixels.
+    ///
+    /// DMG mode mirrors the effective grayscale DMG palette into RGB555; CGB mode
+    /// resolves BG/window and OBJ color data through CGB palette RAM.
+    color_framebuffer: [u16; FRAMEBUFFER_LEN],
     frame_ready_pending: bool,
 }
 
@@ -390,6 +412,7 @@ impl Default for Ppu {
             stat_irq_line_high: false,
             stat_irq_pending: false,
             framebuffer: [0; FRAMEBUFFER_LEN],
+            color_framebuffer: [CGB_RGB555_WHITE; FRAMEBUFFER_LEN],
             frame_ready_pending: false,
         }
     }
@@ -769,8 +792,16 @@ impl Ppu {
     /// - Applies scroll offsets using `SCX/SCY`.
     /// - Applies window positioning using `WX/WY` with the DMG `WX-7` rule when enabled.
     pub fn background_pixel_color_id(&self, screen_x: u8, screen_y: u8) -> u8 {
-        if !self.lcdc.bg_window_enabled() {
-            return 0;
+        self.background_pixel(screen_x, screen_y).color_id
+    }
+
+    fn background_pixel(&self, screen_x: u8, screen_y: u8) -> BackgroundPixel {
+        if !self.cgb_mode_enabled && !self.lcdc.bg_window_enabled() {
+            return BackgroundPixel {
+                color_id: 0,
+                cgb_palette: 0,
+                cgb_priority: false,
+            };
         }
 
         let window_visible = self.lcdc.window_enabled()
@@ -792,18 +823,42 @@ impl Ppu {
 
         let tile_col = (fetch_x / 8) as usize;
         let tile_row = (fetch_y / 8) as usize;
-        let row_in_tile = fetch_y % 8;
-        let pixel_in_tile = 7 - (fetch_x % 8);
+        let mut row_in_tile = fetch_y % 8;
+        let mut pixel_in_tile = fetch_x % 8;
 
         let map_index = tile_row * 32 + tile_col;
         let tile_index = self.vram[map_base + map_index];
-        let tile_row_offset = self.tile_data_row_offset(tile_index, row_in_tile);
+        let attributes = if self.cgb_mode_enabled {
+            self.vram[VRAM_BANK_SIZE + map_base + map_index]
+        } else {
+            0
+        };
+
+        if (attributes & CGB_BG_ATTR_Y_FLIP) != 0 {
+            row_in_tile = 7 - row_in_tile;
+        }
+        if (attributes & CGB_BG_ATTR_X_FLIP) != 0 {
+            pixel_in_tile = 7 - pixel_in_tile;
+        }
+
+        let tile_bank_offset = if self.cgb_mode_enabled && (attributes & CGB_BG_ATTR_VRAM_BANK) != 0
+        {
+            VRAM_BANK_SIZE
+        } else {
+            0
+        };
+        let tile_row_offset = tile_bank_offset + self.tile_data_row_offset(tile_index, row_in_tile);
         let low = self.vram[tile_row_offset];
         let high = self.vram[tile_row_offset + 1];
+        let bit = 7 - pixel_in_tile;
 
-        let low_bit = (low >> pixel_in_tile) & 0x01;
-        let high_bit = (high >> pixel_in_tile) & 0x01;
-        (high_bit << 1) | low_bit
+        let low_bit = (low >> bit) & 0x01;
+        let high_bit = (high >> bit) & 0x01;
+        BackgroundPixel {
+            color_id: (high_bit << 1) | low_bit,
+            cgb_palette: attributes & CGB_BG_ATTR_PALETTE_MASK,
+            cgb_priority: (attributes & CGB_BG_ATTR_PRIORITY) != 0,
+        }
     }
 
     /// Returns the visible sprite pixel at the given screen coordinate, if any.
@@ -875,8 +930,16 @@ impl Ppu {
             };
             let row_in_tile = row & 0x07;
 
-            let tile_row_offset =
-                TILE_BLOCK_0_OFFSET + usize::from(tile_id) * 16 + usize::from(row_in_tile) * 2;
+            let tile_bank_offset =
+                if self.cgb_mode_enabled && (attributes.bits() & CGB_OBJ_ATTR_VRAM_BANK) != 0 {
+                    VRAM_BANK_SIZE
+                } else {
+                    0
+                };
+            let tile_row_offset = tile_bank_offset
+                + TILE_BLOCK_0_OFFSET
+                + usize::from(tile_id) * 16
+                + usize::from(row_in_tile) * 2;
             let low = self.vram[tile_row_offset];
             let high = self.vram[tile_row_offset + 1];
             let bit = 7 - col;
@@ -888,12 +951,16 @@ impl Ppu {
             let pixel = SpritePixel {
                 color_id,
                 use_obp1: attributes.contains(SpriteAttributes::DMG_PALETTE_1),
+                cgb_palette: attributes.bits() & CGB_OBJ_ATTR_PALETTE_MASK,
             };
 
             match candidate {
                 None => candidate = Some((sprite_x, sprite_index, pixel, attributes)),
                 Some((best_x, best_index, _, _))
-                    if sprite_x < best_x || (sprite_x == best_x && sprite_index < best_index) =>
+                    if (!self.cgb_mode_enabled
+                        && (sprite_x < best_x
+                            || (sprite_x == best_x && sprite_index < best_index)))
+                        || (self.cgb_mode_enabled && sprite_index < best_index) =>
                 {
                     candidate = Some((sprite_x, sprite_index, pixel, attributes));
                 }
@@ -916,7 +983,7 @@ impl Ppu {
         if !self.lcdc.enabled() {
             return 0;
         }
-        if !self.lcdc.bg_window_enabled() {
+        if !self.cgb_mode_enabled && !self.lcdc.bg_window_enabled() {
             return 0;
         }
 
@@ -933,18 +1000,87 @@ impl Ppu {
             return 0;
         }
 
-        let bg_color_id = self.background_pixel_color_id(screen_x, screen_y);
-        if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg_color_id) {
+        let bg = self.background_pixel(screen_x, screen_y);
+        if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg.color_id) {
             let palette = if sprite.use_obp1 {
                 self.obp1
             } else {
                 self.obp0
             };
             palette.shade(sprite.color_id)
-        } else if !self.lcdc.bg_window_enabled() {
+        } else if !self.cgb_mode_enabled && !self.lcdc.bg_window_enabled() {
             0
         } else {
-            self.bgp.shade(bg_color_id)
+            self.bgp.shade(bg.color_id)
+        }
+    }
+
+    /// Returns the final RGB555 color for the composited pixel at `(x, y)`.
+    pub fn composited_pixel_rgb555(&self, screen_x: u8, screen_y: u8) -> u16 {
+        if !self.lcdc.enabled() {
+            return CGB_RGB555_WHITE;
+        }
+
+        let bg = self.background_pixel(screen_x, screen_y);
+        if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg.color_id) {
+            if self.cgb_mode_enabled
+                && self.lcdc.bg_window_enabled()
+                && bg.cgb_priority
+                && bg.color_id != 0
+            {
+                self.background_pixel_rgb555(bg)
+            } else {
+                self.sprite_pixel_rgb555(sprite)
+            }
+        } else if !self.lcdc.bg_window_enabled() && !self.cgb_mode_enabled {
+            Self::dmg_shade_rgb555(0)
+        } else {
+            self.background_pixel_rgb555(bg)
+        }
+    }
+
+    fn cgb_palette_rgb555(
+        palette_ram: &[u8; CGB_PALETTE_RAM_SIZE],
+        palette: u8,
+        color_id: u8,
+    ) -> u16 {
+        let offset = usize::from((palette & 0x07) * 8 + (color_id & 0x03) * 2);
+        u16::from(palette_ram[offset]) | (u16::from(palette_ram[offset + 1] & 0x7F) << 8)
+    }
+
+    fn dmg_shade_rgb555(shade: u8) -> u16 {
+        match shade & 0x03 {
+            0 => 0x7FFF,
+            1 => 0x56B5,
+            2 => 0x2D6B,
+            _ => 0x0000,
+        }
+    }
+
+    fn background_pixel_rgb555(&self, bg: BackgroundPixel) -> u16 {
+        if self.cgb_mode_enabled {
+            Self::cgb_palette_rgb555(&self.cgb_bg_palette_ram, bg.cgb_palette, bg.color_id)
+        } else if !self.lcdc.bg_window_enabled() {
+            Self::dmg_shade_rgb555(0)
+        } else {
+            Self::dmg_shade_rgb555(self.bgp.shade(bg.color_id))
+        }
+    }
+
+    fn sprite_pixel_rgb555(&self, sprite: SpritePixel) -> u16 {
+        if self.cgb_mode_enabled {
+            Self::cgb_palette_rgb555(
+                &self.cgb_obj_palette_ram,
+                sprite.cgb_palette,
+                sprite.color_id,
+            )
+        } else {
+            let palette = if sprite.use_obp1 {
+                self.obp1
+            } else {
+                self.obp0
+            };
+            Self::dmg_shade_rgb555(palette.shade(sprite.color_id))
         }
     }
 
@@ -976,15 +1112,27 @@ impl Ppu {
         &self.framebuffer
     }
 
+    /// Returns the owned color framebuffer as a fixed-size row-major RGB555 array.
+    pub const fn color_framebuffer(&self) -> &[u16; FRAMEBUFFER_LEN] {
+        &self.color_framebuffer
+    }
+
+    /// Returns the owned color framebuffer as a flat RGB555 pixel slice.
+    pub fn color_framebuffer_pixels(&self) -> &[u16] {
+        &self.color_framebuffer
+    }
+
     fn render_visible_scanline(&mut self, scanline: u8) {
         let row_base = usize::from(scanline) * FRAMEBUFFER_WIDTH;
         for x in 0..FRAMEBUFFER_WIDTH {
             self.framebuffer[row_base + x] = self.composited_pixel_shade(x as u8, scanline);
+            self.color_framebuffer[row_base + x] = self.composited_pixel_rgb555(x as u8, scanline);
         }
     }
 
     fn clear_framebuffer(&mut self) {
         self.framebuffer = [0; FRAMEBUFFER_LEN];
+        self.color_framebuffer = [CGB_RGB555_WHITE; FRAMEBUFFER_LEN];
     }
 
     pub fn step(&mut self, interrupt_flag: &mut u8) {
@@ -1173,7 +1321,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -1817,7 +1966,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
 
@@ -1826,7 +1976,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: true
+                use_obp1: true,
+                cgb_palette: 0
             })
         );
     }
@@ -1845,7 +1996,8 @@ mod tests {
             ppu.sprite_pixel(7, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
 
@@ -1856,7 +2008,8 @@ mod tests {
             ppu.sprite_pixel(7, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -1885,7 +2038,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -1908,14 +2062,16 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
         assert_eq!(
             ppu.sprite_pixel(0, 8, 0),
             Some(SpritePixel {
                 color_id: 2,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -1937,7 +2093,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -1968,7 +2125,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -1998,7 +2156,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 0),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: true
+                use_obp1: true,
+                cgb_palette: 0
             })
         );
     }
@@ -2019,7 +2178,8 @@ mod tests {
             ppu.sprite_pixel(0, 0, 2),
             Some(SpritePixel {
                 color_id: 1,
-                use_obp1: false
+                use_obp1: false,
+                cgb_palette: 0
             })
         );
     }
@@ -2241,5 +2401,134 @@ mod tests {
 
         ppu.stat.set_mode(PpuMode::HBlank);
         assert_eq!(ppu.read_register(OCPD_REGISTER), Some(0x56));
+    }
+
+    fn write_cgb_palette_color(
+        ppu: &mut Ppu,
+        index_register: u16,
+        data_register: u16,
+        offset: u8,
+        rgb555: u16,
+    ) {
+        ppu.write_register(index_register, offset);
+        ppu.write_register(data_register, (rgb555 & 0x00FF) as u8);
+        ppu.write_register(index_register, offset + 1);
+        ppu.write_register(data_register, (rgb555 >> 8) as u8);
+    }
+
+    #[test]
+    fn cgb_background_rendering_uses_tile_attributes_and_palette_ram() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT,
+        );
+
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_register(VBK_REGISTER, 0x01);
+        ppu.write_vram(0x9800, CGB_BG_ATTR_VRAM_BANK | 0x03);
+        ppu.write_vram(0x8010, 0x00);
+        ppu.write_vram(0x8011, 0x80);
+        write_cgb_palette_color(
+            &mut ppu,
+            BCPS_REGISTER,
+            BCPD_REGISTER,
+            3 * 8 + 2 * 2,
+            0x1234,
+        );
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 2);
+        assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x1234);
+    }
+
+    #[test]
+    fn cgb_lcdc_bg_priority_clear_still_renders_background_pixels() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0x00);
+        ppu.write_vram(0x8011, 0x80);
+        write_cgb_palette_color(&mut ppu, BCPS_REGISTER, BCPD_REGISTER, 2 * 2, 0x4210);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE | LCDC_BG_TILE_DATA_SELECT);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 2);
+        assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x4210);
+    }
+
+    #[test]
+    fn cgb_lcdc_bg_priority_clear_lets_sprites_win_over_bg_priority() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_register(VBK_REGISTER, 0x01);
+        ppu.write_vram(0x9800, CGB_BG_ATTR_PRIORITY);
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x8010, 0x80);
+        ppu.write_vram(0x8011, 0x00);
+        write_cgb_palette_color(&mut ppu, BCPS_REGISTER, BCPD_REGISTER, 2, 0x001F);
+
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x02);
+        ppu.write_oam(0xFE03, 0x00);
+        ppu.write_vram(0x8020, 0x80);
+        ppu.write_vram(0x8021, 0x80);
+        write_cgb_palette_color(&mut ppu, OCPS_REGISTER, OCPD_REGISTER, 3 * 2, 0x7C00);
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLE | LCDC_SPRITE_ENABLE | LCDC_BG_TILE_DATA_SELECT,
+        );
+
+        assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x7C00);
+    }
+
+    #[test]
+    fn cgb_sprite_rendering_uses_vram_bank_and_object_palette_ram() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_SPRITE_ENABLE,
+        );
+
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x02);
+        ppu.write_oam(0xFE03, CGB_OBJ_ATTR_VRAM_BANK | 0x05);
+        ppu.write_register(VBK_REGISTER, 0x01);
+        ppu.write_vram(0x8020, 0x80);
+        ppu.write_vram(0x8021, 0x00);
+        write_cgb_palette_color(&mut ppu, OCPS_REGISTER, OCPD_REGISTER, 5 * 8 + 2, 0x2A1F);
+
+        assert_eq!(
+            ppu.sprite_pixel(0, 0, 0),
+            Some(SpritePixel {
+                color_id: 1,
+                use_obp1: false,
+                cgb_palette: 5,
+            })
+        );
+        assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x2A1F);
+    }
+
+    #[test]
+    fn cgb_scanline_render_updates_rgb555_framebuffer() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0x80);
+        ppu.write_vram(0x8011, 0x80);
+        write_cgb_palette_color(&mut ppu, BCPS_REGISTER, BCPD_REGISTER, 3 * 2, 0x03E0);
+        ppu.write_register(BGP_REGISTER, 0xE4);
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLE | LCDC_BG_ENABLE | LCDC_BG_TILE_DATA_SELECT,
+        );
+
+        ppu.render_visible_scanline(0);
+
+        assert_eq!(ppu.framebuffer()[0], 3);
+        assert_eq!(ppu.color_framebuffer()[0], 0x03E0);
+        assert_eq!(ppu.color_framebuffer_pixels().len(), FRAMEBUFFER_LEN);
     }
 }

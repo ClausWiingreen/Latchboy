@@ -66,28 +66,60 @@ pub enum SurfaceImageWriteError {
     },
 }
 
+fn validate_surface_lengths(
+    framebuffer_len: usize,
+    surface_len: usize,
+) -> Result<(), FrameBlitError> {
+    if framebuffer_len != FRAMEBUFFER_LEN {
+        return Err(FrameBlitError::FramebufferSizeMismatch {
+            expected: FRAMEBUFFER_LEN,
+            actual: framebuffer_len,
+        });
+    }
+
+    if surface_len != FRAMEBUFFER_LEN {
+        return Err(FrameBlitError::SurfaceSizeMismatch {
+            expected: FRAMEBUFFER_LEN,
+            actual: surface_len,
+        });
+    }
+
+    Ok(())
+}
+
 /// Converts DMG shade-index framebuffer bytes (`0..=3`) into RGB pixels.
 pub fn blit_dmg_framebuffer_to_rgb_surface(
     framebuffer: &[u8],
     surface: &mut [u32],
 ) -> Result<(), FrameBlitError> {
-    if framebuffer.len() != FRAMEBUFFER_LEN {
-        return Err(FrameBlitError::FramebufferSizeMismatch {
-            expected: FRAMEBUFFER_LEN,
-            actual: framebuffer.len(),
-        });
-    }
-
-    if surface.len() != FRAMEBUFFER_LEN {
-        return Err(FrameBlitError::SurfaceSizeMismatch {
-            expected: FRAMEBUFFER_LEN,
-            actual: surface.len(),
-        });
-    }
+    validate_surface_lengths(framebuffer.len(), surface.len())?;
 
     for (dst, &shade) in surface.iter_mut().zip(framebuffer.iter()) {
         let palette_index = usize::from(shade.min(3));
         *dst = DMG_PALETTE_RGB[palette_index];
+    }
+
+    Ok(())
+}
+
+fn rgb555_to_rgb888(pixel: u16) -> u32 {
+    let red = u32::from(pixel & 0x1F);
+    let green = u32::from((pixel >> 5) & 0x1F);
+    let blue = u32::from((pixel >> 10) & 0x1F);
+
+    let expand = |component: u32| (component << 3) | (component >> 2);
+    (expand(red) << 16) | (expand(green) << 8) | expand(blue)
+}
+
+/// Converts RGB555 framebuffer pixels into RGB888 surface pixels.
+pub fn blit_rgb555_framebuffer_to_rgb_surface(
+    framebuffer: &[u16],
+    surface: &mut [u32],
+) -> Result<(), FrameBlitError> {
+    validate_surface_lengths(framebuffer.len(), surface.len())?;
+
+    for (dst, &pixel) in surface.iter_mut().zip(framebuffer.iter()) {
+        *dst = rgb555_to_rgb888(pixel);
     }
 
     Ok(())
@@ -332,7 +364,11 @@ pub fn run_emulation_loop<P: FramePresenter>(
             return Ok(false);
         }
 
-        blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), surface)?;
+        if emulator.cgb_mode_enabled() {
+            blit_rgb555_framebuffer_to_rgb_surface(emulator.color_framebuffer_pixels(), surface)?;
+        } else {
+            blit_dmg_framebuffer_to_rgb_surface(emulator.framebuffer_pixels(), surface)?;
+        }
         presenter.present_frame(surface)?;
         Ok(true)
     }
@@ -415,8 +451,8 @@ pub fn run_emulation_loop<P: FramePresenter>(
 #[cfg(test)]
 mod tests {
     use super::{
-        run_emulation_loop, DesktopResult, FramePresenter, RuntimeController, RuntimeEvent,
-        RuntimeSessionState,
+        blit_rgb555_framebuffer_to_rgb_surface, run_emulation_loop, DesktopResult, FramePresenter,
+        RuntimeController, RuntimeEvent, RuntimeSessionState,
     };
     use latchboy_core::{Emulator, JoypadButton};
 
@@ -447,6 +483,22 @@ mod tests {
         fn present_frame(&mut self, _surface: &[u32]) -> DesktopResult<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn rgb555_blit_expands_to_rgb888_surface_pixels() {
+        let mut framebuffer = vec![0u16; latchboy_core::FRAMEBUFFER_LEN];
+        framebuffer[0] = 0x001F;
+        framebuffer[1] = 0x03E0;
+        framebuffer[2] = 0x7C00;
+        let mut surface = vec![0u32; latchboy_core::FRAMEBUFFER_LEN];
+
+        blit_rgb555_framebuffer_to_rgb_surface(&framebuffer, &mut surface)
+            .expect("RGB555 framebuffer should blit to RGB888 surface");
+
+        assert_eq!(surface[0], 0x00FF0000);
+        assert_eq!(surface[1], 0x0000FF00);
+        assert_eq!(surface[2], 0x000000FF);
     }
 
     #[test]

@@ -97,6 +97,14 @@ impl DesktopArgs {
     }
 }
 
+fn emulator_from_desktop_cartridge(cartridge: Cartridge) -> Emulator {
+    if cartridge.header.cgb_compatibility.supports_cgb() {
+        Emulator::from_cartridge_cgb(cartridge)
+    } else {
+        Emulator::from_cartridge(cartridge)
+    }
+}
+
 impl Drop for SaveOnDrop {
     fn drop(&mut self) {
         if self.persist_enabled {
@@ -591,7 +599,7 @@ fn main() -> ExitCode {
     let persist_enabled = should_persist_after_load(load_status);
 
     let mut runtime = SaveOnDrop {
-        emulator: Emulator::from_cartridge(cartridge),
+        emulator: emulator_from_desktop_cartridge(cartridge),
         save_path,
         persist_enabled,
     };
@@ -729,7 +737,7 @@ fn main() -> ExitCode {
             };
             let load_status = load_save_data_if_available(&mut cartridge, &runtime.save_path);
             runtime.persist_enabled = should_persist_after_load(load_status);
-            runtime.emulator = Emulator::from_cartridge(cartridge);
+            runtime.emulator = emulator_from_desktop_cartridge(cartridge);
             runtime_session_state = RuntimeSessionState::default();
             continue;
         }
@@ -762,12 +770,42 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_keymap, runtime_load_slot_for_key, runtime_save_slot_for_key, DesktopArgs,
-        FrameCaptureConfig, FrameCaptureMode,
+        build_keymap, emulator_from_desktop_cartridge, runtime_load_slot_for_key,
+        runtime_save_slot_for_key, DesktopArgs, FrameCaptureConfig, FrameCaptureMode,
     };
     use clap::Parser;
+    use latchboy_core::cartridge::{
+        compute_header_checksum, Cartridge, CartridgeType, DestinationCode, RamSize, RomSize,
+    };
     use sdl2::keyboard::Keycode;
     use std::path::PathBuf;
+
+    fn cartridge_with_cgb_flag(cgb_flag: u8) -> Cartridge {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"DESK");
+        rom[0x0143] = cgb_flag;
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] = compute_header_checksum(&rom).expect("checksum should compute");
+        Cartridge::from_rom(rom).expect("desktop test cartridge should parse")
+    }
+
+    #[test]
+    fn desktop_emulator_uses_cgb_mode_for_cgb_capable_cartridges() {
+        let emulator = emulator_from_desktop_cartridge(cartridge_with_cgb_flag(0x80));
+
+        assert!(emulator.cgb_mode_enabled());
+    }
+
+    #[test]
+    fn desktop_emulator_keeps_dmg_mode_for_dmg_only_cartridges() {
+        let emulator = emulator_from_desktop_cartridge(cartridge_with_cgb_flag(0x00));
+
+        assert!(!emulator.cgb_mode_enabled());
+    }
 
     #[test]
     fn capture_every_interval_selects_expected_frames() {
