@@ -39,7 +39,9 @@ pub struct Emulator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum StartupMode {
     DmgNoBoot,
+    CgbNoBoot,
     BootRom,
+    CgbBootRom,
 }
 
 impl Hash for Emulator {
@@ -153,6 +155,25 @@ impl Emulator {
         }
     }
 
+    /// Creates a new CGB-mode emulator from a cartridge image.
+    ///
+    /// Startup assumptions for this path:
+    /// - The CGB boot ROM is skipped.
+    /// - CPU registers are initialized to post-boot CGB defaults (`PC=0x0100`, `SP=0xFFFE`).
+    /// - CGB-only memory/register surfaces such as KEY1, VBK, palette RAM, and SVBK are enabled.
+    pub fn from_cartridge_cgb(cartridge: Cartridge) -> Self {
+        let mut bus = Bus::new_cgb(cartridge);
+        bus.apply_dmg_no_boot_defaults();
+
+        Self {
+            cpu: Cpu::new_cgb_no_boot(),
+            bus,
+            startup_mode: StartupMode::CgbNoBoot,
+            total_cycles: 0,
+            cycle_carry: 0,
+        }
+    }
+
     /// Creates a new emulator from a cartridge image with an explicit DMG boot ROM.
     ///
     /// Startup assumptions for this path:
@@ -170,6 +191,21 @@ impl Emulator {
         }
     }
 
+    /// Creates a new CGB-mode emulator from a cartridge image with an explicit CGB boot ROM.
+    ///
+    /// The CGB boot ROM remains mapped over `0000-00FF` and `0200-08FF` until it disables
+    /// itself by writing a non-zero value to `FF50`. The cartridge remains visible at `0100-01FF`
+    /// during boot, matching the split CGB boot-ROM window.
+    pub fn from_cartridge_with_cgb_boot_rom(cartridge: Cartridge, boot_rom: Vec<u8>) -> Self {
+        Self {
+            cpu: Cpu::new(),
+            bus: Bus::with_cgb_boot_rom(cartridge, boot_rom),
+            startup_mode: StartupMode::CgbBootRom,
+            total_cycles: 0,
+            cycle_carry: 0,
+        }
+    }
+
     /// Resets CPU and bus state while preserving the loaded cartridge.
     pub fn reset(&mut self) {
         self.bus.reset();
@@ -178,7 +214,11 @@ impl Emulator {
                 self.bus.apply_dmg_no_boot_defaults();
                 Cpu::new_dmg_no_boot()
             }
-            StartupMode::BootRom => Cpu::new(),
+            StartupMode::CgbNoBoot => {
+                self.bus.apply_dmg_no_boot_defaults();
+                Cpu::new_cgb_no_boot()
+            }
+            StartupMode::BootRom | StartupMode::CgbBootRom => Cpu::new(),
         };
         self.total_cycles = 0;
         self.cycle_carry = 0;
@@ -455,6 +495,33 @@ mod tests {
     }
 
     #[test]
+    fn cgb_no_boot_startup_enables_cgb_bus_and_cpu_defaults() {
+        let cartridge = default_rom_only_cartridge();
+        let emulator = Emulator::from_cartridge_cgb(cartridge);
+
+        let registers = emulator.cpu().registers();
+        assert_eq!(registers.a, 0x11);
+        assert_eq!(registers.f.read_bits(), 0x80);
+        assert_eq!(registers.d, 0xFF);
+        assert_eq!(registers.e, 0x56);
+        assert_eq!(registers.l, 0x0D);
+        assert_eq!(emulator.cpu().pc(), 0x0100);
+        assert_eq!(emulator.cpu().sp(), 0xFFFE);
+        assert!(emulator.bus().cgb_mode_enabled());
+        assert_eq!(
+            emulator
+                .bus()
+                .read8(crate::memory::CGB_SPEED_SWITCH_REGISTER),
+            0x7E
+        );
+        assert_eq!(
+            emulator.bus().read8(crate::memory::CGB_WRAM_BANK_REGISTER),
+            0xF8
+        );
+        assert_eq!(emulator.bus().read8(0xFF50), 0x01);
+    }
+
+    #[test]
     fn rom_boot_smoke_executes_instruction_stream() {
         let mut rom = vec![0u8; 2 * 16 * 1024];
         rom[0x0100] = 0x31; // LD SP, d16
@@ -565,6 +632,90 @@ mod tests {
         emulator.step_cycles(4);
         assert_eq!(emulator.cpu().pc(), 0x0101);
         assert_eq!(emulator.cpu().registers().a, 0x01);
+    }
+
+    #[test]
+    fn cgb_boot_rom_startup_uses_split_mapping_until_ff50_unmaps_boot_rom() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0000] = 0x91;
+        rom[0x0100] = 0x92;
+        rom[0x0200] = 0x93;
+        rom[0x0134..0x0138].copy_from_slice(b"CGBT");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+
+        let mut boot_rom = vec![0x00; 0x0900];
+        boot_rom[0x0000] = 0x3E; // LD A, d8
+        boot_rom[0x0001] = 0x42;
+        boot_rom[0x0002] = 0xC3; // JP 0200
+        boot_rom[0x0003] = 0x00;
+        boot_rom[0x0004] = 0x02;
+        boot_rom[0x0200] = 0xE0; // LDH (FF50), A
+        boot_rom[0x0201] = 0x50;
+        let mut emulator = Emulator::from_cartridge_with_cgb_boot_rom(cartridge, boot_rom);
+
+        assert!(emulator.bus().cgb_mode_enabled());
+        assert_eq!(emulator.bus().read8(0x0000), 0x3E);
+        assert_eq!(emulator.bus().read8(0x0100), 0x92);
+        assert_eq!(emulator.bus().read8(0x0200), 0xE0);
+
+        emulator.step_cycles(16);
+        assert_eq!(emulator.cpu().pc(), 0x0200);
+        assert_eq!(emulator.cpu().registers().a, 0x42);
+        assert!(emulator.bus().boot_rom_enabled());
+
+        emulator.step_cycles(12);
+        assert_eq!(emulator.cpu().pc(), 0x0202);
+        assert!(!emulator.bus().boot_rom_enabled());
+        assert_eq!(emulator.bus().read8(0x0000), 0x91);
+        assert_eq!(emulator.bus().read8(0x0200), 0x93);
+    }
+
+    #[test]
+    fn cgb_boot_rom_can_select_dmg_compatibility_mode_for_dmg_cartridge() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0134..0x0138].copy_from_slice(b"DMGC");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+
+        let mut boot_rom = vec![0x00; 0x0900];
+        boot_rom[0x0000] = 0x3E; // LD A, d8
+        boot_rom[0x0001] = 0x04; // KEY0 DMG compatibility bit
+        boot_rom[0x0002] = 0xE0; // LDH (FF4C), A
+        boot_rom[0x0003] = 0x4C;
+        boot_rom[0x0004] = 0x3E; // LD A, d8
+        boot_rom[0x0005] = 0x01;
+        boot_rom[0x0006] = 0xE0; // LDH (FF50), A
+        boot_rom[0x0007] = 0x50;
+        let mut emulator = Emulator::from_cartridge_with_cgb_boot_rom(cartridge, boot_rom);
+
+        emulator.step_cycles(40);
+
+        assert!(!emulator.bus().boot_rom_enabled());
+        assert!(emulator.bus().cgb_hardware_enabled());
+        assert!(!emulator.bus().cgb_mode_enabled());
+        assert_eq!(
+            emulator
+                .bus()
+                .read8(crate::memory::CGB_SPEED_SWITCH_REGISTER),
+            0xFF
+        );
+        assert_eq!(
+            emulator.bus().read8(crate::memory::CGB_WRAM_BANK_REGISTER),
+            0xFF
+        );
+        assert_eq!(emulator.bus().read8(crate::ppu::VBK_REGISTER), 0xFF);
+        assert_eq!(emulator.bus().read8(crate::ppu::BCPS_REGISTER), 0xFF);
     }
 
     #[test]
