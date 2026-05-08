@@ -796,7 +796,7 @@ impl Ppu {
     }
 
     fn background_pixel(&self, screen_x: u8, screen_y: u8) -> BackgroundPixel {
-        if !self.lcdc.bg_window_enabled() {
+        if !self.cgb_mode_enabled && !self.lcdc.bg_window_enabled() {
             return BackgroundPixel {
                 color_id: 0,
                 cgb_palette: 0,
@@ -983,7 +983,7 @@ impl Ppu {
         if !self.lcdc.enabled() {
             return 0;
         }
-        if !self.lcdc.bg_window_enabled() {
+        if !self.cgb_mode_enabled && !self.lcdc.bg_window_enabled() {
             return 0;
         }
 
@@ -1008,7 +1008,7 @@ impl Ppu {
                 self.obp0
             };
             palette.shade(sprite.color_id)
-        } else if !self.lcdc.bg_window_enabled() {
+        } else if !self.cgb_mode_enabled && !self.lcdc.bg_window_enabled() {
             0
         } else {
             self.bgp.shade(bg.color_id)
@@ -1023,7 +1023,11 @@ impl Ppu {
 
         let bg = self.background_pixel(screen_x, screen_y);
         if let Some(sprite) = self.sprite_pixel(screen_x, screen_y, bg.color_id) {
-            if self.cgb_mode_enabled && bg.cgb_priority && bg.color_id != 0 {
+            if self.cgb_mode_enabled
+                && self.lcdc.bg_window_enabled()
+                && bg.cgb_priority
+                && bg.color_id != 0
+            {
                 self.background_pixel_rgb555(bg)
             } else {
                 self.sprite_pixel_rgb555(sprite)
@@ -2436,6 +2440,47 @@ mod tests {
 
         assert_eq!(ppu.background_pixel_color_id(0, 0), 2);
         assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x1234);
+    }
+
+    #[test]
+    fn cgb_lcdc_bg_priority_clear_still_renders_background_pixels() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_vram(0x8010, 0x00);
+        ppu.write_vram(0x8011, 0x80);
+        write_cgb_palette_color(&mut ppu, BCPS_REGISTER, BCPD_REGISTER, 2 * 2, 0x4210);
+        ppu.write_register(LCDC_REGISTER, LCDC_ENABLE | LCDC_BG_TILE_DATA_SELECT);
+
+        assert_eq!(ppu.background_pixel_color_id(0, 0), 2);
+        assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x4210);
+    }
+
+    #[test]
+    fn cgb_lcdc_bg_priority_clear_lets_sprites_win_over_bg_priority() {
+        let mut ppu = Ppu::new_cgb();
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x9800, 0x01);
+        ppu.write_register(VBK_REGISTER, 0x01);
+        ppu.write_vram(0x9800, CGB_BG_ATTR_PRIORITY);
+        ppu.write_register(VBK_REGISTER, 0x00);
+        ppu.write_vram(0x8010, 0x80);
+        ppu.write_vram(0x8011, 0x00);
+        write_cgb_palette_color(&mut ppu, BCPS_REGISTER, BCPD_REGISTER, 2, 0x001F);
+
+        ppu.write_oam(0xFE00, 16);
+        ppu.write_oam(0xFE01, 8);
+        ppu.write_oam(0xFE02, 0x02);
+        ppu.write_oam(0xFE03, 0x00);
+        ppu.write_vram(0x8020, 0x80);
+        ppu.write_vram(0x8021, 0x80);
+        write_cgb_palette_color(&mut ppu, OCPS_REGISTER, OCPD_REGISTER, 3 * 2, 0x7C00);
+        ppu.write_register(
+            LCDC_REGISTER,
+            LCDC_ENABLE | LCDC_SPRITE_ENABLE | LCDC_BG_TILE_DATA_SELECT,
+        );
+
+        assert_eq!(ppu.composited_pixel_rgb555(0, 0), 0x7C00);
     }
 
     #[test]
