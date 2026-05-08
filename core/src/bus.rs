@@ -11,7 +11,7 @@ use crate::memory::{
 };
 use crate::observability::PpuSnapshot;
 use crate::ppu::{Ppu, DMA_REGISTER};
-use crate::serial::SerialPort;
+use crate::serial::{SerialConnectionMode, SerialPort};
 use crate::timer::Timer;
 const JOYPAD_INTERRUPT_MASK: u8 = 0x10;
 const KEY0_DMG_COMPATIBILITY_MODE: u8 = 0x04;
@@ -226,10 +226,12 @@ impl Bus {
         } else {
             Ppu::default()
         };
+        let serial_connection_mode = self.serial.connection_mode();
         self.wram = [0; WRAM_SIZE];
         self.io_registers = [0; IO_REGISTERS_SIZE];
         self.joypad = Joypad::default();
         self.serial = SerialPort::default();
+        self.serial.set_connection_mode(serial_connection_mode);
         self.timer = Timer::default();
         self.apu = Apu::default();
         self.hram = [0; HRAM_SIZE];
@@ -683,6 +685,10 @@ impl Bus {
         std::mem::take(&mut self.watch_io_events.borrow_mut())
     }
 
+    pub fn set_serial_connection_mode(&mut self, connection_mode: SerialConnectionMode) {
+        self.serial.set_connection_mode(connection_mode);
+    }
+
     pub fn take_serial_transfer_log(&mut self) -> Vec<u8> {
         self.serial.take_transfer_log()
     }
@@ -834,6 +840,38 @@ mod tests {
         assert_eq!(bus.read8(crate::serial::SB_REGISTER), 0xFF);
         assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
         assert_eq!(bus.take_serial_transfer_log(), vec![b'P']);
+    }
+
+    #[test]
+    fn serial_local_loopback_echoes_transmitted_byte_into_sb() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.set_serial_connection_mode(crate::serial::SerialConnectionMode::LocalLoopback);
+
+        bus.write8(crate::serial::SB_REGISTER, b'L');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'L');
+        assert_eq!(bus.read8(crate::serial::SC_REGISTER) & 0x80, 0x00);
+        assert_eq!(bus.take_serial_transfer_log(), vec![b'L']);
+    }
+
+    #[test]
+    fn reset_preserves_serial_connection_mode() {
+        let cartridge = make_cartridge(CartridgeType::RomOnly, RamSize::None);
+        let mut bus = Bus::new(cartridge);
+        bus.set_serial_connection_mode(crate::serial::SerialConnectionMode::LocalLoopback);
+
+        bus.write8(crate::serial::SB_REGISTER, b'R');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'R');
+
+        bus.reset();
+        bus.write8(crate::serial::SB_REGISTER, b'S');
+        bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(bus.read8(crate::serial::SB_REGISTER), b'S');
+        assert_eq!(bus.take_serial_transfer_log(), vec![b'S']);
     }
 
     #[test]
