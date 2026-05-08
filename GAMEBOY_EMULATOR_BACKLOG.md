@@ -436,11 +436,15 @@ _Note: OAM DMA was intentionally moved into Milestone 4 because sprite correctne
   - [x] CGB palettes and VRAM banking.
   - [x] CGB-specific registers and boot flow.
 - [ ] **Link cable emulation**
-  - [ ] Local loopback.
+  - [x] Local loopback.
   - [ ] Networked peer mode.
 - [ ] **Additional platforms**
   - [ ] WebAssembly build.
   - [ ] Mobile frontend.
+
+**Link cable notes (2026-05-08)**
+- Serial transfers now expose a configurable local loopback mode that echoes the transmitted `SB` byte back into `SB` when an internal-clock transfer completes, while preserving disconnected-link idle `0xFF` receive behavior by default.
+- The emulator-level API can select the loopback mode for deterministic local diagnostics without claiming networked peer behavior.
 
 **Double-speed mode notes (2026-05-07)**
 - KEY1 (`FF4D`) now exposes the CGB prepare/current-speed bits in CGB mode while remaining inert for DMG-mode execution.

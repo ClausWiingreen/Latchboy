@@ -11,6 +11,7 @@ pub mod ppu;
 pub mod serial;
 pub mod timer;
 pub use crate::input::JoypadButton;
+pub use crate::serial::SerialConnectionMode;
 pub use ppu::{FRAMEBUFFER_HEIGHT, FRAMEBUFFER_LEN, FRAMEBUFFER_WIDTH};
 
 use bus::{Bus, BusWatchIoAccessType};
@@ -243,6 +244,11 @@ impl Emulator {
     /// Updates a joypad button pressed state used by the `FF00` input matrix.
     pub fn set_button_pressed(&mut self, button: JoypadButton, pressed: bool) {
         self.bus.set_button_pressed(button, pressed);
+    }
+
+    /// Selects the serial peer behavior used to receive bytes from completed transfers.
+    pub fn set_serial_connection_mode(&mut self, connection_mode: SerialConnectionMode) {
+        self.bus.set_serial_connection_mode(connection_mode);
     }
 
     /// Drains and returns bytes emitted by completed serial transfers.
@@ -948,6 +954,29 @@ mod tests {
 
         assert_eq!(emulator.take_serial_transfer_log(), vec![b'P']);
         assert!(emulator.take_serial_transfer_log().is_empty());
+    }
+
+    #[test]
+    fn serial_local_loopback_is_exposed_via_emulator_api() {
+        let mut rom = vec![0u8; 2 * 16 * 1024];
+        rom[0x0100] = 0x76;
+        rom[0x0134..0x0138].copy_from_slice(b"SLPB");
+        rom[0x0147] = CartridgeType::RomOnly.code();
+        rom[0x0148] = RomSize::Banks2.code();
+        rom[0x0149] = RamSize::None.code();
+        rom[0x014A] = DestinationCode::Japanese.code();
+        rom[0x014D] =
+            compute_header_checksum(&rom).expect("test rom header checksum should compute");
+
+        let cartridge = Cartridge::from_rom(rom).expect("test rom should parse");
+        let mut emulator = Emulator::from_cartridge(cartridge);
+        emulator.set_serial_connection_mode(SerialConnectionMode::LocalLoopback);
+
+        emulator.bus.write8(crate::serial::SB_REGISTER, b'E');
+        emulator.bus.write8(crate::serial::SC_REGISTER, 0x81);
+
+        assert_eq!(emulator.bus.read8(crate::serial::SB_REGISTER), b'E');
+        assert_eq!(emulator.take_serial_transfer_log(), vec![b'E']);
     }
 
     #[test]
